@@ -1,0 +1,4 @@
+PyAudio==0.2.13
+faster-whisper==0.7.1
+pvporcupine==1.9.5
+torch==2.0.1
