@@ -1,7 +1,7 @@
-import RealtimeSTT 
-import logging
+from RealtimeSTT import AudioToTextRecorder
 
-recorder = RealtimeSTT.AudioToTextRecorder(level=logging.DEBUG)
+recorder = AudioToTextRecorder()
 
 print("Say something...")
-print(recorder.text())
+
+while (True): print(recorder.text(), end=" ", flush=True)

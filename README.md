@@ -1,29 +1,67 @@
-# RealTimeSTT
+# RealtimeSTT
 
-A fast Voice Activity Detection and Transcription System
+*Easy to use low latency speech to text library for realtime applications*
 
-Listens to microphone, detects voice activity and immediately transcribes it using the `faster_whisper` model. Adapts to various environments with a ambient noise level-based voice activity detection.
+## About the project
 
-Ideal for applications like voice assistants or any application where immediate speech-to-text conversion is desired with minimal latency.
+Listens to microphone and transcribes voice into text.
+
+Provices voice activity detection, wake word activation and lightning-fast speech-to-text transcription. Checks for voice activity with WebRTC first for a quick decision, then double-checks with Silero for better accuracy for reliable voice activity detection even amidst ambient noise.
+
+Perfect for voice assistants or applications where solid, fast and precise speech-to-text transformation is important.
+
+> **Hint**: In need of the inverse – turning text streams into instant voice output - dive into [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS). Together, they form a powerful realtime audio wrapper around large language model outputs.
 
 ## Features
 
-1. **Voice Activity Detection**: Automatically starts/stops recording when speech is detected or when speech ends.
-2. **Wake Word Detection**: Starts recording when a specified wake word (or words) is detected.
-3. **Buffer Management**: Handles short and long term audio buffers for efficient processing.
-4. **Event Callbacks**: Customizable callbacks for when recording starts or finishes.
-5. **Noise Level Calculation**: Adjusts based on the background noise for more accurate voice activity detection.
-6. **Error Handling**: Comprehensive error handling to catch and report any anomalies during execution.
+- **Real-time Transcription**: Delivers text as fast as possible (while you speak) using faster_whisper.
+- **Voice Activity Detection**: Automatically starts/stops recording when speech is detected or when speech ends.
+- **Wake Word Activation**: Starts detection only after a specified wake word (or words) was detected.
+- **Event Callbacks**: Customizable callbacks for when recording starts or finishes.
+
+## Quick Start
+
+Basic usage:
+
+### Manual Recording
+
+Start and stop of recording are manually triggered.
+
+    ```python
+    recorder.start()
+    recorder.stop()
+    print(recorder.text())
+    ```
+
+### Automatic Recording
+
+Recording based on voice activity detection.
+
+    ```python
+    recorder = AudioToTextRecorder()
+    print(recorder.text())
+    ```  
+
+### Wakewords
+
+Keyword activation before detecting voice.
+
+    ```python
+    recorder = AudioToTextRecorder(wake_words="jarvis")
+
+    print('Say "Jarvis" then speak.')
+    print(recorder.text())
+    ```
 
 ## Installation
 
 ```bash
-pip install RealTimeSTT
+pip install RealtimeSTT
 ```
 
 ## GPU Support
 
-To significantly improve transcription speed, especially in real-time applications, we **strongly recommend** utilizing GPU acceleration via CUDA. By default, the transcription is performed on the CPU. 
+To significantly improve transcription speed, especially in real-time applications, I **strongly recommend** utilizing GPU acceleration via CUDA. By default, the transcription is performed on the CPU. 
 
 1. **Install NVIDIA CUDA Toolkit 11.8**:
 	- Visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-11-8-0-download-archive).
@@ -36,17 +74,20 @@ To significantly improve transcription speed, especially in real-time applicatio
 	- Download and install the software.
 	
 3. **Reconfigure PyTorch for CUDA**:
-	- If you have PyTorch installed, remove it: `pip uninstall torch`.
+	- If you have PyTorch CPU version installed, remove it: `pip uninstall torch` (CPU gets installed with the pip install RealtimeSTT command)
 	- Install PyTorch again with CUDA support: `pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`.
 
 Note: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
 
-## Usage
+## Quick Start
+
+Here's a basic usage example:
 
 ### Automatic Recording
 
 ```python
-print(AudioToTextRecorder().text())
+recorder = AudioToTextRecorder()
+print(recorder.text())
 ```
 
 ### Manual Recording
@@ -69,42 +110,84 @@ def my_stop_callback():
     print("Recording stopped!")
 
 recorder = AudioToTextRecorder(on_recording_started=my_start_callback, on_recording_finished=my_stop_callback)
-
 ```
+
+### Wakewords
+
+Write the comma-separated list of your desired activation keywords into the wake_words parameter. You can choose wake words from these list: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator. 
+
+```python
+recorder = AudioToTextRecorder(wake_words="jarvis")
+
+print('Say "Jarvis" then speak.')
+print(recorder.text())
+```
+
+## Testing the Library
+
+The test subdirectory contains a set of scripts to help you evaluate and understand the capabilities of the RealtimeTTS library.
+
+- **simple_test.py**
+    - **Description**: A "hello world" styled demonstration of the library's simplest usage.
+
+- **wakeword_test.py**
+    - **Description**: A demonstration of the wakeword activation.
+
+- **translator.py**
+    - **Dependencies**: Run `pip install openai realtimetts`.
+    - **Description**: Real-time translations into six different languages.
+
+- **openai_voice_interface.py**
+    - **Dependencies**: Run `pip install openai realtimetts`.
+    - **Description**: Wake word activated and voice based user interface to the OpenAI API.
+
+- **advanced_talk.py**
+    - **Dependencies**: Run `pip install openai keyboard realtimetts`.
+    - **Description**: Choose TTS engine and voice before starting AI conversation.
+
+- **minimalistic_talkbot.py**
+    - **Dependencies**: Run `pip install openai realtimetts`.
+    - **Description**: A basic talkbot in 20 lines of code.
 
 ## Configuration
 
-The class comes with numerous configurable parameters such as buffer size, activity thresholds, and smoothing factors to fine-tune the recording and transcription process based on the specific needs of your application:
+- **model** (str, default="tiny"): Model size or path for transcription.
+    - Options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
+    - Note: If a size is provided, the model will be downloaded from the Hugging Face Hub.
 
-* `model`: Specifies the size of the transcription model to use or the path to a converted model directory. Valid options are 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'. If a specific size is provided, the model is downloaded from the Hugging Face Hub.
+- **language** (str, default=""): Language code for transcription. If left empty, the model will try to auto-detect the language.
 
-* `language`: Defines the language code for the speech-to-text engine. If not specified, the model will attempt to detect the language automatically.
+- **on_recording_start**: A callable function triggered when recording starts.
 
-* `wake_words`: A comma-separated string of wake words to initiate recording. Supported wake words include 'alexa', 'americano', 'blueberry', 'bumblebee', 'computer', 'grapefruits', 'grasshopper', 'hey google', 'hey siri', 'jarvis', 'ok google', 'picovoice', 'porcupine', 'terminator'.
+- **on_recording_stop**: A callable function triggered when recording ends.
 
-* `wake_words_sensitivity`: Determines the sensitivity for wake word detection, ranging from 0 (least sensitive) to 1 (most sensitive). The default value is 0.5.
+- **spinner** (bool, default=True): Provides a spinner animation text with information about the current recorder state.
 
-* `on_recording_started`: A callable option which is invoked when the recording starts.
+- **level** (int, default=logging.WARNING): Logging level.
 
-* `on_recording_finished`: A callable option invoked when the recording ends.
+- **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
-* `min_recording_interval`: Specifies the minimum interval (in seconds) for recording durations.
+- **webrtc_sensitivity** (int, default=3): Sensitivity for the WebRTC Voice Activity Detection engine ranging from 1 (least sensitive) to 3 (most sensitive). Default is 3.
 
-* `interval_between_records`: Determines the interval (in seconds) between consecutive recordings.
+- **post_speech_silence_duration** (float, default=0.2): Duration in seconds of silence that must follow speech before the recording is considered to be completed. This ensures that any brief pauses during speech don't prematurely end the recording.
 
-* `buffer_duration`: Indicates the duration (in seconds) to maintain pre-roll audio in the buffer.
+- **min_gap_between_recordings** (float, default=1.0): Specifies the minimum time interval in seconds that should exist between the end of one recording session and the beginning of another to prevent rapid consecutive recordings.
 
-* `voice_activity_threshold`: The threshold level above the long-term noise to detect the start of voice activity.
+- **min_length_of_recording** (float, default=1.0): Specifies the minimum duration in seconds that a recording session should last to ensure meaningful audio capture, preventing excessively short or fragmented recordings.
 
-* `voice_deactivity_sensitivity`: Sensitivity level for voice deactivation detection, ranging from 0 (least sensitive) to 1 (most sensitive). The default value is 0.3.
+- **pre_recording_buffer_duration** (float, default=0.2): The time span, in seconds, during which audio is buffered prior to formal recording. This helps counterbalancing the latency inherent in speech activity detection, ensuring no initial audio is missed.
 
-* `voice_deactivity_silence_after_speech_end`: Duration (in seconds) of silence required after speech ends to trigger voice deactivation. The default is 0.1 seconds.
+- **wake_words** (str, default=""): Wake words for initiating the recording. Multiple wake words can be provided as a comma-separated string. Supported wake words are: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
 
-* `long_term_smoothing_factor`: Exponential smoothing factor utilized in calculating the long-term noise level.
+- **wake_words_sensitivity** (float, default=0.6): Sensitivity level for wake word detection (0 for least sensitive, 1 for most sensitive).
 
-* `short_term_smoothing_factor`: Exponential smoothing factor for calculating the short-term noise level.
+- **wake_word_activation_delay** (float, default=0): Duration in seconds after the start of monitoring before the system switches to wake word activation if no voice is initially detected. If set to zero, the system uses wake word activation immediately.
 
-* `level`: Sets the desired logging level for internal logging. Default is `logging.WARNING`.
+- **wake_word_timeout** (float, default=5): Duration in seconds after a wake word is recognized. If no subsequent voice activity is detected within this window, the system transitions back to an inactive state, awaiting the next wake word or voice activation.
+
+- **on_wakeword_detected**: A callable function triggered when a wake word is detected.
+
+- **on_wakeword_timeout**: Callback function to be called when the system goes back to an inactive state after when no speech was detected after wake word activation.
 
 ## Contribution
 
@@ -118,6 +201,6 @@ MIT
 
 Kolja Beigel  
 Email: kolja.beigel@web.de  
-[GitHub](https://github.com/KoljaB/RealTimeSTT)
+[GitHub](https://github.com/KoljaB/RealtimeSTT)
 
 ---
