@@ -128,6 +128,10 @@ The test subdirectory contains a set of scripts to help you evaluate and underst
 
 ## Configuration
 
+### Initialization Parameters for `AudioToTextRecorder`
+
+When you initialize the `AudioToTextRecorder` class, you have various options to customize its behavior. Here are the available parameters:
+
 - **model** (str, default="tiny"): Model size or path for transcription.
     - Options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
     - Note: If a size is provided, the model will be downloaded from the Hugging Face Hub.
