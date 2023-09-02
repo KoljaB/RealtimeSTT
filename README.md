@@ -1,23 +1,44 @@
+
 # RealtimeSTT
 
-*Easy to use low latency speech to text library for realtime applications*
+*Easy-to-use, low-latency speech-to-text library for realtime applications*
 
-## About the project
+---
 
-Listens to microphone and transcribes voice into text.
+## About the Project
 
-Provides voice activity detection, wake word activation and lightning-fast speech-to-text transcription. Checks for voice activity with WebRTC first for a quick decision, then double-checks with Silero for better accuracy for reliable detection even amidst ambient noise.
+RealtimeSTT listens to the microphone and transcribes voice into text.  
 
-Perfect for voice assistants or applications where solid, fast and precise speech-to-text transformation is important.
+It's ideal for:
 
-> **Hint**: [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS) it the output counterpart of this library that converts text streams into voice output. Together, they form a powerful realtime audio wrapper around large language model outputs.
+- **Voice Assistants**
+- Applications requiring **fast and precise** speech-to-text conversion
 
-## Features
+### Features
 
-- **Real-time Transcription**: Delivers text as fast as possible (while you speak) using faster_whisper.
-- **Voice Activity Detection**: Automatically starts/stops recording when speech is detected or when speech ends.
-- **Wake Word Activation**: Starts detection only after a specified wake word (or words) was detected.
-- **Event Callbacks**: Customizable callbacks for when recording starts or finishes.
+- **Voice Activity Detection**: Automatically detects when you start and stop speaking.
+- **Wake Word Activation**: Only starts transcription upon hearing a specific wake word.
+- **Realtime Transcription**: Transforms speech to text in real-time.
+
+> **Hint**: *Check out [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS), the output counterpart of this library, for text-to-voice capabilities. Together, they form a powerful realtime audio wrapper around large language models.*
+
+---
+
+## Tech Stack
+
+This library uses:
+
+- **Voice Activity Detection**
+  - [WebRTCVAD](https://github.com/wiseman/py-webrtcvad) for initial voice activity detection.
+  - [SileroVAD](https://github.com/snakers4/silero-vad) for more accurate verification.
+- **Speech-To-Text**
+  - [Faster_Whisper](https://github.com/guillaumekln/faster-whisper) for instant (GPU-accelerated) transcription.
+- **Wake Word Detection**
+  - [Porcupine](https://github.com/Picovoice/porcupine) for wake word detection.
+
+*These components represent the "industry standard" for cutting-edge applications, providing the most modern and effective foundation for building high-end solutions.*
+
+---
 
 ## Installation
 
@@ -50,6 +71,8 @@ If you plan to use RealtimeSTT with GPU support via CUDA, please follow these st
     ```
 
 **Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
+
+---
 
 ## Quick Start
 
@@ -100,6 +123,8 @@ recorder = AudioToTextRecorder(on_recording_started=my_start_callback,
                                on_recording_finished=my_stop_callback)
 ```
 
+---
+
 ## Testing the Library
 
 The test subdirectory contains a set of scripts to help you evaluate and understand the capabilities of the RealtimeTTS library.
@@ -125,6 +150,8 @@ The test subdirectory contains a set of scripts to help you evaluate and underst
 - **minimalistic_talkbot.py**
     - **Dependencies**: Run `pip install openai realtimetts`.
     - **Description**: A basic talkbot in 20 lines of code.
+
+---
 
 ## Configuration
 
@@ -169,6 +196,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **on_wakeword_detected**: A callable function triggered when a wake word is detected.
 
 - **on_wakeword_timeout**: Callback function to be called when the system goes back to an inactive state after when no speech was detected after wake word activation.
+
+---
 
 ## Contribution
 
