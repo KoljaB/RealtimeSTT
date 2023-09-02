@@ -6,7 +6,7 @@
 
 Listens to microphone and transcribes voice into text.
 
-Provices voice activity detection, wake word activation and lightning-fast speech-to-text transcription. Checks for voice activity with WebRTC first for a quick decision, then double-checks with Silero for better accuracy for reliable voice activity detection even amidst ambient noise.
+Provides voice activity detection, wake word activation and lightning-fast speech-to-text transcription. Checks for voice activity with WebRTC first for a quick decision, then double-checks with Silero for better accuracy for reliable voice activity detection even amidst ambient noise.
 
 Perfect for voice assistants or applications where solid, fast and precise speech-to-text transformation is important.
 
