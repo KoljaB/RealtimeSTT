@@ -59,29 +59,31 @@ print(recorder.text())
 pip install RealtimeSTT
 ```
 
-## GPU Support
+This will install all the necessary dependencies, including a CPU support only version of PyTorch.
 
-To significantly improve transcription speed, especially in real-time applications, I **strongly recommend** utilizing GPU acceleration via CUDA. By default, the transcription is performed on the CPU. 
+### GPU Support with CUDA (recommended)
+
+Additional steps are needed for a GPU-optimized installation. These steps are recommended for those who require better performance and have a compatible NVIDIA GPU.
+
+If you plan to use RealtimeSTT with GPU support via CUDA, please follow these steps:
 
 1. **Install NVIDIA CUDA Toolkit 11.8**:
-	- Visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-11-8-0-download-archive).
-	- Select version 11.
-	- Download and install the software.
+    - Visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-11-8-0-download-archive).
+    - Select version 11.
+    - Download and install the software.
 
 2. **Install NVIDIA cuDNN 8.7.0 for CUDA 11.x**:
-	- Visit [NVIDIA cuDNN Archive](https://developer.nvidia.com/rdp/cudnn-archive).
-	- Click on "Download cuDNN v8.7.0 (November 28th, 2022), for CUDA 11.x".
-	- Download and install the software.
-	
-3. **Reconfigure PyTorch for CUDA**:
-	- If you have PyTorch CPU version installed, remove it: `pip uninstall torch` (CPU gets installed with the pip install RealtimeSTT command)
-	- Install PyTorch again with CUDA support: `pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118`.
+    - Visit [NVIDIA cuDNN Archive](https://developer.nvidia.com/rdp/cudnn-archive).
+    - Click on "Download cuDNN v8.7.0 (November 28th, 2022), for CUDA 11.x".
+    - Download and install the software.
 
-Note: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
+3. **Install PyTorch with CUDA support**:
+    ```bash
+    pip uninstall torch
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+    ```
 
-## Quick Start
-
-Here's a basic usage example:
+**Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
 
 ### Automatic Recording
 

@@ -1,0 +1,5 @@
+PyAudio>=0.2.13
+faster-whisper>=0.7.1
+pvporcupine==1.9.5
+webrtcvad>=2.0.10
+halo>=0.0.31
