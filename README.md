@@ -6,7 +6,7 @@
 
 Listens to microphone and transcribes voice into text.
 
-Provides voice activity detection, wake word activation and lightning-fast speech-to-text transcription. Checks for voice activity with WebRTC first for a quick decision, then double-checks with Silero for better accuracy for reliable voice activity detection even amidst ambient noise.
+Provides voice activity detection, wake word activation and lightning-fast speech-to-text transcription. Checks for voice activity with WebRTC first for a quick decision, then double-checks with Silero for better accuracy for reliable detection even amidst ambient noise.
 
 Perfect for voice assistants or applications where solid, fast and precise speech-to-text transformation is important.
 
@@ -18,40 +18,6 @@ Perfect for voice assistants or applications where solid, fast and precise speec
 - **Voice Activity Detection**: Automatically starts/stops recording when speech is detected or when speech ends.
 - **Wake Word Activation**: Starts detection only after a specified wake word (or words) was detected.
 - **Event Callbacks**: Customizable callbacks for when recording starts or finishes.
-
-## Quick Start
-
-Basic usage:
-
-### Manual Recording
-
-Start and stop of recording are manually triggered.
-
-```python
-recorder.start()
-recorder.stop()
-print(recorder.text())
-```
-
-### Automatic Recording
-
-Recording based on voice activity detection.
-
-```python
-recorder = AudioToTextRecorder()
-print(recorder.text())
-```  
-
-### Wakewords
-
-Keyword activation before detecting voice.
-
-```python
-recorder = AudioToTextRecorder(wake_words="jarvis")
-
-print('Say "Jarvis" then speak.')
-print(recorder.text())
-```
 
 ## Installation
 
@@ -85,18 +51,37 @@ If you plan to use RealtimeSTT with GPU support via CUDA, please follow these st
 
 **Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
 
-### Automatic Recording
+## Quick Start
 
-```python
-recorder = AudioToTextRecorder()
-print(recorder.text())
-```
+Basic usage:
 
 ### Manual Recording
+
+Start and stop of recording are manually triggered.
 
 ```python
 recorder.start()
 recorder.stop()
+print(recorder.text())
+```
+
+### Automatic Recording
+
+Recording based on voice activity detection.
+
+```python
+recorder = AudioToTextRecorder()
+print(recorder.text())
+```  
+
+### Wakewords
+
+Keyword activation before detecting voice. Write the comma-separated list of your desired activation keywords into the wake_words parameter. You can choose wake words from these list: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator. 
+
+```python
+recorder = AudioToTextRecorder(wake_words="jarvis")
+
+print('Say "Jarvis" then speak.')
 print(recorder.text())
 ```
 
@@ -112,17 +97,6 @@ def my_stop_callback():
     print("Recording stopped!")
 
 recorder = AudioToTextRecorder(on_recording_started=my_start_callback, on_recording_finished=my_stop_callback)
-```
-
-### Wakewords
-
-Write the comma-separated list of your desired activation keywords into the wake_words parameter. You can choose wake words from these list: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator. 
-
-```python
-recorder = AudioToTextRecorder(wake_words="jarvis")
-
-print('Say "Jarvis" then speak.')
-print(recorder.text())
 ```
 
 ## Testing the Library
