@@ -27,31 +27,31 @@ Basic usage:
 
 Start and stop of recording are manually triggered.
 
-    ```python
-    recorder.start()
-    recorder.stop()
-    print(recorder.text())
-    ```
+```python
+recorder.start()
+recorder.stop()
+print(recorder.text())
+```
 
 ### Automatic Recording
 
 Recording based on voice activity detection.
 
-    ```python
-    recorder = AudioToTextRecorder()
-    print(recorder.text())
-    ```  
+```python
+recorder = AudioToTextRecorder()
+print(recorder.text())
+```  
 
 ### Wakewords
 
 Keyword activation before detecting voice.
 
-    ```python
-    recorder = AudioToTextRecorder(wake_words="jarvis")
+```python
+recorder = AudioToTextRecorder(wake_words="jarvis")
 
-    print('Say "Jarvis" then speak.')
-    print(recorder.text())
-    ```
+print('Say "Jarvis" then speak.')
+print(recorder.text())
+```
 
 ## Installation
 
