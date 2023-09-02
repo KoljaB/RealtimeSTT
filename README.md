@@ -3,7 +3,6 @@
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
----
 
 ## About the Project
 
@@ -22,7 +21,6 @@ It's ideal for:
 
 > **Hint**: *Check out [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS), the output counterpart of this library, for text-to-voice capabilities. Together, they form a powerful realtime audio wrapper around large language models.*
 
----
 
 ## Tech Stack
 
@@ -38,7 +36,6 @@ This library uses:
 
 *These components represent the "industry standard" for cutting-edge applications, providing the most modern and effective foundation for building high-end solutions.*
 
----
 
 ## Installation
 
@@ -72,7 +69,6 @@ If you plan to use RealtimeSTT with GPU support via CUDA, please follow these st
 
 **Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
 
----
 
 ## Quick Start
 
@@ -123,7 +119,6 @@ recorder = AudioToTextRecorder(on_recording_started=my_start_callback,
                                on_recording_finished=my_stop_callback)
 ```
 
----
 
 ## Testing the Library
 
@@ -151,7 +146,6 @@ The test subdirectory contains a set of scripts to help you evaluate and underst
     - **Dependencies**: Run `pip install openai realtimetts`.
     - **Description**: A basic talkbot in 20 lines of code.
 
----
 
 ## Configuration
 
@@ -197,7 +191,6 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **on_wakeword_timeout**: Callback function to be called when the system goes back to an inactive state after when no speech was detected after wake word activation.
 
----
 
 ## Contribution
 
@@ -212,5 +205,3 @@ MIT
 Kolja Beigel  
 Email: kolja.beigel@web.de  
 [GitHub](https://github.com/KoljaB/RealtimeSTT)
-
----
