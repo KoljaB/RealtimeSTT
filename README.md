@@ -10,7 +10,7 @@ Provides voice activity detection, wake word activation and lightning-fast speec
 
 Perfect for voice assistants or applications where solid, fast and precise speech-to-text transformation is important.
 
-> **Hint**: In need of the inverse – turning text streams into instant voice output - dive into [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS). Together, they form a powerful realtime audio wrapper around large language model outputs.
+> **Hint**: [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS) it the output counterpart of this library that converts text streams into voice output. Together, they form a powerful realtime audio wrapper around large language model outputs.
 
 ## Features
 
