@@ -1,3 +1,4 @@
+.gitignore
 setup.py
 docs/
 examples/
