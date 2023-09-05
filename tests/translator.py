@@ -11,7 +11,7 @@ engine = AzureEngine(
     os.environ.get("AZURE_SPEECH_KEY"),
     "eastus"
 )
-stream = TextToAudioStream(engine)
+stream = TextToAudioStream(engine, log_characters=True)
 
 # Speech-to-Text Recorder Setup
 recorder = AudioToTextRecorder(
@@ -65,7 +65,7 @@ def main():
         translation_stream = generate_response([system_prompt_message, user_message])
         print("Translation: ", end="", flush=True)
         stream.feed(translation_stream)
-        stream.play(log_characters=True)
+        stream.play()
 
 if __name__ == "__main__":
     main()

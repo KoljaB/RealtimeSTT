@@ -104,7 +104,7 @@ system_prompt = {
 # start talk  ##########################################################################################################
 
 engine.set_voice(voice)
-stream = TextToAudioStream(engine)
+stream = TextToAudioStream(engine, log_characters=True)
 history = []
 
 def generate(messages):
@@ -131,7 +131,7 @@ while True:
     generator = generate([system_prompt] + history[-10:])
     stream.feed(generator)
 
-    stream.play_async(log_characters=True)
+    stream.play_async()
     while stream.is_playing():
         if keyboard.is_pressed('space'):
             stream.stop()

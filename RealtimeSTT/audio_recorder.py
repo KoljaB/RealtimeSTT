@@ -239,7 +239,6 @@ class AudioToTextRecorder:
         # If not yet started to record, wait for voice activity to initiate recording.
         if not self.is_recording and len(self.frames) == 0:
             self._set_state("listening")
-            self._set_spinner("speak now")
             self.start_recording_on_voice_activity = True
 
             while not self.is_recording:
@@ -264,10 +263,7 @@ class AudioToTextRecorder:
             self.recording_stop_time = 0
             self.listen_start = 0
 
-            if self.spinner and self.halo:
-                self.halo.stop()
-                self.halo = None
-                self._set_state("inactive")
+            self._set_state("inactive")
 
             return transcription
         
@@ -300,9 +296,7 @@ class AudioToTextRecorder:
         self.frames = []
         self.is_recording = True        
         self.recording_start_time = time.time()
-        self._set_spinner("recording")
         self._set_state("recording")
-        if self.halo: self.halo._interval = 100
 
         if self.on_recording_start:
             self.on_recording_start()
@@ -324,7 +318,6 @@ class AudioToTextRecorder:
         self.is_recording = False
         self.recording_stop_time = time.time()
 
-        self._set_spinner("transcribing")
         self._set_state("transcribing")
 
         if self.on_recording_stop:
@@ -447,6 +440,7 @@ class AudioToTextRecorder:
         return False  # Voice is not active    
 
 
+
     def _set_state(self, new_state):
         """
         Update the current state of the recorder and execute corresponding state-change callbacks.
@@ -477,12 +471,25 @@ class AudioToTextRecorder:
         if new_state == "listening":
             if self.on_vad_detect_start:
                 self.on_vad_detect_start()
+            self._set_spinner("speak now")
+            self.halo._interval = 250
         elif new_state == "wakeword":
             if self.on_wakeword_detection_start:
                 self.on_wakeword_detection_start()
+            self._set_spinner(f"say {self.wake_words}")
+            self.halo._interval = 500
         elif new_state == "transcribing":
             if self.on_transcription_start:
                 self.on_transcription_start()
+            self._set_spinner("transcribing")
+            self.halo._interval = 50
+        elif new_state == "recording":
+            self._set_spinner("recording")
+            self.halo._interval = 100
+        elif new_state == "inactive":
+            if self.spinner and self.halo:
+                self.halo.stop()
+                self.halo = None
 
 
     def _set_spinner(self, text):
@@ -542,17 +549,11 @@ class AudioToTextRecorder:
                 if not self.recording_stop_time:
                     if self.wake_words and wake_word_activation_delay_passed and not self.wakeword_detected:
                         self._set_state("wakeword")
-                        if self.spinner and self.halo:
-                            self.halo.text = f"say {self.wake_words}"
-                            self.halo._interval = 500
                     else:
                         if self.listen_start:
                             self._set_state("listening")
                         else:
                             self._set_state("inactive")
-                        if self.spinner and self.halo:
-                            self.halo.text = "speak now"
-                            self.halo._interval = 200
 
                 # Detect wake words if applicable
                 if self.wake_words and wake_word_activation_delay_passed:

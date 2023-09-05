@@ -3,7 +3,7 @@ import openai, os
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 character_prompt = 'Answer precise and short with the polite sarcasm of a butler.'
-stream = RealtimeTTS.TextToAudioStream(RealtimeTTS.AzureEngine(os.environ.get("AZURE_SPEECH_KEY"), "eastus"))
+stream = RealtimeTTS.TextToAudioStream(RealtimeTTS.AzureEngine(os.environ.get("AZURE_SPEECH_KEY"), "eastus"), log_characters=True)
 recorder = RealtimeSTT.AudioToTextRecorder(model="medium")
 
 def generate(messages):
@@ -16,5 +16,5 @@ while True:
     print(f'>>> {(user_text := recorder.text())}\n<<< ', end="", flush=True)
     history.append({'role': 'user', 'content': user_text})
     assistant_response = generate([{ 'role': 'system',  'content': character_prompt}] + history[-10:])
-    stream.feed(assistant_response).play(log_characters=True)
+    stream.feed(assistant_response).play()
     history.append({'role': 'assistant', 'content': stream.text()})

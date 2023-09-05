@@ -13,7 +13,8 @@ stream = TextToAudioStream(
     AzureEngine(
         os.environ.get("AZURE_SPEECH_KEY"),
         "eastus",
-    )
+    ),
+    log_characters=True
 )
 
 # Speech-to-Text Recorder Setup
@@ -53,7 +54,7 @@ def main():
 
         # Get assistant response and play it
         assistant_response = generate_response([system_prompt_message] + history[-10:])
-        stream.feed(assistant_response).play(log_characters=True)
+        stream.feed(assistant_response).play()
 
         history.append({'role': 'assistant', 'content': stream.text()})
 
