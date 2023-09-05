@@ -201,11 +201,11 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **on_wakeword_detected**: A callable function triggered when a wake word is detected.
 
-- **on_wakeword_timeout**: Callback function to be called when the system goes back to an inactive state after when no speech was detected after wake word activation.
+- **on_wakeword_timeout**: A callable function triggered when the system goes back to an inactive state after when no speech was detected after wake word activation.
 
-- **on_wakeword_detection_start**: Callback function to be called the system starts to listen for wake words
+- **on_wakeword_detection_start**: A callable function triggered when the system starts to listen for wake words
 
-- **on_wakeword_detection_end**: Callback function to be called when stopping to listen for wake words (e.g. because of timeout or wake word detected)
+- **on_wakeword_detection_end**: A callable function triggered when stopping to listen for wake words (e.g. because of timeout or wake word detected)
 
 
 ## Contribution
