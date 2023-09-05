@@ -96,6 +96,8 @@ class AudioToTextRecorder:
         - min_gap_between_recordings (float, default=1.0): Specifies the minimum time interval in seconds that should exist between the end of one recording session and the beginning of another to prevent rapid consecutive recordings.
         - min_length_of_recording (float, default=1.0): Specifies the minimum duration in seconds that a recording session should last to ensure meaningful audio capture, preventing excessively short or fragmented recordings.
         - pre_recording_buffer_duration (float, default=0.2): Duration in seconds for the audio buffer to maintain pre-roll audio (compensates speech activity detection latency)
+        - on_vad_detect_start (callable, default=None): Callback function to be called when the system listens for voice activity.
+        - on_vad_detect_stop (callable, default=None): Callback function to be called when the system stops listening for voice activity.
         - wake_words (str, default=""): Comma-separated string of wake words to initiate recording. Supported wake words include:
                 'alexa', 'americano', 'blueberry', 'bumblebee', 'computer', 'grapefruits', 'grasshopper', 'hey google', 'hey siri', 'jarvis', 'ok google', 'picovoice', 'porcupine', 'terminator'.
         - wake_words_sensitivity (float, default=0.5): Sensitivity for wake word detection, ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.5.

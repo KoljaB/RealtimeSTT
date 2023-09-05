@@ -185,6 +185,10 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **pre_recording_buffer_duration** (float, default=0.2): The time span, in seconds, during which audio is buffered prior to formal recording. This helps counterbalancing the latency inherent in speech activity detection, ensuring no initial audio is missed.
 
+- **on_vad_detect_start**: A callable function triggered when the system starts to listen for voice activity.
+
+- **on_vad_detect_stop**: A callable function triggered when the system stops to listen for voice activity.
+
 #### Wake Word Parameters
 
 - **wake_words** (str, default=""): Wake words for initiating the recording. Multiple wake words can be provided as a comma-separated string. Supported wake words are: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
