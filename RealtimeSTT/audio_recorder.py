@@ -53,6 +53,7 @@ class AudioToTextRecorder:
                  language: str = "",
                  on_recording_start = None,
                  on_recording_stop = None,
+                 on_transcription_start = None,
                  spinner = True,
                  level=logging.WARNING,
 
@@ -63,14 +64,18 @@ class AudioToTextRecorder:
                  min_length_of_recording: float = 1.0,
                  min_gap_between_recordings: float = 1.0,
                  pre_recording_buffer_duration: float = 1,
+                 on_vad_detect_start = None,
+                 on_vad_detect_stop = None,
 
                  # Wake word parameters
                  wake_words: str = "",
                  wake_words_sensitivity: float = WAKE_WORDS_SENSITIVITY,
                  wake_word_activation_delay: float = 0,
-                 wake_word_timeout: float = 5,
+                 wake_word_timeout: float = 5.0,
                  on_wakeword_detected = None,
                  on_wakeword_timeout = None,
+                 on_wakeword_detection_start = None,
+                 on_wakeword_detection_end = None,
                  ):
         """
         Initializes an audio recorder and  transcription and wake word detection.
@@ -80,8 +85,9 @@ class AudioToTextRecorder:
                 Valid options are 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'. 
                 If a specific size is provided, the model is downloaded from the Hugging Face Hub.
         - language (str, default=""): Language code for speech-to-text engine. If not specified, the model will attempt to detect the language automatically.
-        - on_recording_start (callable, default=None): Callback function to be called when recording starts.
-        - on_recording_stop (callable, default=None): Callback function to be called when recording stops.
+        - on_recording_start (callable, default=None): Callback function to be called when recording of audio to be transcripted starts.
+        - on_recording_stop (callable, default=None): Callback function to be called when recording of audio to be transcripted stops.
+        - on_transcription_start (callable, default=None): Callback function to be called when transcription of audio to text starts.       
         - spinner (bool, default=True): Show spinner animation with current state.
         - level (int, default=logging.WARNING): Logging level.
         - silero_sensitivity (float, default=SILERO_SENSITIVITY): Sensitivity for the Silero Voice Activity Detection model ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.5.
@@ -97,6 +103,8 @@ class AudioToTextRecorder:
         - wake_word_timeout (float, default=5): Duration in seconds after a wake word is recognized. If no subsequent voice activity is detected within this window, the system transitions back to an inactive state, awaiting the next wake word or voice activation.
         - on_wakeword_detected (callable, default=None): Callback function to be called when a wake word is detected.
         - on_wakeword_timeout (callable, default=None): Callback function to be called when the system goes back to an inactive state after when no speech was detected after wake word activation
+        - on_wakeword_detection_start (callable, default=None): Callback function to be called when the system starts to listen for wake words
+        - on_wakeword_detection_end (callable, default=None): Callback function to be called when the system stops to listen for wake words (e.g. because of timeout or wake word detected)
 
         Raises:
             Exception: Errors related to initializing transcription model, wake word detection, or audio recording.
@@ -114,6 +122,12 @@ class AudioToTextRecorder:
         self.on_recording_stop = on_recording_stop        
         self.on_wakeword_detected = on_wakeword_detected
         self.on_wakeword_timeout = on_wakeword_timeout
+        self.on_vad_detect_start = on_vad_detect_start
+        self.on_vad_detect_stop = on_vad_detect_stop
+        self.on_wakeword_detection_start = on_wakeword_detection_start
+        self.on_wakeword_detection_end = on_wakeword_detection_end
+        self.on_transcription_start = on_transcription_start
+    
         self.level = level
         self.buffer_size = BUFFER_SIZE
         self.sample_rate = SAMPLE_RATE
@@ -126,8 +140,7 @@ class AudioToTextRecorder:
         self.listen_start = 0
         self.spinner = spinner
         self.halo = None
-
-        #self.spinner = Halo(text=spinner) if spinner else None
+        self.state = "inactive"
         self.wakeword_detected = False
 
         # Initialize the logging configuration with the specified level
@@ -185,8 +198,6 @@ class AudioToTextRecorder:
                 repo_or_dir="snakers4/silero-vad",
                 model="silero_vad",
                 verbose=False
-                #force_reload=True,
-                #onnx=True,
             )
 
         except Exception as e:
@@ -225,7 +236,8 @@ class AudioToTextRecorder:
                 
         # If not yet started to record, wait for voice activity to initiate recording.
         if not self.is_recording and len(self.frames) == 0:
-            self.set_spinner("speak now")
+            self._set_state("listening")
+            self._set_spinner("speak now")
             self.start_recording_on_voice_activity = True
 
             while not self.is_recording:
@@ -243,11 +255,18 @@ class AudioToTextRecorder:
             audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
             audio_array = audio_array.astype(np.float32) / 32768.0
             self.frames = []
+
+            # perform transcription
             transcription = " ".join(seg.text for seg in self.model.transcribe(audio_array, language=self.language if self.language else None)[0]).strip()
+
+            self.recording_stop_time = 0
+            self.listen_start = 0
+
             if self.spinner and self.halo:
                 self.halo.stop()
                 self.halo = None
-            self.recording_stop_time = 0
+                self._set_state("inactive")
+
             return transcription
         
         except ValueError:
@@ -262,13 +281,6 @@ class AudioToTextRecorder:
             logging.error(f"General transcription error: {e}")
             raise
 
-    def set_spinner(self, text):
-        if self.spinner:
-            if not self.halo:
-                self.halo = Halo(text=text)
-                self.halo.start()
-            else:
-                self.halo.text = text
 
     def start(self):
         """
@@ -286,7 +298,8 @@ class AudioToTextRecorder:
         self.frames = []
         self.is_recording = True        
         self.recording_start_time = time.time()
-        self.set_spinner("recording")
+        self._set_spinner("recording")
+        self._set_state("recording")
         if self.halo: self.halo._interval = 100
 
         if self.on_recording_start:
@@ -309,7 +322,8 @@ class AudioToTextRecorder:
         self.is_recording = False
         self.recording_stop_time = time.time()
 
-        self.set_spinner("transcribing")
+        self._set_spinner("transcribing")
+        self._set_state("transcribing")
 
         if self.on_recording_stop:
             self.on_recording_stop()
@@ -332,6 +346,8 @@ class AudioToTextRecorder:
 
         except Exception as e:
             logging.error(f"Error closing the audio stream: {e}")
+
+
 
 
     def _calculate_percentile_mean(self, buffer, percentile, upper=True):
@@ -363,7 +379,7 @@ class AudioToTextRecorder:
         return sum(values) / len(values)
         
 
-    def is_silero_speech(self, data):
+    def _is_silero_speech(self, data):
         """
         Returns true if speech is detected in the provided audio data
 
@@ -374,10 +390,10 @@ class AudioToTextRecorder:
         audio_chunk = np.frombuffer(data, dtype=np.int16)
         audio_chunk = audio_chunk.astype(np.float32) / 32768.0  # Convert to float and normalize
         vad_prob = self.silero_vad_model(torch.from_numpy(audio_chunk), SAMPLE_RATE).item()
-        return vad_prob > self.silero_sensitivity
+        return vad_prob > (1 - self.silero_sensitivity)
 
 
-    def is_webrtc_speech(self, data):
+    def _is_webrtc_speech(self, data):
         """
         Returns true if speech is detected in the provided audio data
 
@@ -396,18 +412,92 @@ class AudioToTextRecorder:
                 return True
         return False
     
-    def is_voice_active(self, data):
+    
+    def _is_voice_active(self, data):
+        """
+        Determine if voice is active based on the provided data.
 
-        if time.time() - self.silero_check_time > 0.1:
+        Args:
+            data: The audio data to be checked for voice activity.
+
+        Returns:
+            bool: True if voice is active, False otherwise.
+        """
+        # Define a constant for the time threshold
+        TIME_THRESHOLD = 0.1
+        
+        # Check if enough time has passed to reset the Silero check time
+        if time.time() - self.silero_check_time > TIME_THRESHOLD:
             self.silero_check_time = 0
-
-        if self.is_webrtc_speech(data):
-            if not self.silero_check_time:                
+        
+        # First quick performing check for voice activity using WebRTC
+        if self._is_webrtc_speech(data):
+            
+            # If silero check time not set
+            if self.silero_check_time == 0:
                 self.silero_check_time = time.time()
-                if self.is_silero_speech(data):
-                    return True
-                                
-        return False
+            
+                # Perform a more intensive check using Silero
+                if self._is_silero_speech(data):
+
+                    return True  # Voice is active
+            
+        return False  # Voice is not active    
+
+
+    def _set_state(self, new_state):
+        """
+        Update the current state of the recorder and execute corresponding state-change callbacks.
+
+        Args:
+            new_state (str): The new state to set. 
+
+        """
+        # Check if the state has actually changed
+        if new_state == self.state:
+            return
+        
+        # Store the current state for later comparison
+        old_state = self.state
+        
+        # Update to the new state
+        self.state = new_state
+
+        # Execute callbacks based on transitioning FROM a particular state
+        if old_state == "listening":
+            if self.on_vad_detect_stop:
+                self.on_vad_detect_stop()
+        elif old_state == "wakeword":
+            if self.on_wakeword_detection_end:
+                self.on_wakeword_detection_end()
+
+        # Execute callbacks based on transitioning TO a particular state
+        if new_state == "listening":
+            if self.on_vad_detect_start:
+                self.on_vad_detect_start()
+        elif new_state == "wakeword":
+            if self.on_wakeword_detection_start:
+                self.on_wakeword_detection_start()
+        elif new_state == "transcribing":
+            if self.on_transcription_start:
+                self.on_transcription_start()
+
+
+    def _set_spinner(self, text):
+        """
+        Update the spinner's text or create a new spinner with the provided text.
+
+        Args:
+            text (str): The text to be displayed alongside the spinner.
+        """
+        if self.spinner:
+            # If the Halo spinner doesn't exist, create and start it
+            if self.halo is None:
+                self.halo = Halo(text=text)
+                self.halo.start()
+            # If the Halo spinner already exists, just update the text
+            else:
+                self.halo.text = text
 
 
     def _recording_worker(self):
@@ -416,6 +506,7 @@ class AudioToTextRecorder:
         """
         
         was_recording = False
+        delay_was_passed = False
 
         # Continuously monitor audio for voice activity
         while self.is_running:
@@ -432,19 +523,36 @@ class AudioToTextRecorder:
                 time.sleep(1)
                 continue
 
-            # Check if we're not currently recording
             if not self.is_recording:
+                # handle not recording state
 
-                wake_word_activation_delay_passed = (time.time() - self.listen_start > self.wake_word_activation_delay)
+                time_since_listen_start = time.time() - self.listen_start if self.listen_start else 0
+                wake_word_activation_delay_passed = (time_since_listen_start > self.wake_word_activation_delay)
 
-                if self.spinner and self.halo and not self.recording_stop_time:
+                # handle wake-word timeout callback
+                if wake_word_activation_delay_passed and not delay_was_passed:
+                    if self.wake_words and self.wake_word_activation_delay:
+                        if self.on_wakeword_timeout:
+                            self.on_wakeword_timeout()
+                delay_was_passed = wake_word_activation_delay_passed
+
+                # Set state and spinner text 
+                if not self.recording_stop_time:
                     if self.wake_words and wake_word_activation_delay_passed and not self.wakeword_detected:
-                        self.halo.text = f"say {self.wake_words}"
-                        self.halo._interval = 500
+                        self._set_state("wakeword")
+                        if self.spinner and self.halo:
+                            self.halo.text = f"say {self.wake_words}"
+                            self.halo._interval = 500
                     else:
-                        self.halo.text = "speak now"
-                        self.halo._interval = 200
+                        if self.listen_start:
+                            self._set_state("listening")
+                        else:
+                            self._set_state("inactive")
+                        if self.spinner and self.halo:
+                            self.halo.text = "speak now"
+                            self.halo._interval = 200
 
+                # Detect wake words if applicable
                 if self.wake_words and wake_word_activation_delay_passed:
                     try:
                         pcm = struct.unpack_from("h" * self.buffer_size, data)
@@ -458,8 +566,10 @@ class AudioToTextRecorder:
                         logging.error(f"Wake word processing error: {e}")
                         continue
                     
+                    # If a wake word is detected
                     if wakeword_index >= 0:
-                        # prevent the wake word from being included in the recording
+
+                        # Removing the wake word from the recording
                         samples_for_0_1_sec = int(self.sample_rate * 0.1)
                         start_index = max(0, len(self.audio_buffer) - samples_for_0_1_sec)
                         temp_samples = collections.deque(itertools.islice(self.audio_buffer, start_index, None))
@@ -474,7 +584,7 @@ class AudioToTextRecorder:
                 # Check for voice activity to trigger the start of recording
                 if ((not self.wake_words or not wake_word_activation_delay_passed) and self.start_recording_on_voice_activity) or self.wakeword_detected:
 
-                    if self.is_voice_active(data):
+                    if self._is_voice_active(data):
                         logging.info("voice activity detected")
 
                         self.start()
@@ -489,19 +599,22 @@ class AudioToTextRecorder:
 
                 self.speech_end_silence_start = 0
 
-            # If we're currently recording and voice deactivity is detected, stop the recording
             else:
+                # If we are currently recording
+
+                # Stop the recording if silence is detected after speech
                 if self.stop_recording_on_voice_deactivity:
 
-                    if not self.is_webrtc_speech(data):
-                        # silence detected (after voice detected while recording)
+                    if not self._is_webrtc_speech(data):
 
+                        # Voice deactivity was detected, so we start measuring silence time before stopping recording
                         if self.speech_end_silence_start == 0:
                             self.speech_end_silence_start = time.time()
                         
                     else:
                         self.speech_end_silence_start = 0
 
+                    # Wait for silence to stop recording after speech
                     if self.speech_end_silence_start and time.time() - self.speech_end_silence_start > self.post_speech_silence_duration:
                         logging.info("voice deactivity detected")
                         self.stop()
@@ -526,6 +639,7 @@ class AudioToTextRecorder:
 
             was_recording = self.is_recording
             time.sleep(TIME_SLEEP)
+
 
     def __del__(self):
         """

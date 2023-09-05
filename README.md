@@ -43,13 +43,13 @@ This library uses:
 pip install RealtimeSTT
 ```
 
-This will install all the necessary dependencies, including a CPU support only version of PyTorch.
+This will install all the necessary dependencies, including a **CPU support only** version of PyTorch.
 
 ### GPU Support with CUDA (recommended)
 
-Additional steps are needed for a GPU-optimized installation. These steps are recommended for those who require better performance and have a compatible NVIDIA GPU.
+Additional steps are needed for a **GPU-optimized** installation. These steps are recommended for those who require **better performance** and have a compatible NVIDIA GPU.
 
-If you plan to use RealtimeSTT with GPU support via CUDA, please follow these steps:
+To use RealtimeSTT with GPU support via CUDA please follow these steps:
 
 1. **Install NVIDIA CUDA Toolkit 11.8**:
     - Visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-11-8-0-download-archive).
@@ -106,7 +106,7 @@ print(recorder.text())
 
 ### Callbacks
 
-You can set callback functions to be executed when recording starts or stops:
+You can set callback functions to be executed on different events (see [Configuration](#configuration)) :
 
 ```python
 def my_start_callback():
@@ -151,7 +151,9 @@ The test subdirectory contains a set of scripts to help you evaluate and underst
 
 ### Initialization Parameters for `AudioToTextRecorder`
 
-When you initialize the `AudioToTextRecorder` class, you have various options to customize its behavior. Here are the available parameters:
+When you initialize the `AudioToTextRecorder` class, you have various options to customize its behavior.
+
+#### General Parameters
 
 - **model** (str, default="tiny"): Model size or path for transcription.
     - Options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
@@ -163,9 +165,13 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **on_recording_stop**: A callable function triggered when recording ends.
 
+- **on_transcription_start**: A callable function triggered when transcription starts.
+
 - **spinner** (bool, default=True): Provides a spinner animation text with information about the current recorder state.
 
 - **level** (int, default=logging.WARNING): Logging level.
+
+#### Voice Activation Parameters
 
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
@@ -179,6 +185,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **pre_recording_buffer_duration** (float, default=0.2): The time span, in seconds, during which audio is buffered prior to formal recording. This helps counterbalancing the latency inherent in speech activity detection, ensuring no initial audio is missed.
 
+#### Wake Word Parameters
+
 - **wake_words** (str, default=""): Wake words for initiating the recording. Multiple wake words can be provided as a comma-separated string. Supported wake words are: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
 
 - **wake_words_sensitivity** (float, default=0.6): Sensitivity level for wake word detection (0 for least sensitive, 1 for most sensitive).
@@ -190,6 +198,10 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **on_wakeword_detected**: A callable function triggered when a wake word is detected.
 
 - **on_wakeword_timeout**: Callback function to be called when the system goes back to an inactive state after when no speech was detected after wake word activation.
+
+- **on_wakeword_detection_start**: Callback function to be called the system starts to listen for wake words
+
+- **on_wakeword_detection_end**: Callback function to be called when stopping to listen for wake words (e.g. because of timeout or wake word detected)
 
 
 ## Contribution
