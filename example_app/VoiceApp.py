@@ -2,8 +2,8 @@ from RealtimeTTS import TextToAudioStream, AzureEngine, ElevenlabsEngine, System
 from RealtimeSTT import AudioToTextRecorder
 
 from PyQt5.QtCore import Qt, QTimer, QRect, QEvent, pyqtSignal, QThread, QPoint, QPropertyAnimation, QVariantAnimation
-from PyQt5.QtGui import QPalette, QColor, QPainter, QFontMetrics, QFont
-from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QDesktopWidget
+from PyQt5.QtGui import QPalette, QColor, QPainter, QFontMetrics, QFont, QMouseEvent, QContextMenuEvent
+from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QDesktopWidget, QMenu, QAction
 
 import os
 import openai
@@ -12,16 +12,17 @@ import time
 import sounddevice as sd
 import numpy as np
 import wavio
-
+import keyboard
 
 max_history_messages = 6
 return_to_wakewords_after_silence = 12
 start_with_wakeword = False
 recorder_model = "large-v2"
 language = "de"
+engine = "azure" # elevenlabs, system
+azure_speech_region = "germanywestcentral"
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
-azure_speech_region = "germanywestcentral"
 
 user_font_size = 22
 user_color = QColor(208, 208, 208) # gray
@@ -131,27 +132,37 @@ class TransparentWindow(QWidget):
         self.run_fade_user = False
         self.run_fade_assistant = False
 
+        self.menu = QMenu()
+        self.menu.setStyleSheet("""
+            QMenu {
+                background-color: black;
+                color: white;
+                border-radius: 10px;
+            }
+            QMenu::item:selected {
+                background-color: #555555;
+            }
+            """)
+
+        self.elevenlabs_action = QAction("Elevenlabs", self)
+        self.azure_action = QAction("Azure", self)
+        self.system_action = QAction("System", self)
+
+        self.menu.addAction(self.elevenlabs_action)
+        self.menu.addAction(self.azure_action)
+        self.menu.addAction(self.system_action)
+
+        self.elevenlabs_action.triggered.connect(lambda: self.select_engine("elevenlabs"))
+        self.azure_action.triggered.connect(lambda: self.select_engine("azure"))
+        self.system_action.triggered.connect(lambda: self.select_engine("system"))
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            if event.pos().x() >= self.width() - 100 and event.pos().y() <= 100:
+                self.menu.exec_(self.mapToGlobal(event.pos()))        
+
     def init(self):
-        self.stream = TextToAudioStream(
-                # SystemEngine(),
-
-                AzureEngine(
-                    os.environ.get("AZURE_SPEECH_KEY"),
-                    azure_speech_region,
-                    voice,
-                    rate=34,
-                    pitch=10,
-                ),
-
-                # ElevenlabsEngine(
-                #     os.environ.get("ELEVENLABS_API_KEY")
-                # ),
-                on_character=self.on_character,
-                on_text_stream_stop=self.on_text_stream_stop,
-                on_text_stream_start=self.on_text_stream_start,
-                on_audio_stream_stop=self.on_audio_stream_stop,
-                log_characters=True,
-            )       
+        self.select_engine("azure")
         self.recorder = AudioToTextRecorder(
             model=recorder_model,
             language=language,
@@ -171,6 +182,49 @@ class TransparentWindow(QWidget):
         self.text_retrieval_thread.textRetrieved.connect(self.process_user_text)
         self.text_retrieval_thread.start()
         self.text_retrieval_thread.activate()
+
+        keyboard.on_press_key('esc', self.on_escape)
+
+    def select_engine(self, engine_name):
+        if self.stream:
+            if self.stream.is_playing():
+                self.stream.stop()
+            self.stream = None
+
+        engine = None
+
+        if engine_name == "azure":
+            engine = AzureEngine(
+                    os.environ.get("AZURE_SPEECH_KEY"),
+                    azure_speech_region,
+                    voice,
+                    rate=34,
+                    pitch=10,
+                )
+
+        elif engine_name == "elevenlabs":
+            engine = ElevenlabsEngine(
+                    os.environ.get("ELEVENLABS_API_KEY")
+                )
+        else:
+            engine = SystemEngine(
+                voice="Stefan",
+                print_installed_voices=True
+            )
+
+        self.stream = TextToAudioStream(
+            engine,
+            on_character=self.on_character,
+            on_text_stream_stop=self.on_text_stream_stop,
+            on_text_stream_start=self.on_text_stream_start,
+            on_audio_stream_stop=self.on_audio_stream_stop,
+            log_characters=True
+        )
+
+
+    def on_escape(self, e):
+        if self.stream.is_playing():
+            self.stream.stop()
 
     def showEvent(self, event: QEvent):
         super().showEvent(event)
@@ -311,6 +365,12 @@ class TransparentWindow(QWidget):
         self.assistant_text_opacity = 255
         self.run_fade_assistant = True
         self.fade_out_assistant_text()
+
+    # def keyPressEvent(self, event):
+    #     if event.key() == Qt.Key_Escape:
+    #         self.stream.stop()
+    #     super().keyPressEvent(event)
+
 
     def update_self(self):
 
