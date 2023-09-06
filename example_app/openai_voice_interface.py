@@ -151,19 +151,26 @@ class TransparentWindow(QWidget):
         self.elevenlabs_action = QAction("Elevenlabs", self)
         self.azure_action = QAction("Azure", self)
         self.system_action = QAction("System", self)
+        self.quit_action = QAction("Quit", self)
 
         self.menu.addAction(self.elevenlabs_action)
         self.menu.addAction(self.azure_action)
         self.menu.addAction(self.system_action)
+        self.menu.addSeparator() 
+        self.menu.addAction(self.quit_action)
 
         self.elevenlabs_action.triggered.connect(lambda: self.select_engine("Elevenlabs"))
         self.azure_action.triggered.connect(lambda: self.select_engine("Azure"))
         self.system_action.triggered.connect(lambda: self.select_engine("System"))
+        self.quit_action.triggered.connect(self.close_application)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             if event.pos().x() >= self.width() - 100 and event.pos().y() <= 100:
                 self.menu.exec_(self.mapToGlobal(event.pos()))        
+
+    def close_application(self):
+        QApplication.quit()                
 
     def init(self):
 
