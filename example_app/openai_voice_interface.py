@@ -17,10 +17,10 @@ import keyboard
 max_history_messages = 6
 return_to_wakewords_after_silence = 12
 start_with_wakeword = False
+start_engine = "System" # Azure, Elevenlabs
 recorder_model = "large-v2"
-language = "de"
-engine = "azure" # elevenlabs, system
-azure_speech_region = "germanywestcentral"
+language = "en"
+azure_speech_region = "eastus"
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
@@ -30,15 +30,19 @@ user_color = QColor(208, 208, 208) # gray
 assistant_font_size = 24
 assistant_color = QColor(240, 240, 240) # white
 
-
-
-voice = "en-GB-SoniaNeural"
+voice_azure = "en-GB-SoniaNeural"
+voice_system = "Zira"
+#voice_system = "Hazel"
 prompt = "Respond helpfully, concisely, and when appropriate, with the subtle, polite irony of a butler."
 
 if language == "de":
-    voice = "de-DE-MajaNeural"
+    voice_system = "Katja"
+    voice_azure = "de-DE-MajaNeural"
     prompt = 'Antworte hilfreich, knapp und bei Gelegenheit mit der feinen, höflichen Ironie eines Butlers.'
 
+
+print ("Click the top right corner to change the engine")
+print ("Press ESC to stop the current playback")
 
 system_prompt_message = {
     'role': 'system',
@@ -152,9 +156,9 @@ class TransparentWindow(QWidget):
         self.menu.addAction(self.azure_action)
         self.menu.addAction(self.system_action)
 
-        self.elevenlabs_action.triggered.connect(lambda: self.select_engine("elevenlabs"))
-        self.azure_action.triggered.connect(lambda: self.select_engine("azure"))
-        self.system_action.triggered.connect(lambda: self.select_engine("system"))
+        self.elevenlabs_action.triggered.connect(lambda: self.select_engine("Elevenlabs"))
+        self.azure_action.triggered.connect(lambda: self.select_engine("Azure"))
+        self.system_action.triggered.connect(lambda: self.select_engine("System"))
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -162,7 +166,9 @@ class TransparentWindow(QWidget):
                 self.menu.exec_(self.mapToGlobal(event.pos()))        
 
     def init(self):
-        self.select_engine("azure")
+
+        self.select_engine(start_engine)
+
         self.recorder = AudioToTextRecorder(
             model=recorder_model,
             language=language,
@@ -193,23 +199,23 @@ class TransparentWindow(QWidget):
 
         engine = None
 
-        if engine_name == "azure":
+        if engine_name == "Azure":
             engine = AzureEngine(
                     os.environ.get("AZURE_SPEECH_KEY"),
                     azure_speech_region,
-                    voice,
-                    rate=34,
+                    voice_azure,
+                    rate=24,
                     pitch=10,
                 )
 
-        elif engine_name == "elevenlabs":
+        elif engine_name == "Elevenlabs":
             engine = ElevenlabsEngine(
                     os.environ.get("ELEVENLABS_API_KEY")
                 )
         else:
             engine = SystemEngine(
-                voice="Stefan",
-                print_installed_voices=True
+                voice=voice_system,
+                #print_installed_voices=True
             )
 
         self.stream = TextToAudioStream(
@@ -220,6 +226,8 @@ class TransparentWindow(QWidget):
             on_audio_stream_stop=self.on_audio_stream_stop,
             log_characters=True
         )
+
+        print (f"Using {engine_name} engine")
 
 
     def on_escape(self, e):
@@ -245,6 +253,8 @@ class TransparentWindow(QWidget):
             history.append({'role': 'assistant', 'content': assistant_response})
 
     def on_audio_stream_stop(self):
+        self.set_symbols("🎙️", "⚪")
+
         if self.stream:
             self.clearAssistantTextSignal.emit()
             self.text_retrieval_thread.activate()
@@ -365,12 +375,6 @@ class TransparentWindow(QWidget):
         self.assistant_text_opacity = 255
         self.run_fade_assistant = True
         self.fade_out_assistant_text()
-
-    # def keyPressEvent(self, event):
-    #     if event.key() == Qt.Key_Escape:
-    #         self.stream.stop()
-    #     super().keyPressEvent(event)
-
 
     def update_self(self):
 
