@@ -18,9 +18,10 @@ max_history_messages = 6
 return_to_wakewords_after_silence = 12
 start_with_wakeword = False
 start_engine = "System" # Azure, Elevenlabs
-recorder_model = "large-v2"
+recorder_model = "medium"
 language = "en"
 azure_speech_region = "eastus"
+openai_model = "gpt-4" # gpt-3.5-turbo, gpt-4, gpt-3.5-turbo-0613 / gpt-3.5-turbo-16k-0613 / gpt-4-0613 / gpt-4-32k-0613
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
@@ -33,12 +34,14 @@ assistant_color = QColor(240, 240, 240) # white
 voice_azure = "en-GB-SoniaNeural"
 voice_system = "Zira"
 #voice_system = "Hazel"
-prompt = "Respond helpfully, concisely, and when appropriate, with the subtle, polite irony of a butler."
+prompt = "Be concise, polite, and casual with a touch of sass. Aim for short, direct responses, as if we're talking."
+elevenlabs_model = "eleven_monolingual_v1"
 
 if language == "de":
+    elevenlabs_model = "eleven_multilingual_v1"
     voice_system = "Katja"
     voice_azure = "de-DE-MajaNeural"
-    prompt = 'Antworte hilfreich, knapp und bei Gelegenheit mit der feinen, höflichen Ironie eines Butlers.'
+    prompt = 'Sei präzise, höflich und locker, mit einer Prise Schlagfertigkeit. Antworte kurz und direkt, als ob wir gerade sprechen.'
 
 
 print ("Click the top right corner to change the engine")
@@ -51,7 +54,7 @@ system_prompt_message = {
 
 def generate_response(messages):
     """Generate assistant's response using OpenAI."""
-    for chunk in openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages, stream=True, logit_bias={35309:-100, 36661:-100}):
+    for chunk in openai.ChatCompletion.create(model=openai_model, messages=messages, stream=True, logit_bias={35309:-100, 36661:-100}):
         text_chunk = chunk["choices"][0]["delta"].get("content")
         if text_chunk:
             yield text_chunk
@@ -200,8 +203,7 @@ class TransparentWindow(QWidget):
 
     def select_engine(self, engine_name):
         if self.stream:
-            if self.stream.is_playing():
-                self.stream.stop()
+            self.stream.stop()
             self.stream = None
 
         engine = None
@@ -217,7 +219,8 @@ class TransparentWindow(QWidget):
 
         elif engine_name == "Elevenlabs":
             engine = ElevenlabsEngine(
-                    os.environ.get("ELEVENLABS_API_KEY")
+                    os.environ.get("ELEVENLABS_API_KEY"),
+                    model=elevenlabs_model
                 )
         else:
             engine = SystemEngine(
@@ -233,7 +236,8 @@ class TransparentWindow(QWidget):
             on_audio_stream_stop=self.on_audio_stream_stop,
             log_characters=True
         )
-
+        sys.stdout.write('\033[K')  # Clear to the end of line
+        sys.stdout.write('\r')  # Move the cursor to the beginning of the line
         print (f"Using {engine_name} engine")
 
 
@@ -275,8 +279,8 @@ class TransparentWindow(QWidget):
         self.remove_assistant_text()
         assistant_response = generate_response([system_prompt_message] + history[-max_history_messages:])
         self.stream.feed(assistant_response)
-        self.stream.play_async(minimum_sentence_length=7,
-                               buffer_threshold_seconds=3)
+        self.stream.play_async(minimum_sentence_length=6,
+                               buffer_threshold_seconds=2)
 
     def set_symbols(self, big_symbol, small_symbol):
         self.big_symbol_text = big_symbol
