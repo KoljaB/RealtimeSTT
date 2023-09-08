@@ -472,20 +472,24 @@ class AudioToTextRecorder:
             if self.on_vad_detect_start:
                 self.on_vad_detect_start()
             self._set_spinner("speak now")
-            self.halo._interval = 250
+            if self.spinner:
+                self.halo._interval = 250
         elif new_state == "wakeword":
             if self.on_wakeword_detection_start:
                 self.on_wakeword_detection_start()
             self._set_spinner(f"say {self.wake_words}")
-            self.halo._interval = 500
+            if self.spinner:
+                self.halo._interval = 500
         elif new_state == "transcribing":
             if self.on_transcription_start:
                 self.on_transcription_start()
             self._set_spinner("transcribing")
-            self.halo._interval = 50
+            if self.spinner:
+                self.halo._interval = 50
         elif new_state == "recording":
             self._set_spinner("recording")
-            self.halo._interval = 100
+            if self.spinner:
+                self.halo._interval = 100
         elif new_state == "inactive":
             if self.spinner and self.halo:
                 self.halo.stop()
