@@ -171,6 +171,17 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **level** (int, default=logging.WARNING): Logging level.
 
+#### Real-time Transcription Parameters
+
+- **realtime_preview** (bool, default=False): Specifies whether transcription should occur in real-time. If set to True, the audio will also be transcribed as it is recorded.
+
+- **realtime_preview_model** (str, default="tiny"): Specifies the size or path of the machine learning model to be used for real-time transcription.
+    - Valid options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
+
+- **realtime_preview_resolution** (float, default=0.1): Specifies the time interval in seconds after a chunk of audio gets transcribed. Lower values will result in more "real-time" (frequent) transcription updates but may increase computational load.
+
+- **on_realtime_preview**: A callable function triggered during real-time transcription. The function is invoked with the transcribed text as its argument.
+
 #### Voice Activation Parameters
 
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
