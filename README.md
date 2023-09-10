@@ -216,7 +216,7 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 #### Real-time Transcription Parameters
 
-**Note**: When enabling realtime description a GPU installation is strongly advised. Using realtime transcription may create high GPU loads.
+> **Note**: *When enabling realtime description a GPU installation is strongly advised. Using realtime transcription may create high GPU loads.*
 
 - **enable_realtime_transcription** (bool, default=False): Enables or disables real-time transcription of audio. When set to True, the audio will be transcribed continuously as it is being recorded.
 
