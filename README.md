@@ -147,8 +147,8 @@ def my_start_callback():
 def my_stop_callback():
     print("Recording stopped!")
 
-recorder = AudioToTextRecorder(on_recording_started=my_start_callback,
-                               on_recording_finished=my_stop_callback)
+recorder = AudioToTextRecorder(on_recording_start=my_start_callback,
+                               on_recording_stop=my_stop_callback)
 ```
 
 
