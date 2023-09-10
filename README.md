@@ -3,7 +3,6 @@
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
-
 ## About the Project
 
 RealtimeSTT listens to the microphone and transcribes voice into text.  
@@ -13,14 +12,15 @@ It's ideal for:
 - **Voice Assistants**
 - Applications requiring **fast and precise** speech-to-text conversion
 
+https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-0722c3ee6d14
+
 ### Features
 
 - **Voice Activity Detection**: Automatically detects when you start and stop speaking.
-- **Wake Word Activation**: Only starts transcription upon hearing a specific wake word.
 - **Realtime Transcription**: Transforms speech to text in real-time.
+- **Wake Word Activation**: Can activate upon detecting a designated wake word.
 
 > **Hint**: *Check out [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS), the output counterpart of this library, for text-to-voice capabilities. Together, they form a powerful realtime audio wrapper around large language models.*
-
 
 ## Tech Stack
 

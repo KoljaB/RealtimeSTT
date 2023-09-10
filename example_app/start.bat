@@ -21,4 +21,4 @@ set ELEVENLABS_API_KEY=
 
 
 echo Activating VENV
-start cmd /k "call test_env\Scripts\activate.bat && python VoiceApp.py"
+start cmd /k "call test_env\Scripts\activate.bat && python ui_openai_voice_interface.py"
