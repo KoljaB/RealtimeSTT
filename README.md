@@ -184,7 +184,7 @@ When using OpenAI-, Azure- or Elevenlabs-related demo scripts the API Keys shoul
     - **Dependencies**: Run `pip install openai realtimetts`.
     - **Description**: A basic talkbot in 20 lines of code.
 
-The example_app subdirectory contains a polished user interface application for the OpenAI Api based on PyQt5.
+The example_app subdirectory contains a polished user interface application for the OpenAI API based on PyQt5.
 
 ## Configuration
 
