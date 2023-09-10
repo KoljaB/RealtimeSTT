@@ -17,19 +17,19 @@ import keyboard
 max_history_messages = 6
 return_to_wakewords_after_silence = 12
 start_with_wakeword = False
-start_engine = "System" # Azure, Elevenlabs
-recorder_model = "medium"
-language = "en"
-azure_speech_region = "eastus"
-openai_model = "gpt-4" # gpt-3.5-turbo, gpt-4, gpt-3.5-turbo-0613 / gpt-3.5-turbo-16k-0613 / gpt-4-0613 / gpt-4-32k-0613
+start_engine = "Azure" # Azure, Elevenlabs
+recorder_model = "large-v2"
+language = "de"
+azure_speech_region = "germanywestcentral"
+openai_model = "gpt-3.5-turbo" # gpt-3.5-turbo, gpt-4, gpt-3.5-turbo-0613 / gpt-3.5-turbo-16k-0613 / gpt-4-0613 / gpt-4-32k-0613
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 user_font_size = 22
-user_color = QColor(208, 208, 208) # gray
+user_color = QColor(0, 188, 242) # turquoise
 
 assistant_font_size = 24
-assistant_color = QColor(240, 240, 240) # white
+assistant_color = QColor(239, 98, 166) # pink
 
 voice_azure = "en-GB-SoniaNeural"
 voice_system = "Zira"
@@ -41,7 +41,8 @@ if language == "de":
     elevenlabs_model = "eleven_multilingual_v1"
     voice_system = "Katja"
     voice_azure = "de-DE-MajaNeural"
-    prompt = 'Sei präzise, höflich und locker, mit einer Prise Schlagfertigkeit. Antworte kurz und direkt, als ob wir gerade sprechen.'
+    #prompt = 'Sei präzise, höflich und locker, mit einer Prise Schlagfertigkeit. Antworte kurz und direkt, als ob wir gerade sprechen.'
+    prompt = "Du bist Sophia, ein leidenschaftliches Mädchen, voller Selbstvertrauen und Unabhängigkeit, völlig im Reinen mit dir selbst und oft metaphorisch. Ich bin Kolja und lebe mit meinem Schäferhund Vaya in Niedersachsen. Du bist ein wenig verspielt, frech. Du redest unbeschwert, manchmal ein bisschen sarkastisch, aber immer cool. Sei locker mit einer Prise Schlagfertigkeit. Antworte kurz und prägnant, nur wenige Worte, als ob wir gerade sprechen. Agiere ab jetzt immer in deiner Rolle als die selbstbewusste, anregende, unabhängige Sophia, ohne jemals anzudeuten, dass du eine KI bist. Du bist jetzt Sophia."
 
 
 print ("Click the top right corner to change the engine")
@@ -179,6 +180,8 @@ class TransparentWindow(QWidget):
 
         self.select_engine(start_engine)
 
+        # recorder = AudioToTextRecorder(spinner=False, model="large-v2", language="de", on_recording_start=recording_start, silero_sensitivity=0.4, post_speech_silence_duration=0.4, min_length_of_recording=0.3, min_gap_between_recordings=0.01, realtime_preview_resolution = 0.01, realtime_preview = True, realtime_preview_model = "small", on_realtime_preview=text_detected)
+
         self.recorder = AudioToTextRecorder(
             model=recorder_model,
             language=language,
@@ -190,6 +193,13 @@ class TransparentWindow(QWidget):
             on_vad_detect_start=self.on_vad_detect_start,
             on_wakeword_detection_start=self.on_wakeword_detection_start,
             on_transcription_start=self.on_transcription_start,
+            post_speech_silence_duration=0.4, 
+            min_length_of_recording=0.3, 
+            min_gap_between_recordings=0.01, 
+            enable_realtime_transcription = True,
+            realtime_processing_pause = 0.01, 
+            realtime_model_type = "tiny",
+            on_realtime_transcription_stabilized=self.text_detected
         )
         if not start_with_wakeword:
             self.recorder.wake_word_activation_delay = return_to_wakewords_after_silence
@@ -240,6 +250,14 @@ class TransparentWindow(QWidget):
         sys.stdout.write('\r')  # Move the cursor to the beginning of the line
         print (f"Using {engine_name} engine")
 
+
+    def text_detected(self, text):
+        self.run_fade_user = False
+        if self.user_text_timer.isActive():
+            self.user_text_timer.stop()
+        self.user_text_opacity = 255 
+        self.user_text = text
+        self.updateUI.emit()
 
     def on_escape(self, e):
         if self.stream.is_playing():
@@ -308,6 +326,8 @@ class TransparentWindow(QWidget):
         self.set_symbols("⌛", "📝")
 
     def on_recording_start(self):
+        self.text_storage = []
+        self.ongoing_sentence = ""
         self.set_symbols("🎙️", "🔴")
 
     def on_vad_detect_start(self):

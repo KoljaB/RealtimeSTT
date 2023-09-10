@@ -12,7 +12,38 @@ Steps for a **GPU-optimized** installation:
     - Click on "Download cuDNN v8.7.0 (November 28th, 2022), for CUDA 11.x".
     - Download and install the software.
 
-3. **ElevenlabsEngine**
+3. **Install ffmpeg**:
+
+    You can download an installer for your OS from the [ffmpeg Website](https://ffmpeg.org/download.html).  
+    
+    Or use a package manager:
+
+    - **On Ubuntu or Debian**:
+        ```bash
+        sudo apt update && sudo apt install ffmpeg
+        ```
+
+    - **On Arch Linux**:
+        ```bash
+        sudo pacman -S ffmpeg
+        ```
+
+    - **On MacOS using Homebrew** ([https://brew.sh/](https://brew.sh/)):
+        ```bash
+        brew install ffmpeg
+        ```
+
+    - **On Windows using Chocolatey** ([https://chocolatey.org/](https://chocolatey.org/)):
+        ```bash
+        choco install ffmpeg
+        ```
+
+    - **On Windows using Scoop** ([https://scoop.sh/](https://scoop.sh/)):
+        ```bash
+        scoop install ffmpeg
+        ```    
+
+4. **ElevenlabsEngine**
     - If you plan to use the `ElevenlabsEngine`, you need `mpv` is installed on your system for streaming mpeg audio
 
     - **macOS**:
@@ -22,8 +53,8 @@ Steps for a **GPU-optimized** installation:
 
     - **Linux and Windows**: Visit [mpv.io](https://mpv.io/) for installation instructions.
 
-4. **Install PyTorch with CUDA support**:
+5. **Install PyTorch with CUDA support**:
     - run install_gpu.bat
 
-5. **Configure script**
-    - open VoiceApp.py and configure your engine, set API keys, Azure service region, language etc
+6. **Configure script**
+    - open ui_openai_voice_interface.py and configure your engine, set API keys, Azure service region, language etc

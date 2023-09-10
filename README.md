@@ -45,6 +45,8 @@ pip install RealtimeSTT
 
 This will install all the necessary dependencies, including a **CPU support only** version of PyTorch.
 
+Although it is possible to run RealtimeSTT with a CPU installation only using a small model you will get way better experience using:7
+
 ### GPU Support with CUDA (recommended)
 
 Additional steps are needed for a **GPU-optimized** installation. These steps are recommended for those who require **better performance** and have a compatible NVIDIA GPU.
@@ -61,7 +63,38 @@ To use RealtimeSTT with GPU support via CUDA please follow these steps:
     - Click on "Download cuDNN v8.7.0 (November 28th, 2022), for CUDA 11.x".
     - Download and install the software.
 
-3. **Install PyTorch with CUDA support**:
+3. **Install ffmpeg**:
+
+    You can download an installer for your OS from the [ffmpeg Website](https://ffmpeg.org/download.html).  
+    
+    Or use a package manager:
+
+    - **On Ubuntu or Debian**:
+        ```bash
+        sudo apt update && sudo apt install ffmpeg
+        ```
+
+    - **On Arch Linux**:
+        ```bash
+        sudo pacman -S ffmpeg
+        ```
+
+    - **On MacOS using Homebrew** ([https://brew.sh/](https://brew.sh/)):
+        ```bash
+        brew install ffmpeg
+        ```
+
+    - **On Windows using Chocolatey** ([https://chocolatey.org/](https://chocolatey.org/)):
+        ```bash
+        choco install ffmpeg
+        ```
+
+    - **On Windows using Scoop** ([https://scoop.sh/](https://scoop.sh/)):
+        ```bash
+        scoop install ffmpeg
+        ```    
+
+4. **Install PyTorch with CUDA support**:
     ```bash
     pip uninstall torch
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -124,8 +157,14 @@ recorder = AudioToTextRecorder(on_recording_started=my_start_callback,
 
 The test subdirectory contains a set of scripts to help you evaluate and understand the capabilities of the RealtimeTTS library.
 
+Test scripts depending on RealtimeTTS library may require you to enter your azure service region within the script. 
+When using OpenAI-, Azure- or Elevenlabs-related demo scripts the API Keys should be provided in the environment variables OPENAI_API_KEY, AZURE_SPEECH_KEY and ELEVENLABS_API_KEY (see [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS))
+
 - **simple_test.py**
     - **Description**: A "hello world" styled demonstration of the library's simplest usage.
+
+- **realtimestt_test.py**
+    - **Description**: Showcasing live-transcription.
 
 - **wakeword_test.py**
     - **Description**: A demonstration of the wakeword activation.
@@ -146,6 +185,7 @@ The test subdirectory contains a set of scripts to help you evaluate and underst
     - **Dependencies**: Run `pip install openai realtimetts`.
     - **Description**: A basic talkbot in 20 lines of code.
 
+The example_app subdirectory contains a polished user interface application for the OpenAI Api based on PyQt5.
 
 ## Configuration
 
@@ -167,20 +207,28 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **on_transcription_start**: A callable function triggered when transcription starts.
 
+- **ensure_sentence_starting_uppercase** (bool, default=True): Ensures that every sentence detected by the algorithm starts with an uppercase letter.
+
+- **ensure_sentence_ends_with_period** (bool, default=True): Ensures that every sentence that doesn't end with punctuation such as "?", "!" ends with a period
+
 - **spinner** (bool, default=True): Provides a spinner animation text with information about the current recorder state.
 
 - **level** (int, default=logging.WARNING): Logging level.
 
 #### Real-time Transcription Parameters
 
-- **realtime_preview** (bool, default=False): Specifies whether transcription should occur in real-time. If set to True, the audio will also be transcribed as it is recorded.
+**Note**: When enabling realtime description a GPU installation is strongly advised. Using realtime transcription may create high GPU loads.
 
-- **realtime_preview_model** (str, default="tiny"): Specifies the size or path of the machine learning model to be used for real-time transcription.
+- **enable_realtime_transcription** (bool, default=False): Enables or disables real-time transcription of audio. When set to True, the audio will be transcribed continuously as it is being recorded.
+
+- **realtime_model_type** (str, default="tiny"): Specifies the size or path of the machine learning model to be used for real-time transcription.
     - Valid options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
 
-- **realtime_preview_resolution** (float, default=0.1): Specifies the time interval in seconds after a chunk of audio gets transcribed. Lower values will result in more "real-time" (frequent) transcription updates but may increase computational load.
+- **realtime_processing_pause** (float, default=0.2): Specifies the time interval in seconds after a chunk of audio gets transcribed. Lower values will result in more "real-time" (frequent) transcription updates but may increase computational load.
 
-- **on_realtime_preview**: A callable function triggered during real-time transcription. The function is invoked with the transcribed text as its argument.
+- **on_realtime_transcription_update**: A callback function that is triggered whenever there's an update in the real-time transcription. The function is called with the newly transcribed text as its argument.
+
+- **on_realtime_transcription_stabilized**: A callback function that is triggered whenever there's an update in the real-time transcription and returns a higher quality, stabilized text as its argument.
 
 #### Voice Activation Parameters
 
