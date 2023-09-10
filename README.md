@@ -51,7 +51,7 @@ Although it is possible to run RealtimeSTT with a CPU installation only (use a s
 
 Additional steps are needed for a **GPU-optimized** installation. These steps are recommended for those who require **better performance** and have a compatible NVIDIA GPU.
 
-**Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
+> **Note**: *To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).*
 
 To use RealtimeSTT with GPU support via CUDA please follow these steps:
 
