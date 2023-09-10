@@ -45,7 +45,7 @@ pip install RealtimeSTT
 
 This will install all the necessary dependencies, including a **CPU support only** version of PyTorch.
 
-Although it is possible to run RealtimeSTT with a CPU installation only using a small model you will get way better experience using:7
+Although it is possible to run RealtimeSTT with a CPU installation only using a small model you will get way better experience using:
 
 ### GPU Support with CUDA (recommended)
 
