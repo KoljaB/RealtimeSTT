@@ -51,6 +51,8 @@ Although it is possible to run RealtimeSTT with a CPU installation only (use a s
 
 Additional steps are needed for a **GPU-optimized** installation. These steps are recommended for those who require **better performance** and have a compatible NVIDIA GPU.
 
+**Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
+
 To use RealtimeSTT with GPU support via CUDA please follow these steps:
 
 1. **Install NVIDIA CUDA Toolkit 11.8**:
@@ -99,9 +101,6 @@ To use RealtimeSTT with GPU support via CUDA please follow these steps:
     pip uninstall torch
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
     ```
-
-**Note**: To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).
-
 
 ## Quick Start
 
