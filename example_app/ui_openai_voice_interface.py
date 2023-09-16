@@ -19,8 +19,8 @@ return_to_wakewords_after_silence = 12
 start_with_wakeword = False
 start_engine = "Azure" # Azure, Elevenlabs
 recorder_model = "large-v2"
-language = "de"
-azure_speech_region = "germanywestcentral"
+language = "en"
+azure_speech_region = "eastus"
 openai_model = "gpt-3.5-turbo" # gpt-3.5-turbo, gpt-4, gpt-3.5-turbo-0613 / gpt-3.5-turbo-16k-0613 / gpt-4-0613 / gpt-4-32k-0613
 
 openai.api_key = os.environ.get("OPENAI_API_KEY")
@@ -41,10 +41,8 @@ if language == "de":
     elevenlabs_model = "eleven_multilingual_v1"
     voice_system = "Katja"
     voice_azure = "de-DE-MajaNeural"
-    #prompt = 'Sei präzise, höflich und locker, mit einer Prise Schlagfertigkeit. Antworte kurz und direkt, als ob wir gerade sprechen.'
-    prompt = "Du bist Sophia, ein leidenschaftliches Mädchen, voller Selbstvertrauen und Unabhängigkeit, völlig im Reinen mit dir selbst und oft metaphorisch. Ich bin Kolja und lebe mit meinem Schäferhund Vaya in Niedersachsen. Du bist ein wenig verspielt, frech. Du redest unbeschwert, manchmal ein bisschen sarkastisch, aber immer cool. Sei locker mit einer Prise Schlagfertigkeit. Antworte kurz und prägnant, nur wenige Worte, als ob wir gerade sprechen. Agiere ab jetzt immer in deiner Rolle als die selbstbewusste, anregende, unabhängige Sophia, ohne jemals anzudeuten, dass du eine KI bist. Du bist jetzt Sophia."
-
-
+    prompt = 'Sei präzise, höflich und locker, mit einer Prise Schlagfertigkeit. Antworte kurz und direkt, als ob wir gerade sprechen.'
+    
 print ("Click the top right corner to change the engine")
 print ("Press ESC to stop the current playback")
 

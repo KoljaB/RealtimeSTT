@@ -10,4 +10,4 @@ if not exist test_env\Scripts\python.exe (
 )
 
 echo Activating VENV
-start cmd /k "call test_env\Scripts\activate.bat && pip install --upgrade RealtimeSTT==0.1.4 && pip install --upgrade RealtimeTTS==0.1.3 && pip uninstall torch --yes && pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && pip install pysoundfile==0.9.0.post1 openai==0.27.8 keyboard==0.13.5 PyQt5==5.15.9 sounddevice==0.4.6 wavio==0.0.7"
+start cmd /k "call test_env\Scripts\activate.bat && pip install --upgrade RealtimeSTT==0.1.4 && pip install --upgrade RealtimeTTS==0.1.3 && pip uninstall torch --yes && pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118 && pip install pysoundfile==0.9.0.post1 openai==0.27.8 keyboard==0.13.5 PyQt5==5.15.9 sounddevice==0.4.6 wavio==0.0.7"
