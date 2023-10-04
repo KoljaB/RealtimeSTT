@@ -219,7 +219,7 @@ class TransparentWindow(QWidget):
         if engine_name == "Azure":
             engine = AzureEngine(
                     os.environ.get("AZURE_SPEECH_KEY"),
-                    azure_speech_region,
+                    os.environ.get("AZURE_SPEECH_REGION"),
                     voice_azure,
                     rate=24,
                     pitch=10,

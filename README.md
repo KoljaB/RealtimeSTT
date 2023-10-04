@@ -14,6 +14,14 @@ It's ideal for:
 
 https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-0722c3ee6d14
 
+### Updates
+
+#### v0.1.5
+    - Bugfix for detection of short speech right after sentence detection (the problem mentioned in the video)
+    - Main transcription and recording moved into separate process contexts with multiprocessing
+
+> **Hint:** *Since we use the `multiprocessing` module now, ensure to include the `if __name__ == '__main__':` protection in your code to prevent unexpected behavior, especially on platforms like Windows. For a detailed explanation on why this is important, visit the [official Python documentation on `multiprocessing`](https://docs.python.org/3/library/multiprocessing.html#multiprocessing-programming).*
+
 ### Features
 
 - **Voice Activity Detection**: Automatically detects when you start and stop speaking.
@@ -123,7 +131,17 @@ Recording based on voice activity detection.
 ```python
 recorder = AudioToTextRecorder()
 print(recorder.text())
-```  
+```
+
+When running recorder.text in a loop it is recommended to use a callback, allowing the transcription to be run asynchronously:
+
+```python
+def process_text(text):
+    print (text)
+    
+while True:
+    recorder.text(process_text)
+```
 
 ### Wakewords
 
@@ -233,7 +251,9 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
-- **webrtc_sensitivity** (int, default=3): Sensitivity for the WebRTC Voice Activity Detection engine ranging from 1 (least sensitive) to 3 (most sensitive). Default is 3.
+- **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
+
+- **silero_use_onnx** (bool, default=True): Enables usage of the pre-trained model from Silero in the ONNX (Open Neural Network Exchange) format instead of the PyTorch format. Default is True (recommended for faster performance).
 
 - **post_speech_silence_duration** (float, default=0.2): Duration in seconds of silence that must follow speech before the recording is considered to be completed. This ensures that any brief pauses during speech don't prematurely end the recording.
 
