@@ -1,7 +1,7 @@
 from RealtimeSTT import AudioToTextRecorder
 
-recorder = AudioToTextRecorder(spinner=False)
+if __name__ == '__main__':
+    recorder = AudioToTextRecorder(spinner=False)
 
-print("Say something...")
-
-while (True): print(recorder.text(), end=" ", flush=True)
+    print("Say something...")
+    while (True): print(recorder.text(), end=" ", flush=True)
