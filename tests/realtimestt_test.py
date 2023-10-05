@@ -26,7 +26,7 @@ if __name__ == '__main__':
         if new_text != displayed_text:
             displayed_text = new_text
             clear_console()
-            print(displayed_text)
+            print(displayed_text, end="", flush=True)
 
     def process_text(text):
         full_sentences.append(text)
@@ -50,7 +50,8 @@ if __name__ == '__main__':
 
     recorder = AudioToTextRecorder(**recorder_config)
 
-    print("Say something...")
+    clear_console()
+    print("Say something...", end="", flush=True)
 
     while True:
         recorder.text(process_text)

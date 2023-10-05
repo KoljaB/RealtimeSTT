@@ -20,7 +20,7 @@ Author: Kolja Beigel
 
 """
 
-from multiprocessing import Process, Pipe, Queue
+from multiprocessing import Process, Pipe, Queue, Event
 import faster_whisper
 import collections
 import numpy as np
@@ -222,14 +222,14 @@ class AudioToTextRecorder:
 
 
         # start transcription process
+        self.main_transcription_ready_event = Event()
         self.parent_transcription_pipe, child_transcription_pipe = Pipe()
-        self.process = Process(target=AudioToTextRecorder._transcription_worker, args=(child_transcription_pipe, model))
+        self.process = Process(target=AudioToTextRecorder._transcription_worker, args=(child_transcription_pipe, model, self.main_transcription_ready_event))
         self.process.start()
 
         # start audio data reading process
         reader_process = Process(target=AudioToTextRecorder._audio_data_worker, args=(self.audio_queue, self.sample_rate, self.buffer_size))
         reader_process.start()
-
 
         # Initialize the realtime transcription model
         if self.enable_realtime_transcription:
@@ -310,11 +310,16 @@ class AudioToTextRecorder:
         self.realtime_thread.daemon = True
         self.realtime_thread.start()
 
+        # wait for transcription models to start
+        logging.debug('Waiting for main transcription model to start')
+        self.main_transcription_ready_event.wait()
+        logging.debug('Main transcription model ready')
+
         logging.debug('RealtimeSTT initialization completed successfully')
 
 
     @staticmethod
-    def _transcription_worker(conn, model_path):
+    def _transcription_worker(conn, model_path, ready_event):
 
         logging.info(f"Initializing faster_whisper main transcription model {model_path}")
 
@@ -327,6 +332,8 @@ class AudioToTextRecorder:
         except Exception as e:
             logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
             raise
+
+        ready_event.set()
 
         logging.debug('Faster_whisper main speech to text transcription model initialized successfully')
 
