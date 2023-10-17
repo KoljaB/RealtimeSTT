@@ -1,5 +1,4 @@
 from RealtimeSTT import AudioToTextRecorder
-
 if __name__ == '__main__':
     recorder = AudioToTextRecorder(spinner=False)
 

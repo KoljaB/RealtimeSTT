@@ -1,12 +1,16 @@
 from RealtimeSTT import AudioToTextRecorder
+import logging
 
-def recording_started():
-    print("Speak now...")
+if __name__ == '__main__':
 
-def recording_finished():
-    print("Speech end detected... transcribing...")
+    def recording_started():
+        print("Speak now...")
 
-recorder = AudioToTextRecorder(spinner=False, model="small.en", language="en", wake_words="jarvis", on_wakeword_detected=recording_started, on_recording_stop=recording_finished)
+    def recording_finished():
+        print("Speech end detected... transcribing...")
 
-print('Say "Jarvis" then speak.')
-print(recorder.text())
+    with AudioToTextRecorder(spinner=False, level=logging.DEBUG, model="small.en", language="en", wake_words="jarvis", on_wakeword_detected=recording_started, on_recording_stop=recording_finished
+        ) as recorder:
+        print('Say "Jarvis" then speak.')
+        print(recorder.text())
+        print("Done. Now we should exit.")

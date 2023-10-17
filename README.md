@@ -16,6 +16,10 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
+#### v0.1.6
+- implements context manager protocol (recorder can be used in a `with` statement)
+- bugfix in shutdown method
+
 #### v0.1.5
 
 - Bugfix for detection of short speech right after sentence detection (the problem mentioned in the video)
@@ -130,8 +134,8 @@ print(recorder.text())
 Recording based on voice activity detection.
 
 ```python
-recorder = AudioToTextRecorder()
-print(recorder.text())
+with AudioToTextRecorder() as recorder:
+    print(recorder.text())
 ```
 
 When running recorder.text in a loop it is recommended to use a callback, allowing the transcription to be run asynchronously:
@@ -170,6 +174,20 @@ recorder = AudioToTextRecorder(on_recording_start=my_start_callback,
                                on_recording_stop=my_stop_callback)
 ```
 
+### Shutdown
+
+You can shutdown the recorder safely by using the context manager protocol:
+
+```python
+with AudioToTextRecorder() as recorder:
+    [...]
+```
+
+Or you can call the shutdown method manually (if using "with" is not feasible):
+
+```python
+recorder.shutdown()
+```
 
 ## Testing the Library
 
@@ -254,7 +272,7 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
-- **silero_use_onnx** (bool, default=True): Enables usage of the pre-trained model from Silero in the ONNX (Open Neural Network Exchange) format instead of the PyTorch format. Default is True (recommended for faster performance).
+- **silero_use_onnx** (bool, default=False): Enables usage of the pre-trained model from Silero in the ONNX (Open Neural Network Exchange) format instead of the PyTorch format. Default is False. Recommended for faster performance.
 
 - **post_speech_silence_duration** (float, default=0.2): Duration in seconds of silence that must follow speech before the recording is considered to be completed. This ensures that any brief pauses during speech don't prematurely end the recording.
 
