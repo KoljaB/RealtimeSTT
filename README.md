@@ -17,8 +17,8 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 ### Updates
 
 #### v0.1.6
-- implements context manager protocol (recorder can be used in a `with` statement)
-- bugfix in shutdown method
+- Implements context manager protocol (recorder can be used in a `with` statement)
+- Bugfix for resource management in shutdown method
 
 #### v0.1.5
 
