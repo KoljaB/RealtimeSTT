@@ -20,7 +20,7 @@ Author: Kolja Beigel
 
 """
 
-from multiprocessing import Process, Pipe, Queue, Event
+from multiprocessing import Process, Pipe, Event, Manager
 import faster_whisper
 import collections
 import numpy as np
@@ -172,7 +172,8 @@ class AudioToTextRecorder:
         self.allowed_latency_limit = ALLOWED_LATENCY_LIMIT
     
         self.level = level
-        self.audio_queue = Queue()
+        manager = Manager()
+        self.audio_queue = manager.Queue()
         self.buffer_size = BUFFER_SIZE
         self.sample_rate = SAMPLE_RATE
         self.recording_start_time = 0
