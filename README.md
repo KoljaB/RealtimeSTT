@@ -16,6 +16,11 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
+#### v0.1.7
+- Bugfix for Mac OS Installation (multiprocessing / queue.size())
+- KeyboardInterrupt handling (now abortable with CTRL+C)
+- Bugfix for spinner handling (could lead to exception in some cases)
+
 #### v0.1.6
 - Implements context manager protocol (recorder can be used in a `with` statement)
 - Bugfix for resource management in shutdown method

@@ -229,13 +229,14 @@ class AudioToTextRecorder:
         logging.info(f"Starting RealTimeSTT")
 
         # Start transcription process
+        self.interrupt_stop_event = Event()
         self.main_transcription_ready_event = Event()
         self.parent_transcription_pipe, child_transcription_pipe = Pipe()
-        self.transcript_process = Process(target=AudioToTextRecorder._transcription_worker, args=(child_transcription_pipe, model, self.main_transcription_ready_event, self.shutdown_event))
+        self.transcript_process = Process(target=AudioToTextRecorder._transcription_worker, args=(child_transcription_pipe, model, self.main_transcription_ready_event, self.shutdown_event, self.interrupt_stop_event))
         self.transcript_process.start()
 
         # Start audio data reading process
-        self.reader_process = Process(target=AudioToTextRecorder._audio_data_worker, args=(self.audio_queue, self.sample_rate, self.buffer_size, self.shutdown_event))
+        self.reader_process = Process(target=AudioToTextRecorder._audio_data_worker, args=(self.audio_queue, self.sample_rate, self.buffer_size, self.shutdown_event, self.interrupt_stop_event))
         self.reader_process.start()
 
         # Initialize the realtime transcription model
@@ -326,7 +327,7 @@ class AudioToTextRecorder:
 
 
     @staticmethod
-    def _transcription_worker(conn, model_path, ready_event, shutdown_event):
+    def _transcription_worker(conn, model_path, ready_event, shutdown_event, interrupt_stop_event):
         """
         Worker method that handles the continuous process of transcribing audio data.
 
@@ -363,25 +364,30 @@ class AudioToTextRecorder:
         logging.debug('Faster_whisper main speech to text transcription model initialized successfully')
 
         while not shutdown_event.is_set():
-            if conn.poll(0.5):
-                audio, language = conn.recv()
-                try:
-                    segments = model.transcribe(audio, language=language if language else None)[0]
-                    transcription = " ".join(seg.text for seg in segments).strip()
-                    conn.send(('success', transcription))
-                except faster_whisper.WhisperError as e:
-                    logging.error(f"Whisper transcription error: {e}")
-                    conn.send(('error', str(e)))      
-                except Exception as e:
-                    logging.error(f"General transcription error: {e}")
-                    conn.send(('error', str(e)))
-            else:
-                # If there's no data, sleep for a short while to prevent busy waiting
-                time.sleep(0.02)
+            try:
+                if conn.poll(0.5):
+                    audio, language = conn.recv()
+                    try:
+                        segments = model.transcribe(audio, language=language if language else None)[0]
+                        transcription = " ".join(seg.text for seg in segments).strip()
+                        conn.send(('success', transcription))
+                    except faster_whisper.WhisperError as e:
+                        logging.error(f"Whisper transcription error: {e}")
+                        conn.send(('error', str(e)))      
+                    except Exception as e:
+                        logging.error(f"General transcription error: {e}")
+                        conn.send(('error', str(e)))
+                else:
+                    # If there's no data, sleep for a short while to prevent busy waiting
+                    time.sleep(0.02)
+            except KeyboardInterrupt:
+                interrupt_stop_event.set()
+                logging.debug('Transcription worker process finished due to KeyboardInterrupt')
+                break
 
 
     @staticmethod
-    def _audio_data_worker(audio_queue, sample_rate, buffer_size, shutdown_event):
+    def _audio_data_worker(audio_queue, sample_rate, buffer_size, shutdown_event, interrupt_stop_event):
         """
         Worker method that handles the audio recording process.
 
@@ -434,7 +440,11 @@ class AudioToTextRecorder:
                     print (f"Error: {e}")
                     continue
 
-                audio_queue.put(data)                
+                audio_queue.put(data)
+
+        except KeyboardInterrupt:
+            interrupt_stop_event.set()
+            logging.debug('Audio data worker process finished due to KeyboardInterrupt')
         finally:
             stream.stop_stream()
             stream.close()
@@ -464,14 +474,16 @@ class AudioToTextRecorder:
             self.start_recording_on_voice_activity = True
 
             # Wait until recording starts
-            self.start_recording_event.wait()
+            while not self.interrupt_stop_event.is_set():
+                if (self.start_recording_event.wait(timeout=0.5)): break
 
         # If recording is ongoing, wait for voice inactivity to finish recording.
         if self.is_recording:
             self.stop_recording_on_voice_deactivity = True
 
             # Wait until recording stops
-            self.stop_recording_event.wait()
+            while not self.interrupt_stop_event.is_set():
+                if (self.stop_recording_event.wait(timeout=0.5)): break
 
         # Convert recorded frames to the appropriate audio format.
         audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
@@ -537,7 +549,7 @@ class AudioToTextRecorder:
 
         self.wait_audio()
 
-        if self.is_shut_down:
+        if self.is_shut_down or self.interrupt_stop_event.is_set():
             return ""
 
         if on_transcription_finished:
@@ -661,15 +673,22 @@ class AudioToTextRecorder:
             # Continuously monitor audio for voice activity
             while self.is_running:
 
-                data = self.audio_queue.get()
+                try:
 
-                # Handle queue overflow
-                queue_overflow_logged = False
-                while self.audio_queue.qsize() > self.allowed_latency_limit:
-                    if not queue_overflow_logged:
-                        logging.warning(f"Audio queue size exceeds latency limit. Current size: {self.audio_queue.qsize()}. Discarding old audio chunks.")
-                        queue_overflow_logged = True
                     data = self.audio_queue.get()
+
+                    # Handle queue overflow
+                    queue_overflow_logged = False
+                    while self.audio_queue.qsize() > self.allowed_latency_limit:
+                        if not queue_overflow_logged:
+                            logging.warning(f"Audio queue size exceeds latency limit. Current size: {self.audio_queue.qsize()}. Discarding old audio chunks.")
+                            queue_overflow_logged = True
+                        data = self.audio_queue.get()
+
+                except BrokenPipeError:
+                    print ("BrokenPipeError _recording_worker")
+                    self.is_running = False
+                    break
 
                 if not self.is_recording:
                     # Handle not recording state
@@ -791,8 +810,9 @@ class AudioToTextRecorder:
 
 
         except Exception as e:
-            logging.error(f"Unhandled exeption in _recording_worker: {e}")
-            raise
+            if not self.interrupt_stop_event.is_set():
+                logging.error(f"Unhandled exeption in _recording_worker: {e}")
+                raise
 
 
     def _realtime_worker(self):
@@ -989,23 +1009,23 @@ class AudioToTextRecorder:
             if self.on_vad_detect_start:
                 self.on_vad_detect_start()
             self._set_spinner("speak now")
-            if self.spinner:
+            if self.spinner and self.halo:
                 self.halo._interval = 250
         elif new_state == "wakeword":
             if self.on_wakeword_detection_start:
                 self.on_wakeword_detection_start()
             self._set_spinner(f"say {self.wake_words}")
-            if self.spinner:
+            if self.spinner and self.halo:
                 self.halo._interval = 500
         elif new_state == "transcribing":
             if self.on_transcription_start:
                 self.on_transcription_start()
             self._set_spinner("transcribing")
-            if self.spinner:
+            if self.spinner and self.halo:
                 self.halo._interval = 50
         elif new_state == "recording":
             self._set_spinner("recording")
-            if self.spinner:
+            if self.spinner and self.halo:
                 self.halo._interval = 100
         elif new_state == "inactive":
             if self.spinner and self.halo:
