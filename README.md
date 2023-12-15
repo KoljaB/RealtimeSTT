@@ -17,9 +17,9 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 ### Updates
 
 #### v0.1.8
+- added [example](https://github.com/KoljaB/RealtimeSTT/tree/master/example_browserclient) how to realtime transcribe from browser microphone
 - large-v3 whisper model now supported (upgrade to faster_whisper 0.10.0)
 - added feed_audio() and use_microphone parameter to feed chunks
-- added recording and transcription from the browser example 
 
 #### v0.1.7
 - Bugfix for Mac OS Installation (multiprocessing / queue.size())
