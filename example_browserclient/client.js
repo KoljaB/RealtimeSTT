@@ -1,10 +1,37 @@
 let socket = new WebSocket("ws://localhost:9001");
-
+let displayDiv = document.getElementById('textDisplay');
+let server_available = false;
+let mic_available = false;
 let fullSentences = [];
+
+const serverCheckInterval = 5000; // Check every 5 seconds
+
+function connectToServer() {
+    socket = new WebSocket("ws://localhost:9001");
+
+    socket.onopen = function(event) {
+        server_available = true;
+        start_msg();
+    };
+
+    socket.onmessage = function(event) {
+        let data = JSON.parse(event.data);
+
+        if (data.type === 'realtime') {
+            displayRealtimeText(data.text, displayDiv);
+        } else if (data.type === 'fullSentence') {
+            fullSentences.push(data.text);
+            displayRealtimeText("", displayDiv); // Refresh display with new full sentence
+        }
+    };
+
+    socket.onclose = function(event) {
+        server_available = false;
+    };
+}
 
 socket.onmessage = function(event) {
     let data = JSON.parse(event.data);
-    let displayDiv = document.getElementById('textDisplay');
 
     if (data.type === 'realtime') {
         displayRealtimeText(data.text, displayDiv);
@@ -25,6 +52,29 @@ function displayRealtimeText(realtimeText, displayDiv) {
     displayDiv.innerHTML = displayedText;
 }
 
+function start_msg() {
+    if (!mic_available)
+        displayRealtimeText("🎤  please allow microphone access  🎤", displayDiv);
+    else if (!server_available)
+        displayRealtimeText("🖥️  please start server  🖥️", displayDiv);
+    else
+        displayRealtimeText("👄  start speaking  👄", displayDiv);
+};
+
+// Check server availability periodically
+setInterval(() => {
+    if (!server_available) {
+        connectToServer();
+    }
+}, serverCheckInterval);
+
+start_msg()
+
+socket.onopen = function(event) {
+    server_available = true;
+    start_msg()
+};
+
 // Request access to the microphone
 navigator.mediaDevices.getUserMedia({ audio: true })
 .then(stream => {
@@ -34,6 +84,8 @@ navigator.mediaDevices.getUserMedia({ audio: true })
 
     source.connect(processor);
     processor.connect(audioContext.destination);
+    mic_available = true;
+    start_msg()
 
     processor.onaudioprocess = function(e) {
         let inputData = e.inputBuffer.getChannelData(0);
