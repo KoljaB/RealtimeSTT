@@ -1,13 +1,29 @@
 let socket = new WebSocket("ws://localhost:9001");
 
+let fullSentences = [];
+
 socket.onmessage = function(event) {
     let data = JSON.parse(event.data);
+    let displayDiv = document.getElementById('textDisplay');
+
     if (data.type === 'realtime') {
-        document.getElementById('realtimeText').value = data.text;
+        displayRealtimeText(data.text, displayDiv);
     } else if (data.type === 'fullSentence') {
-        document.getElementById('fullSentenceText').value = data.text;
+        fullSentences.push(data.text);
+        displayRealtimeText("", displayDiv); // Refresh display with new full sentence
     }
 };
+
+function displayRealtimeText(realtimeText, displayDiv) {
+    let displayedText = fullSentences.map((sentence, index) => {
+        let span = document.createElement('span');
+        span.textContent = sentence + " ";
+        span.className = index % 2 === 0 ? 'yellow' : 'cyan';
+        return span.outerHTML;
+    }).join('') + realtimeText;
+
+    displayDiv.innerHTML = displayedText;
+}
 
 // Request access to the microphone
 navigator.mediaDevices.getUserMedia({ audio: true })

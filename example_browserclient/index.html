@@ -3,16 +3,26 @@
 <head>
     <title>Audio Streamer</title>
     <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        .text-display {
+            white-space: pre-wrap; /* Preserves spaces and line breaks */
+            font-size: 16px;
+        }
+        .yellow {
+            color: yellow;
+        }
+        .cyan {
+            color: cyan;
+        }
+    </style>
 </head>
 <body>
-    <div>
-        <p>Realtime Text:</p>
-        <textarea id="realtimeText" rows="5" cols="50"></textarea>
-    </div>
-    <div>
-        <p>Full Sentence Text (higher transcription quality):</p>
-        <textarea id="fullSentenceText" rows="5" cols="50"></textarea>
-    </div>
+    <div id="textDisplay" class="text-display"></div>
     <script src="client.js"></script>
 </body>
 </html>
