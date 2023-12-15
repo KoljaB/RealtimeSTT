@@ -16,6 +16,11 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
+#### v0.1.8
+- large-v3 whisper model now supported (upgrade to faster_whisper 0.10.0)
+- added feed_audio() and use_microphone parameter to feed chunks
+- added recording and transcription from the browser example 
+
 #### v0.1.7
 - Bugfix for Mac OS Installation (multiprocessing / queue.size())
 - KeyboardInterrupt handling (now abortable with CTRL+C)
@@ -75,7 +80,7 @@ To use RealtimeSTT with GPU support via CUDA please follow these steps:
 
 1. **Install NVIDIA CUDA Toolkit 11.8**:
     - Visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-11-8-0-download-archive).
-    - Select version 11.
+    - Select operating system and version.
     - Download and install the software.
 
 2. **Install NVIDIA cuDNN 8.7.0 for CUDA 11.x**:
@@ -179,6 +184,14 @@ recorder = AudioToTextRecorder(on_recording_start=my_start_callback,
                                on_recording_stop=my_stop_callback)
 ```
 
+### Feed chunks
+
+If you don't want to use the local microphone set use_microphone parameter to false and provide raw PCM audiochunks in 16-bit mono with this method:
+
+```python
+recorder.feed_audio(audio_chunk)
+```
+
 ### Shutdown
 
 You can shutdown the recorder safely by using the context manager protocol:
@@ -251,6 +264,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **ensure_sentence_starting_uppercase** (bool, default=True): Ensures that every sentence detected by the algorithm starts with an uppercase letter.
 
 - **ensure_sentence_ends_with_period** (bool, default=True): Ensures that every sentence that doesn't end with punctuation such as "?", "!" ends with a period
+
+- **use_microphone** (bool, default=True): Usage of local microphone for transcription. Set to False if you want to provide chunks with feed_audio method.
 
 - **spinner** (bool, default=True): Provides a spinner animation text with information about the current recorder state.
 
