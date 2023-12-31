@@ -247,6 +247,7 @@ class AudioToTextRecorder:
             model, wake word detection, or audio recording.
         """
 
+        self.keep_going = False
         self.language = language
         self.wake_words = wake_words
         self.wake_word_activation_delay = wake_word_activation_delay
@@ -401,6 +402,7 @@ class AudioToTextRecorder:
                 for _ in range(len(self.wake_words_list))
             ]
 
+            start_time = time.time()
             match self.wakeword_backend:
                 case 'pvporcupine':
                     try:
@@ -419,7 +421,9 @@ class AudioToTextRecorder:
 
                 case 'openwakeword':
                     try:
-                        self.owwModel = Model(wakeword_models=self.wake_words_list, inference_framework="onnx")
+                        self.owwModel = Model(
+                            wakeword_models=self.wake_words_list, 
+                            inference_framework="onnx")
                     except Exception as e:
                         logging.exception("Error initializing openwakeword "
                                         f"wake word detection engine: {e}"
@@ -427,7 +431,7 @@ class AudioToTextRecorder:
                         raise
                 case _:
                     logging.exception("Wakeword engine {} unknown/unsupported. Please specify one of: pvporcupine, openwakeword.")
-                
+            logging.info(f'\nwakeword time {time.time()-start_time}')
             logging.debug("{} wake word detection engine initialized successfully".format(self.wakeword_backend))
 
         # Setup voice activity detection model WebRTC
@@ -539,7 +543,8 @@ class AudioToTextRecorder:
         try:
             model = faster_whisper.WhisperModel(
                 model_size_or_path=model_path,
-                device='cuda' if torch.cuda.is_available() else 'cpu'
+                device='cuda' if torch.cuda.is_available() else 'cpu',
+                num_workers=4
             )
 
         except Exception as e:
@@ -559,13 +564,15 @@ class AudioToTextRecorder:
                 if conn.poll(0.5):
                     audio, language = conn.recv()
                     try:
+                        start_time = time.time()
                         segments = model.transcribe(
-                            audio, language=language if language else None
+                            audio, language=language if language else None,
                         )
                         segments = segments[0]
                         transcription = " ".join(seg.text for seg in segments)
                         transcription = transcription.strip()
                         conn.send(('success', transcription))
+                        logging.info(f"\n---Whisper model took: {time.time() - start_time}")
                     except faster_whisper.WhisperError as e:
                         logging.error(f"Whisper transcription error: {e}")
                         conn.send(('error', str(e)))
@@ -1018,7 +1025,8 @@ class AudioToTextRecorder:
                             continue
 
                         # If a wake word is detected
-                        if wakeword_index >= 0:
+                        if wakeword_index >= 0 or self.keep_going:
+                            self.keep_going = False
 
                             # Removing the wake word from the recording
                             samples_for_0_1_sec = int(self.sample_rate * 0.1)
