@@ -186,7 +186,7 @@ recorder = AudioToTextRecorder(on_recording_start=my_start_callback,
 
 ### Feed chunks
 
-If you don't want to use the local microphone set use_microphone parameter to false and provide raw PCM audiochunks in 16-bit mono with this method:
+If you don't want to use the local microphone set use_microphone parameter to false and provide raw PCM audiochunks in 16-bit mono (samplerate 16000) with this method:
 
 ```python
 recorder.feed_audio(audio_chunk)
@@ -253,7 +253,13 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
     - Options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
     - Note: If a size is provided, the model will be downloaded from the Hugging Face Hub.
 
-- **language** (str, default=""): Language code for transcription. If left empty, the model will try to auto-detect the language.
+- **language** (str, default=""): Language code for transcription. If left empty, the model will try to auto-detect the language. Supported language codes are listed in [Whisper Tokenizer library](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py).
+
+- **compute_type** (str, default="default"): Specifies the type of computation to be used for transcription. See [Whisper Quantization](https://opennmt.net/CTranslate2/quantization.html)
+
+- **input_device_index** (int, default=0): Audio Input Device Index to use.
+
+- **gpu_device_index** (int, default=0): GPU Device Index to use. The model can also be loaded on multiple GPUs by passing a list of IDs (e.g. [0, 1, 2, 3]).
 
 - **on_recording_start**: A callable function triggered when recording starts.
 
