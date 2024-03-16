@@ -125,6 +125,8 @@ class AudioToTextRecorder:
                  on_wakeword_timeout=None,
                  on_wakeword_detection_start=None,
                  on_wakeword_detection_end=None,
+                 on_recorded_chunk=None,
+                 debug_mode=False
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -246,6 +248,11 @@ class AudioToTextRecorder:
         - on_wakeword_detection_end (callable, default=None): Callback
             function to be called when the system stops to listen for
             wake words (e.g. because of timeout or wake word detected)
+        - on_recorded_chunk (callable, default=None): Callback function to be
+            called when a chunk of audio is recorded. The function is called
+            with the recorded audio chunk as its argument.
+        - debug_mode (bool, default=False): If set to True, the system will
+            print additional debug information to the console.
 
         Raises:
             Exception: Errors related to initializing transcription
@@ -278,6 +285,7 @@ class AudioToTextRecorder:
         self.on_vad_detect_stop = on_vad_detect_stop
         self.on_wakeword_detection_start = on_wakeword_detection_start
         self.on_wakeword_detection_end = on_wakeword_detection_end
+        self.on_recorded_chunk = on_recorded_chunk
         self.on_transcription_start = on_transcription_start
         self.enable_realtime_transcription = enable_realtime_transcription
         self.realtime_model_type = realtime_model_type
@@ -288,6 +296,7 @@ class AudioToTextRecorder:
         self.on_realtime_transcription_stabilized = (
             on_realtime_transcription_stabilized
         )
+        self.debug_mode = debug_mode
         self.allowed_latency_limit = ALLOWED_LATENCY_LIMIT
 
         self.level = level
@@ -578,9 +587,6 @@ class AudioToTextRecorder:
                         transcription = " ".join(seg.text for seg in segments)
                         transcription = transcription.strip()
                         conn.send(('success', transcription))
-                    except faster_whisper.WhisperError as e:
-                        logging.error(f"Whisper transcription error: {e}")
-                        conn.send(('error', str(e)))
                     except Exception as e:
                         logging.error(f"General transcription error: {e}")
                         conn.send(('error', str(e)))
@@ -633,13 +639,14 @@ class AudioToTextRecorder:
 
         try:
             audio_interface = pyaudio.PyAudio()
-            stream = audio_interface.open(rate=sample_rate,
-                                          format=pyaudio.paInt16,
-                                          channels=1,
-                                          input=True,
-                                          frames_per_buffer=buffer_size,
-                                          input_device_index=input_device_index,
-                                          )
+            stream = audio_interface.open(
+                rate=sample_rate,
+                format=pyaudio.paInt16,
+                channels=1,
+                input=True,
+                frames_per_buffer=buffer_size,
+                input_device_index=input_device_index,
+                )
 
         except Exception as e:
             logging.exception("Error initializing pyaudio "
@@ -978,6 +985,8 @@ class AudioToTextRecorder:
                 try:
 
                     data = self.audio_queue.get()
+                    if self.on_recorded_chunk:
+                        self.on_recorded_chunk(data)
 
                     # Handle queue overflow
                     queue_overflow_logged = False
@@ -1326,10 +1335,20 @@ class AudioToTextRecorder:
             if self.webrtc_vad_model.is_speech(frame, self.sample_rate):
                 speech_frames += 1
                 if not all_frames_must_be_true:
+                    if self.debug_mode:
+                        print(f"Speech detected in frame {i + 1}"
+                              f" of {num_frames}")
                     return True
         if all_frames_must_be_true:
+            if self.debug_mode and speech_frames == num_frames:
+                print(f"Speech detected in {speech_frames} of "
+                      f"{num_frames} frames")
+            elif self.debug_mode:
+                print(f"Speech not detected in all {num_frames} frames")
             return speech_frames == num_frames
         else:
+            if self.debug_mode:
+                print(f"Speech not detected in any of {num_frames} frames")
             return False
 
     def _check_voice_activity(self, data):

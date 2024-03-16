@@ -1,5 +1,0 @@
-PyAudio
-faster-whisper==0.10.0
-pvporcupine==1.9.5
-webrtcvad
-halo
