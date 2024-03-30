@@ -3,5 +3,5 @@ faster-whisper==1.0.1
 pvporcupine==1.9.5
 webrtcvad==2.0.10
 halo==0.0.31
-torch==2.1.2
-torchaudio==2.1.2
+torch==2.2.2
+torchaudio==2.2.2

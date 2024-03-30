@@ -27,6 +27,7 @@ Author: Kolja Beigel
 """
 
 import torch.multiprocessing as mp
+import torch
 from typing import List, Union
 import faster_whisper
 import collections
@@ -36,10 +37,10 @@ import traceback
 import threading
 import webrtcvad
 import itertools
+import platform
 import pyaudio
 import logging
 import struct
-import torch
 import halo
 import time
 import os
@@ -64,6 +65,10 @@ TIME_SLEEP = 0.02
 SAMPLE_RATE = 16000
 BUFFER_SIZE = 512
 INT16_MAX_ABS_VALUE = 32768.0
+
+INIT_HANDLE_BUFFER_OVERFLOW = False
+if platform.system() != 'Darwin':
+    INIT_HANDLE_BUFFER_OVERFLOW = True
 
 
 class AudioToTextRecorder:
@@ -126,7 +131,8 @@ class AudioToTextRecorder:
                  on_wakeword_detection_start=None,
                  on_wakeword_detection_end=None,
                  on_recorded_chunk=None,
-                 debug_mode=False
+                 debug_mode=False,
+                 handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW,
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -253,12 +259,13 @@ class AudioToTextRecorder:
             with the recorded audio chunk as its argument.
         - debug_mode (bool, default=False): If set to True, the system will
             print additional debug information to the console.
+        - log_buffer_overflow (bool, default=True): If set to True, the system
+            will log a warning when an input overflow occurs during recording.
 
         Raises:
             Exception: Errors related to initializing transcription
             model, wake word detection, or audio recording.
         """
-
         self.language = language
         self.compute_type = compute_type
         self.input_device_index = input_device_index
@@ -297,6 +304,7 @@ class AudioToTextRecorder:
             on_realtime_transcription_stabilized
         )
         self.debug_mode = debug_mode
+        self.handle_buffer_overflow = handle_buffer_overflow
         self.allowed_latency_limit = ALLOWED_LATENCY_LIMIT
 
         self.level = level
@@ -988,20 +996,20 @@ class AudioToTextRecorder:
                     if self.on_recorded_chunk:
                         self.on_recorded_chunk(data)
 
-                    # Handle queue overflow
-                    queue_overflow_logged = False
-
-                    while (self.audio_queue.qsize() >
-                           self.allowed_latency_limit):
-
-                        if not queue_overflow_logged:
-                            logging.warning("Audio queue size exceeds latency "
-                                            "limit. Current size: "
+                    if self.handle_buffer_overflow:
+                        # Handle queue overflow
+                        if (self.audio_queue.qsize() >
+                                self.allowed_latency_limit):
+                            logging.warning("Audio queue size exceeds "
+                                            "latency limit. Current size: "
                                             f"{self.audio_queue.qsize()}. "
                                             "Discarding old audio chunks."
                                             )
-                            queue_overflow_logged = True
-                        data = self.audio_queue.get()
+
+                        while (self.audio_queue.qsize() >
+                                self.allowed_latency_limit):
+
+                            data = self.audio_queue.get()
 
                 except BrokenPipeError:
                     print("BrokenPipeError _recording_worker")
