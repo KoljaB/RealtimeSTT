@@ -16,29 +16,9 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
-#### v0.1.9
-- switched to torch.multiprocessing
-- added compute_type, input_device_index and gpu_device_index parameters
-- recorder.text() interruptable with recorder.abort()
-- fix for #20
+Latest Version: v0.1.12
 
-#### v0.1.8
-- added [example](https://github.com/KoljaB/RealtimeSTT/tree/master/example_browserclient) how to realtime transcribe from browser microphone
-- large-v3 whisper model now supported (upgrade to faster_whisper 0.10.0)
-- added feed_audio() and use_microphone parameter to feed chunks
-
-#### v0.1.7
-- Bugfix for Mac OS Installation (multiprocessing / queue.size())
-- KeyboardInterrupt handling (now abortable with CTRL+C)
-- Bugfix for spinner handling (could lead to exception in some cases)
-
-#### v0.1.6
-- Implements context manager protocol (recorder can be used in a `with` statement)
-- Bugfix for resource management in shutdown method
-
-#### v0.1.5
-- Bugfix for detection of short speech right after sentence detection (the problem mentioned in the video)
-- Main transcription and recording moved into separate process contexts with multiprocessing
+See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
 > **Hint:** *Since we use the `multiprocessing` module now, ensure to include the `if __name__ == '__main__':` protection in your code to prevent unexpected behavior, especially on platforms like Windows. For a detailed explanation on why this is important, visit the [official Python documentation on `multiprocessing`](https://docs.python.org/3/library/multiprocessing.html#multiprocessing-programming).*
 
