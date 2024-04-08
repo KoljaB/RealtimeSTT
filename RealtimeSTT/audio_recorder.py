@@ -136,7 +136,7 @@ class AudioToTextRecorder:
                  debug_mode=False,
                  handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW,
                  beam_size: int = 5,
-                 beam_size_realtime: int = 1,
+                 beam_size_realtime: int = 3,
                  buffer_size: int = BUFFER_SIZE,
                  sample_rate: int = SAMPLE_RATE,
                  ):
