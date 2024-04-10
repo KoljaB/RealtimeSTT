@@ -5,3 +5,4 @@ webrtcvad==2.0.10
 halo==0.0.31
 torch==2.2.2
 torchaudio==2.2.2
+scipy==1.12.0

@@ -3,3 +3,4 @@ faster-whisper==1.0.1
 pvporcupine==1.9.5
 webrtcvad==2.0.10
 halo==0.0.31
+scipy==1.12.0
