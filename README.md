@@ -94,6 +94,11 @@ To use RealtimeSTT with GPU support via CUDA please follow these steps:
         brew install ffmpeg
         ```
 
+    - **On Windows using Winget** [official documentation](https://learn.microsoft.com/en-us/windows/package-manager/winget/) :
+        ```bash
+        winget install Gyan.FFmpeg
+        ```
+        
     - **On Windows using Chocolatey** ([https://chocolatey.org/](https://chocolatey.org/)):
         ```bash
         choco install ffmpeg
