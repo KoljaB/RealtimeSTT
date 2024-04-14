@@ -16,7 +16,7 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
-Latest Version: v0.1.14 (requirements fix)
+Latest Version: v0.1.15
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
