@@ -75,6 +75,8 @@ To use RealtimeSTT with GPU support via CUDA please follow these steps:
 
 3. **Install ffmpeg**:
 
+    > **Note**: *Installation of ffmpeg might not actually be needed to operate RealtimeSTT* <sup> *thanks to jgilbert2017 for pointing this out</sup>
+
     You can download an installer for your OS from the [ffmpeg Website](https://ffmpeg.org/download.html).  
     
     Or use a package manager:
@@ -262,6 +264,18 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **level** (int, default=logging.WARNING): Logging level.
 
+- **handle_buffer_overflow** (bool, default=True): If set, the system will log a warning when an input overflow occurs during recording and remove the data from the buffer.
+
+- **beam_size** (int, default=5): The beam size to use for beam search decoding.
+
+- **initial_prompt** (str or iterable of int, default=None): Initial prompt to be fed to the transcription models.
+
+- **suppress_tokens** (list of int, default=[-1]): Tokens to be suppressed from the transcription output.
+
+- **on_recorded_chunk**: A callback function that is triggered when a chunk of audio is recorded. Submits the chunk data as parameter.
+
+- **debug_mode** (bool, default=False): If set, the system prints additional debug information to the console.
+
 #### Real-time Transcription Parameters
 
 > **Note**: *When enabling realtime description a GPU installation is strongly advised. Using realtime transcription may create high GPU loads.*
@@ -277,13 +291,15 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **on_realtime_transcription_stabilized**: A callback function that is triggered whenever there's an update in the real-time transcription and returns a higher quality, stabilized text as its argument.
 
+- **beam_size_realtime** (int, default=3): The beam size to use for real-time transcription beam search decoding.
+
 #### Voice Activation Parameters
 
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
-- **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
-
 - **silero_use_onnx** (bool, default=False): Enables usage of the pre-trained model from Silero in the ONNX (Open Neural Network Exchange) format instead of the PyTorch format. Default is False. Recommended for faster performance.
+
+- **webrtc_sensitivity** (int, default=3): Sensitivity for the WebRTC Voice Activity Detection engine ranging from 0 (least aggressive / most sensitive) to 3 (most aggressive, least sensitive). Default is 3.
 
 - **post_speech_silence_duration** (float, default=0.2): Duration in seconds of silence that must follow speech before the recording is considered to be completed. This ensures that any brief pauses during speech don't prematurely end the recording.
 
@@ -314,7 +330,6 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **on_wakeword_detection_start**: A callable function triggered when the system starts to listen for wake words
 
 - **on_wakeword_detection_end**: A callable function triggered when stopping to listen for wake words (e.g. because of timeout or wake word detected)
-
 
 ## Contribution
 
