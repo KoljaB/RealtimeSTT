@@ -7,6 +7,8 @@
 
 RealtimeSTT listens to the microphone and transcribes voice into text.  
 
+> **Hint:** *<strong>Check out [Linguflex](https://github.com/KoljaB/Linguflex)</strong>, the original project from which RealtimeSTT is spun off. It lets you control your environment by speaking and is one of the most capable and sophisticated open-source assistants currently available.*
+
 It's ideal for:
 
 - **Voice Assistants**
