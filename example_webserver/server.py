@@ -1,7 +1,7 @@
 WAIT_FOR_START_COMMAND = False
 
 if __name__ == '__main__':
-    server = "localhost"
+    server = "0.0.0.0"
     port = 5025
 
     print (f"STT speech to text server")

@@ -1,0 +1,5 @@
+__pycache__
+.cache
+.dockerignore
+docker-compose.yml
+Dockerfile
