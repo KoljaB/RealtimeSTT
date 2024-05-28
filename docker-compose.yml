@@ -1,0 +1,30 @@
+services:
+  rtstt:
+    build:
+      context: .
+      target: gpu # or cpu
+    image: rtstt
+    container_name: rtstt
+    volumes:
+      # - ./RealtimeSTT:/app/RealtimeSTT
+      # - ./example_browserclient:/app/example_browserclient
+      - cache:/root/.cache
+    ports:
+      - "9001:9001"
+
+    # if 'gpu' target
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - capabilities: ["gpu"]
+  nginx:
+    image: nginx:latest
+    container_name: nginx_web
+    ports:
+      - "8081:80"
+    volumes:
+      - ./example_browserclient:/usr/share/nginx/html
+
+volumes:
+  cache:

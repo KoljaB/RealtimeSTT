@@ -1,8 +1,9 @@
 PyAudio==0.2.14
-faster-whisper==1.0.1
+faster-whisper==1.0.2
 pvporcupine==1.9.5
 webrtcvad==2.0.10
 halo==0.0.31
-torch==2.2.2
-torchaudio==2.2.2
+torch==2.3.0
+torchaudio==2.3.0
 scipy==1.12.0
+websockets==v12.0
