@@ -342,6 +342,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 Contributions are always welcome! 
 
+Shoutout to [Steven Linn](https://github.com/stevenlafl) for providing docker support. 
+
 ## License
 
 MIT
