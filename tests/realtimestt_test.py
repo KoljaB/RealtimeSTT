@@ -28,21 +28,6 @@ if __name__ == '__main__':
             clear_console()
             print(displayed_text, end="", flush=True)
 
-    # def text_detected(text):
-    #     global displayed_text
-    #     clear_console()
-    #     print(text)
-        # sentences_with_style = [
-        #     f"{Fore.YELLOW + sentence + Style.RESET_ALL if i % 2 == 0 else Fore.CYAN + sentence + Style.RESET_ALL} "
-        #     for i, sentence in enumerate(full_sentences)
-        # ]
-        # new_text = "".join(sentences_with_style).strip() + " " + text if len(sentences_with_style) > 0 else text
-
-        # if new_text != displayed_text:
-        #     displayed_text = new_text
-        #     clear_console()
-        #     print(displayed_text, end="", flush=True)
-
     def process_text(text):
         full_sentences.append(text)
         text_detected("")
@@ -60,7 +45,6 @@ if __name__ == '__main__':
         'realtime_processing_pause': 0.2,
         'realtime_model_type': 'tiny.en',
         'on_realtime_transcription_update': text_detected, 
-        #'on_realtime_transcription_stabilized': text_detected,
     }
 
     recorder = AudioToTextRecorder(**recorder_config)
@@ -70,3 +54,4 @@ if __name__ == '__main__':
 
     while True:
         recorder.text(process_text)
+

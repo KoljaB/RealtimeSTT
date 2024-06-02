@@ -52,6 +52,9 @@ import os
 import re
 import gc
 
+# Set OpenMP runtime duplicate library handling to OK (Use only for development!)
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 INIT_MODEL_TRANSCRIPTION = "tiny"
 INIT_MODEL_TRANSCRIPTION_REALTIME = "tiny"
 INIT_REALTIME_PROCESSING_PAUSE = 0.2
@@ -390,15 +393,13 @@ class AudioToTextRecorder:
         self.is_shut_down = False
         self.shutdown_event = mp.Event()
 
-        logging.info("Starting RealTimeSTT")
-
-        # Start transcription worker process
         try:
-            # Only set the start method if it hasn't been set already
-            if mp.get_start_method(allow_none=True) is None:
-                mp.set_start_method("spawn")
+            logging.debug("Explicitly setting the multiprocessing start method to 'spawn'")
+            mp.set_start_method('spawn')
         except RuntimeError as e:
-            print("Start method has already been set. Details:", e)
+            logging.debug("Start method has already been set. Details:", e)
+
+        logging.info("Starting RealTimeSTT")
 
         self.interrupt_stop_event = mp.Event()
         self.was_interrupted = mp.Event()

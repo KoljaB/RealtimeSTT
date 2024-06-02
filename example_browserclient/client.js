@@ -1,4 +1,4 @@
-let socket = new WebSocket("ws://localhost:9001");
+let socket = new WebSocket("ws://localhost:8001");
 let displayDiv = document.getElementById('textDisplay');
 let server_available = false;
 let mic_available = false;
@@ -7,7 +7,7 @@ let fullSentences = [];
 const serverCheckInterval = 5000; // Check every 5 seconds
 
 function connectToServer() {
-    socket = new WebSocket("ws://localhost:9001");
+    socket = new WebSocket("ws://localhost:8001");
 
     socket.onopen = function(event) {
         server_available = true;

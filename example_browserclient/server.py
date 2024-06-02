@@ -98,7 +98,8 @@ if __name__ == '__main__':
             resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
             recorder.feed_audio(resampled_chunk)
 
-    start_server = websockets.serve(echo, "0.0.0.0", 9001)
+    # start_server = websockets.serve(echo, "0.0.0.0", 9001)
+    start_server = websockets.serve(echo, "localhost", 8001)
 
     recorder_thread = threading.Thread(target=recorder_thread)
     recorder_thread.start()
