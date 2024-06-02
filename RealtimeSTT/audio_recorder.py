@@ -90,7 +90,7 @@ class AudioToTextRecorder:
                  model: str = INIT_MODEL_TRANSCRIPTION,
                  language: str = "",
                  compute_type: str = "default",
-                 input_device_index: int = 0,
+                 input_device_index: int = None,
                  gpu_device_index: Union[int, List[int]] = 0,
                  on_recording_start=None,
                  on_recording_stop=None,
@@ -698,6 +698,9 @@ class AudioToTextRecorder:
         """
         try:
             audio_interface = pyaudio.PyAudio()
+            if input_device_index is None:
+                default_device = audio_interface.get_default_input_device_info()
+                input_device_index = default_device['index']
             stream = audio_interface.open(
                 rate=sample_rate,
                 format=pyaudio.paInt16,
