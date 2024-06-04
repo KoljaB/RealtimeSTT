@@ -255,6 +255,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **gpu_device_index** (int, default=0): GPU Device Index to use. The model can also be loaded on multiple GPUs by passing a list of IDs (e.g. [0, 1, 2, 3]).
 
+- **device** (str, default="cuda"): Device for model to use. Can either be "cuda" or "cpu". 
+
 - **on_recording_start**: A callable function triggered when recording starts.
 
 - **on_recording_stop**: A callable function triggered when recording ends.
