@@ -100,6 +100,7 @@ class AudioToTextRecorder:
                  use_microphone=True,
                  spinner=True,
                  level=logging.WARNING,
+                 init_logging=True,
 
                  # Realtime transcription parameters
                  enable_realtime_transcription=False,
@@ -192,6 +193,8 @@ class AudioToTextRecorder:
         - spinner (bool, default=True): Show spinner animation with current
             state.
         - level (int, default=logging.WARNING): Logging level.
+        - init_logging (bool, default=True): Whether to initialize
+            the logging framework. Set to False to manage this yourself.
         - enable_realtime_transcription (bool, default=False): Enables or
             disables real-time transcription of audio. When set to True, the
             audio will be transcribed continuously as it is being recorded.
@@ -369,26 +372,27 @@ class AudioToTextRecorder:
         self.initial_prompt = initial_prompt
         self.suppress_tokens = suppress_tokens
 
-        # Initialize the logging configuration with the specified level
-        log_format = 'RealTimeSTT: %(name)s - %(levelname)s - %(message)s'
+        if init_logging:
+            # Initialize the logging configuration with the specified level
+            log_format = 'RealTimeSTT: %(name)s - %(levelname)s - %(message)s'
 
-        # Create a logger
-        logger = logging.getLogger()
-        logger.setLevel(level)  # Set the root logger's level
+            # Create a logger
+            logger = logging.getLogger()
+            logger.setLevel(level)  # Set the root logger's level
 
-        # Create a file handler and set its level
-        file_handler = logging.FileHandler('realtimesst.log')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter(log_format))
+            # Create a file handler and set its level
+            file_handler = logging.FileHandler('realtimesst.log')
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(log_format))
 
-        # Create a console handler and set its level
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(level)
-        console_handler.setFormatter(logging.Formatter(log_format))
+            # Create a console handler and set its level
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(level)
+            console_handler.setFormatter(logging.Formatter(log_format))
 
-        # Add the handlers to the logger
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
+            # Add the handlers to the logger
+            logger.addHandler(file_handler)
+            logger.addHandler(console_handler)
 
         self.is_shut_down = False
         self.shutdown_event = mp.Event()

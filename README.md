@@ -271,6 +271,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **level** (int, default=logging.WARNING): Logging level.
 
+- **init_logging** (bool, default=True): Whether to initialize the logging framework. Set to False to manage this yourself.
+
 - **handle_buffer_overflow** (bool, default=True): If set, the system will log a warning when an input overflow occurs during recording and remove the data from the buffer.
 
 - **beam_size** (int, default=5): The beam size to use for beam search decoding.
