@@ -1019,19 +1019,22 @@ class AudioToTextRecorder:
 
         logging.debug('Finishing recording thread')
         if self.recording_thread:
+            # Submit a single byte to the audio buffer to force the thread to wake up
+            # and notice the shutdown.
+            self.audio_queue.put(bytes(1))
             self.recording_thread.join()
 
         logging.debug('Terminating reader process')
 
         # Give it some time to finish the loop and cleanup.
-        if self.use_microphone:
+        if self.use_microphone.value:
             self.reader_process.join(timeout=10)
 
-        if self.reader_process.is_alive():
-            logging.warning("Reader process did not terminate "
-                            "in time. Terminating forcefully."
-                            )
-            self.reader_process.terminate()
+            if self.reader_process.is_alive():
+                logging.warning("Reader process did not terminate "
+                                "in time. Terminating forcefully."
+                                )
+                self.reader_process.terminate()
 
         logging.debug('Terminating transcription process')
         self.transcript_process.join(timeout=10)
