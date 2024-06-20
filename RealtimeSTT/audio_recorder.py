@@ -537,6 +537,8 @@ class AudioToTextRecorder:
                        self.pre_recording_buffer_duration)
         )
         self.frames = []
+        self.new_frames = mp.Event()
+        self.new_frames.set()
 
         # Recording control flags
         self.is_recording = False
@@ -807,6 +809,7 @@ class AudioToTextRecorder:
         audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
         self.audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
         self.frames.clear()
+        self.new_frames.set()
 
         # Reset recording-related timestamps
         self.recording_stop_time = 0
@@ -915,6 +918,7 @@ class AudioToTextRecorder:
         self.wakeword_detected = False
         self.wake_word_detect_time = 0
         self.frames = []
+        self.new_frames.set()
         self.is_recording = True
         self.recording_start_time = time.time()
         self.is_silero_speech_active = False
@@ -1185,6 +1189,7 @@ class AudioToTextRecorder:
                                 # Add the buffered audio
                                 # to the recording frames
                                 self.frames.extend(list(self.audio_buffer))
+                                self.new_frames.set()
                                 self.audio_buffer.clear()
 
                             self.silero_vad_model.reset_states()
@@ -1238,6 +1243,7 @@ class AudioToTextRecorder:
 
                 if self.is_recording:
                     self.frames.append(data)
+                    self.new_frames.set()
 
                 if not self.is_recording or self.speech_end_silence_start:
                     self.audio_buffer.append(data)
@@ -1271,6 +1277,8 @@ class AudioToTextRecorder:
 
                 # Check if the recording is active
                 if self.is_recording:
+                    self.new_frames.wait()
+                    self.new_frames.clear()
 
                     # Sleep for the duration of the transcription resolution
                     time.sleep(self.realtime_processing_pause)
