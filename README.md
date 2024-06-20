@@ -255,6 +255,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **gpu_device_index** (int, default=0): GPU Device Index to use. The model can also be loaded on multiple GPUs by passing a list of IDs (e.g. [0, 1, 2, 3]).
 
+- **return_segments** (bool, default=False): Return/pass a tuple (text, segments) from any function or callback related to transcibed text (like text(), on_realtime_*, ...), which includes the raw transcribed segments instead of just the text. Useful to observe probabilities or segment timings.
+
 - **on_recording_start**: A callable function triggered when recording starts.
 
 - **on_recording_stop**: A callable function triggered when recording ends.
