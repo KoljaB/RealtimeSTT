@@ -343,7 +343,7 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **openwakeword_model_paths** (str, default=None): Comma-separated paths to model files for the openwakeword library. These paths point to custom models that can be used for wake word detection when the openwakeword library is selected as the wakeword_backend.
 
-- **openwakeword_inference_framework** (str, default="onnx"): Specifies the inference framework to use with the openwakeword library. Supported frameworks include 'onnx' for using the Open Neural Network Exchange format, which can provide performance optimizations over other formats.
+- **openwakeword_inference_framework** (str, default="onnx"): Specifies the inference framework to use with the openwakeword library. Can be either 'onnx' for Open Neural Network Exchange format or 'tflite' for TensorFlow Lite.
 
 - **wake_words** (str, default=""): Initiate recording when using the 'pvporcupine' wakeword backend. Multiple wake words can be provided as a comma-separated string. Supported wake words are: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator. For the 'openwakeword' backend, wake words are automatically extracted from the provided model files, so specifying them here is not necessary.
 

@@ -261,9 +261,8 @@ class AudioToTextRecorder:
             openwakeword library is selected as the wakeword_backend.
         - openwakeword_inference_framework (str, default="onnx"): Specifies
             the inference framework to use with the openwakeword library.
-            Supported frameworks include 'onnx' for using the Open Neural Network
-            Exchange format, which can provide performance optimizations over
-            other formats.
+            Can be either 'onnx' for Open Neural Network Exchange format 
+            or 'tflite' for TensorFlow Lite.
         - wake_words (str, default=""): Comma-separated string of wake words to
             initiate recording when using the 'pvporcupine' wakeword backend.
             Supported wake words include: 'alexa', 'americano', 'blueberry',

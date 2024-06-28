@@ -7,3 +7,4 @@ torch==2.3.0
 torchaudio==2.3.0
 scipy==1.12.0
 websockets==v12.0
+openwakeword==0.6.0
