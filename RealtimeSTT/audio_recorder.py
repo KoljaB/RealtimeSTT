@@ -31,9 +31,11 @@ import torch.multiprocessing as mp
 import torch
 from typing import List, Union
 from ctypes import c_bool
+from openwakeword.model import Model
 from scipy.signal import resample
 from scipy import signal
 import faster_whisper
+import openwakeword
 import collections
 import numpy as np
 import pvporcupine
@@ -67,6 +69,7 @@ INIT_WAKE_WORDS_SENSITIVITY = 0.6
 INIT_PRE_RECORDING_BUFFER_DURATION = 1.0
 INIT_WAKE_WORD_ACTIVATION_DELAY = 0.0
 INIT_WAKE_WORD_TIMEOUT = 5.0
+INIT_WAKE_WORD_BUFFER_DURATION = 0.1
 ALLOWED_LATENCY_LIMIT = 10
 
 TIME_SLEEP = 0.02
@@ -129,12 +132,16 @@ class AudioToTextRecorder:
                  on_vad_detect_stop=None,
 
                  # Wake word parameters
+                 wakeword_backend: str = "pvporcupine",
+                 openwakeword_model_paths: str = None,
+                 openwakeword_inference_framework: str = "onnx",
                  wake_words: str = "",
                  wake_words_sensitivity: float = INIT_WAKE_WORDS_SENSITIVITY,
                  wake_word_activation_delay: float = (
                     INIT_WAKE_WORD_ACTIVATION_DELAY
                  ),
                  wake_word_timeout: float = INIT_WAKE_WORD_TIMEOUT,
+                 wake_word_buffer_duration: float = INIT_WAKE_WORD_BUFFER_DURATION,
                  on_wakeword_detected=None,
                  on_wakeword_timeout=None,
                  on_wakeword_detection_start=None,
@@ -244,11 +251,27 @@ class AudioToTextRecorder:
             be called when the system listens for voice activity.
         - on_vad_detect_stop (callable, default=None): Callback function to be
             called when the system stops listening for voice activity.
+        - wakeword_backend (str, default="pvporcupine"): Specifies the backend
+            library to use for wake word detection. Supported options include
+            'pvporcupine' for using the Porcupine wake word engine or 'oww' for
+            using the OpenWakeWord engine.
+        - openwakeword_model_paths (str, default=None): Comma-separated paths
+            to model files for the openwakeword library. These paths point to
+            custom models that can be used for wake word detection when the
+            openwakeword library is selected as the wakeword_backend.
+        - openwakeword_inference_framework (str, default="onnx"): Specifies
+            the inference framework to use with the openwakeword library.
+            Supported frameworks include 'onnx' for using the Open Neural Network
+            Exchange format, which can provide performance optimizations over
+            other formats.
         - wake_words (str, default=""): Comma-separated string of wake words to
-            initiate recording. Supported wake words include:
-            'alexa', 'americano', 'blueberry', 'bumblebee', 'computer',
-            'grapefruits', 'grasshopper', 'hey google', 'hey siri', 'jarvis',
-            'ok google', 'picovoice', 'porcupine', 'terminator'.
+            initiate recording when using the 'pvporcupine' wakeword backend.
+            Supported wake words include: 'alexa', 'americano', 'blueberry',
+            'bumblebee', 'computer', 'grapefruits', 'grasshopper', 'hey google',
+            'hey siri', 'jarvis', 'ok google', 'picovoice', 'porcupine',
+            'terminator'. For the 'openwakeword' backend, wake words are
+            automatically extracted from the provided model files, so specifying
+            them here is not necessary.
         - wake_words_sensitivity (float, default=0.5): Sensitivity for wake
             word detection, ranging from 0 (least sensitive) to 1 (most
             sensitive). Default is 0.5.
@@ -260,6 +283,12 @@ class AudioToTextRecorder:
             wake word is recognized. If no subsequent voice activity is
             detected within this window, the system transitions back to an
             inactive state, awaiting the next wake word or voice activation.
+        - wake_word_buffer_duration (float, default=0.1): Duration in seconds
+            to buffer audio data during wake word detection. This helps in
+            cutting out the wake word from the recording buffer so it does not
+            falsely get detected along with the following spoken text, ensuring
+            cleaner and more accurate transcription start triggers.
+            Increase this if parts of the wake word get detected as text.
         - on_wakeword_detected (callable, default=None): Callback function to
             be called when a wake word is detected.
         - on_wakeword_timeout (callable, default=None): Callback function to
@@ -305,6 +334,7 @@ class AudioToTextRecorder:
         self.wake_words = wake_words
         self.wake_word_activation_delay = wake_word_activation_delay
         self.wake_word_timeout = wake_word_timeout
+        self.wake_word_buffer_duration = wake_word_buffer_duration
         self.ensure_sentence_starting_uppercase = (
             ensure_sentence_starting_uppercase
         )
@@ -372,6 +402,7 @@ class AudioToTextRecorder:
         self.last_transcription_bytes = None
         self.initial_prompt = initial_prompt
         self.suppress_tokens = suppress_tokens
+        self.use_wake_words = wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}
 
         # Initialize the logging configuration with the specified level
         log_format = 'RealTimeSTT: %(name)s - %(levelname)s - %(message)s'
@@ -475,33 +506,82 @@ class AudioToTextRecorder:
                           "transcription model initialized successfully")
 
         # Setup wake word detection
-        if wake_words:
+        if wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
+            self.wakeword_backend = wakeword_backend
 
             self.wake_words_list = [
                 word.strip() for word in wake_words.lower().split(',')
             ]
-            sensitivity_list = [
+            self.wake_words_sensitivity = wake_words_sensitivity
+            self.wake_words_sensitivities = [
                 float(wake_words_sensitivity)
                 for _ in range(len(self.wake_words_list))
             ]
 
-            try:
-                self.porcupine = pvporcupine.create(
-                    keywords=self.wake_words_list,
-                    sensitivities=sensitivity_list
-                )
-                self.buffer_size = self.porcupine.frame_length
-                self.sample_rate = self.porcupine.sample_rate
+            match self.wakeword_backend:
+                case 'pvp' | 'pvporcupine':
+                    try:
+                        self.porcupine = pvporcupine.create(
+                            keywords=self.wake_words_list,
+                            sensitivities=self.wake_words_sensitivities
+                        )
+                        self.buffer_size = self.porcupine.frame_length
+                        self.sample_rate = self.porcupine.sample_rate
 
-            except Exception as e:
-                logging.exception("Error initializing porcupine "
-                                  f"wake word detection engine: {e}"
-                                  )
-                raise
+                    except Exception as e:
+                        logging.exception(
+                            "Error initializing porcupine "
+                            f"wake word detection engine: {e}"
+                        )
+                        raise
 
-            logging.debug("Porcupine wake word detection "
-                          "engine initialized successfully"
-                          )
+                    logging.debug(
+                        "Porcupine wake word detection engine initialized successfully"
+                    )
+
+                case 'oww' | 'openwakeword' | 'openwakewords':
+                    openwakeword.utils.download_models()
+
+                    try:
+                        if openwakeword_model_paths:
+                            model_paths = openwakeword_model_paths.split(',')
+                            self.owwModel = Model(
+                                wakeword_models=model_paths,
+                                inference_framework=openwakeword_inference_framework
+                            )
+                            logging.info(
+                                "Successfully loaded wakeword model(s): "
+                                f"{openwakeword_model_paths}"
+                            )
+                        else:
+                            self.owwModel = Model(
+                                inference_framework=openwakeword_inference_framework)
+                        
+                        self.oww_n_models = len(self.owwModel.models.keys())
+                        if not self.oww_n_models:
+                            logging.error(
+                                "No wake word models loaded."
+                            )
+   
+                        for model_key in self.owwModel.models.keys():
+                            logging.info(
+                                "Successfully loaded openwakeword model: "
+                                f"{model_key}"
+                            )
+
+                    except Exception as e:
+                        logging.exception(
+                            "Error initializing openwakeword "
+                            f"wake word detection engine: {e}"
+                        )
+                        raise
+
+                    logging.debug(
+                        "Open wake word detection engine initialized successfully"
+                    )
+                case _:
+                    logging.exception("Wakeword engine {} unknown/unsupported. Please specify one of: pvporcupine, openwakeword.")
+
 
         # Setup voice activity detection model WebRTC
         try:
@@ -865,6 +945,46 @@ class AudioToTextRecorder:
             logging.error(result)
             raise Exception(result)
 
+    def _process_wakeword(self, data):
+        """
+        Processes audio data to detect wake words.
+        """
+        match self.wakeword_backend:
+            case 'pvp' | 'pvporcupine':
+                pcm = struct.unpack_from(
+                    "h" * self.buffer_size,
+                    data
+                )
+                porcupine_index = self.porcupine.process(pcm)
+                if self.debug_mode:
+                    print (f"wake words porcupine_index: {porcupine_index}")
+                return self.porcupine.process(pcm)
+
+            case 'oww' | 'openwakeword' | 'openwakewords':
+                pcm = np.frombuffer(data, dtype=np.int16)
+                prediction = self.owwModel.predict(pcm)
+                max_score = -1
+                max_index = -1
+                wake_words_in_prediction = len(self.owwModel.prediction_buffer.keys())
+                self.wake_words_sensitivities
+                if wake_words_in_prediction:
+                    for idx, mdl in enumerate(self.owwModel.prediction_buffer.keys()):
+                        scores = list(self.owwModel.prediction_buffer[mdl])
+                        if scores[-1] >= self.wake_words_sensitivity and scores[-1] > max_score:
+                            max_score = scores[-1]
+                            max_index = idx
+                    if self.debug_mode:
+                        print (f"wake words oww max_index, max_score: {max_index} {max_score}")
+                    return max_index  
+                else:
+                    if self.debug_mode:
+                        print (f"wake words oww_index: -1")
+                    return -1
+
+        if self.debug_mode:        
+            print("wake words no match")
+        return -1
+
     def text(self,
              on_transcription_finished=None,
              ):
@@ -1122,14 +1242,14 @@ class AudioToTextRecorder:
                     if wake_word_activation_delay_passed \
                             and not delay_was_passed:
 
-                        if self.wake_words and self.wake_word_activation_delay:
+                        if self.use_wake_words and self.wake_word_activation_delay:
                             if self.on_wakeword_timeout:
                                 self.on_wakeword_timeout()
                     delay_was_passed = wake_word_activation_delay_passed
 
                     # Set state and spinner text
                     if not self.recording_stop_time:
-                        if self.wake_words \
+                        if self.use_wake_words \
                                 and wake_word_activation_delay_passed \
                                 and not self.wakeword_detected:
                             self._set_state("wakeword")
@@ -1139,14 +1259,10 @@ class AudioToTextRecorder:
                             else:
                                 self._set_state("inactive")
 
-                    # Detect wake words if applicable
-                    if self.wake_words and wake_word_activation_delay_passed:
+                    #self.wake_word_detect_time = time.time()
+                    if self.use_wake_words and wake_word_activation_delay_passed:
                         try:
-                            pcm = struct.unpack_from(
-                                "h" * self.buffer_size,
-                                data
-                                )
-                            wakeword_index = self.porcupine.process(pcm)
+                            wakeword_index = self._process_wakeword(data)
 
                         except struct.error:
                             logging.error("Error unpacking audio data "
@@ -1157,14 +1273,14 @@ class AudioToTextRecorder:
                             logging.error(f"Wake word processing error: {e}")
                             continue
 
-                        # If a wake word is detected
+                        # If a wake word is detected                        
                         if wakeword_index >= 0:
 
                             # Removing the wake word from the recording
-                            samples_for_0_1_sec = int(self.sample_rate * 0.1)
+                            samples_time = int(self.sample_rate * self.wake_word_buffer_duration)
                             start_index = max(
                                 0,
-                                len(self.audio_buffer) - samples_for_0_1_sec
+                                len(self.audio_buffer) - samples_time
                                 )
                             temp_samples = collections.deque(
                                 itertools.islice(
@@ -1177,12 +1293,13 @@ class AudioToTextRecorder:
 
                             self.wake_word_detect_time = time.time()
                             self.wakeword_detected = True
+                            #self.wake_word_cooldown_time = time.time()
                             if self.on_wakeword_detected:
                                 self.on_wakeword_detected()
 
                     # Check for voice activity to
                     # trigger the start of recording
-                    if ((not self.wake_words
+                    if ((not self.use_wake_words
                          or not wake_word_activation_delay_passed)
                             and self.start_recording_on_voice_activity) \
                             or self.wakeword_detected:

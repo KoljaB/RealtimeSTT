@@ -3,6 +3,10 @@
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
+## New
+
+Custom wake words with [OpenWakeWord](#openwakeword). Thanks to the [developers](https://github.com/dscripka/openWakeWord) of this!
+
 ## About the Project
 
 RealtimeSTT listens to the microphone and transcribes voice into text.  
@@ -18,7 +22,7 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
-Latest Version: v0.1.15
+Latest Version: v0.2.0
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -42,10 +46,10 @@ This library uses:
 - **Speech-To-Text**
   - [Faster_Whisper](https://github.com/guillaumekln/faster-whisper) for instant (GPU-accelerated) transcription.
 - **Wake Word Detection**
-  - [Porcupine](https://github.com/Picovoice/porcupine) for wake word detection.
+  - [Porcupine](https://github.com/Picovoice/porcupine) or [OpenWakeWord](https://github.com/dscripka/openWakeWord) for wake word detection.
+
 
 *These components represent the "industry standard" for cutting-edge applications, providing the most modern and effective foundation for building high-end solutions.*
-
 
 ## Installation
 
@@ -59,22 +63,39 @@ Although it is possible to run RealtimeSTT with a CPU installation only (use a s
 
 ### GPU Support with CUDA (recommended)
 
-Additional steps are needed for a **GPU-optimized** installation. These steps are recommended for those who require **better performance** and have a compatible NVIDIA GPU.
+
+**Install RealtimeSTT with CUDA support**  
+
+*For Cuda 11.8:*  
+    ```bash
+    pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu118
+    ```
+*For Cuda 12.X:*  
+    ```bash
+    pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu121
+    ```
 
 > **Note**: *To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).*
 
-To use RealtimeSTT with GPU support via CUDA please follow these steps:
 
-1. **Install NVIDIA CUDA Toolkit 11.8**:
-    - Visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-11-8-0-download-archive).
+Some additional steps might be needed to prepare the system for CUDA support and install the **GPU-optimized** installation, for those who require **better performance** and have a compatible NVIDIA GPU. To use RealtimeSTT with GPU support via CUDA you might need to also follow these steps:
+
+1. **Install NVIDIA CUDA Toolkit**:
+    - select between CUDA 11.8 or CUDA 12.X Toolkit
+        - for 12.X visit [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-toolkit-archive) and select latest version.
+        - for 11.8 visit [NVIDIA CUDA Toolkit 11.8](https://developer.nvidia.com/cuda-11-8-0-download-archive).
     - Select operating system and version.
     - Download and install the software.
 
-2. **Install NVIDIA cuDNN 8.7.0 for CUDA 11.x**:
-    - Visit [NVIDIA cuDNN Archive](https://developer.nvidia.com/rdp/cudnn-archive).
-    - Click on "Download cuDNN v8.7.0 (November 28th, 2022), for CUDA 11.x".
-    - Download and install the software.
-
+2. **Install NVIDIA cuDNN**:
+    - select between CUDA 11.8 or CUDA 12.X Toolkit
+        - for 12.X visit [cuDNN Downloads](https://developer.nvidia.com/cudnn-downloads).
+            - Select operating system and version.
+            - Download and install the software.
+        - for 11.8 visit [NVIDIA cuDNN Archive](https://developer.nvidia.com/rdp/cudnn-archive).
+            - Click on "Download cuDNN v8.7.0 (November 28th, 2022), for CUDA 11.x".
+            - Download and install the software.
+    
 3. **Install ffmpeg**:
 
     > **Note**: *Installation of ffmpeg might not actually be needed to operate RealtimeSTT* <sup> *thanks to jgilbert2017 for pointing this out</sup>
@@ -112,12 +133,6 @@ To use RealtimeSTT with GPU support via CUDA please follow these steps:
         ```bash
         scoop install ffmpeg
         ```    
-
-4. **Install PyTorch with CUDA support**:
-    ```bash
-    pip uninstall torch
-    pip install torch==2.2.2+cu118 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu118
-    ```
 
 ## Quick Start
 
@@ -324,13 +339,21 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 #### Wake Word Parameters
 
-- **wake_words** (str, default=""): Wake words for initiating the recording. Multiple wake words can be provided as a comma-separated string. Supported wake words are: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator
+- **wakeword_backend** (str, default="pvporcupine"): Specifies the backend library to use for wake word detection. Supported options include 'pvporcupine' for using the Porcupine wake word engine or 'oww' for using the OpenWakeWord engine.
+
+- **openwakeword_model_paths** (str, default=None): Comma-separated paths to model files for the openwakeword library. These paths point to custom models that can be used for wake word detection when the openwakeword library is selected as the wakeword_backend.
+
+- **openwakeword_inference_framework** (str, default="onnx"): Specifies the inference framework to use with the openwakeword library. Supported frameworks include 'onnx' for using the Open Neural Network Exchange format, which can provide performance optimizations over other formats.
+
+- **wake_words** (str, default=""): Initiate recording when using the 'pvporcupine' wakeword backend. Multiple wake words can be provided as a comma-separated string. Supported wake words are: alexa, americano, blueberry, bumblebee, computer, grapefruits, grasshopper, hey google, hey siri, jarvis, ok google, picovoice, porcupine, terminator. For the 'openwakeword' backend, wake words are automatically extracted from the provided model files, so specifying them here is not necessary.
 
 - **wake_words_sensitivity** (float, default=0.6): Sensitivity level for wake word detection (0 for least sensitive, 1 for most sensitive).
 
 - **wake_word_activation_delay** (float, default=0): Duration in seconds after the start of monitoring before the system switches to wake word activation if no voice is initially detected. If set to zero, the system uses wake word activation immediately.
 
 - **wake_word_timeout** (float, default=5): Duration in seconds after a wake word is recognized. If no subsequent voice activity is detected within this window, the system transitions back to an inactive state, awaiting the next wake word or voice activation.
+
+- **wake_word_buffer_duration** (float, default=0.1): Duration in seconds to buffer audio data during wake word detection. This helps in cutting out the wake word from the recording buffer so it does not falsely get detected along with the following spoken text, ensuring cleaner and more accurate transcription start triggers. Increase this if parts of the wake word get detected as text.
 
 - **on_wakeword_detected**: A callable function triggered when a wake word is detected.
 
@@ -339,6 +362,32 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **on_wakeword_detection_start**: A callable function triggered when the system starts to listen for wake words
 
 - **on_wakeword_detection_end**: A callable function triggered when stopping to listen for wake words (e.g. because of timeout or wake word detected)
+
+## OpenWakeWord  
+
+### Training models
+
+Look [here](https://github.com/dscripka/openWakeWord?tab=readme-ov-file#training-new-models) for information about how to train your own OpenWakeWord models. You can use a [simple Google Colab notebook](https://colab.research.google.com/drive/1q1oe2zOyZp7UsB3jJiQ1IFn8z5YfjwEb?usp=sharing) for a start or use a {more detailed notebook](https://github.com/dscripka/openWakeWord/blob/main/notebooks/automatic_model_training.ipynb) that enables more customization (can produce high quality models, but requires more development experience).
+
+### Convert model to ONNX format
+
+You might need to use tf2onnx to convert tensorflow tflite models to onnx format:
+´´´bash
+pip install -U tf2onnx
+python -m tf2onnx.convert --tflite my_model_filename.tflite --output my_model_filename.onnx
+´´´
+
+### Configure RealtimeSTT
+
+Suggested starting parameters for OpenWakeWord usage:
+```python
+    with AudioToTextRecorder(
+        wakeword_backend="oww",
+        wake_words_sensitivity=0.35,
+        openwakeword_model_paths="word1.onnx,word2.onnx",
+        wake_word_buffer_duration=1,
+        ) as recorder:
+```
 
 ## Contribution
 
