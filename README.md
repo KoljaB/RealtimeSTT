@@ -79,25 +79,31 @@ pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu121
 
 This command reinstalls PyTorch and Torchaudio with explicit support for CUDA.
 
-If RealtimeSTT is already installed with CPU support only, you may also update PyTorch only with:
+### Updating PyTorch Only for CUDA Support
+
+If you already have RealtimeSTT installed but want to upgrade your PyTorch installation to leverage GPU support with CUDA, follow these instructions based on your specific CUDA version. This process is useful if you initially installed RealtimeSTT with only CPU support and now wish to enhance its performance with CUDA capabilities.
+
+#### For CUDA 11.8:
+To update PyTorch and Torchaudio to support CUDA 11.8, use the following commands:
 
 ```bash
 pip install torch==2.3.1+cu118 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu118
 ```
-for CUDA 11.8.  
 
-Or:
+#### For CUDA 12.X:
+To update PyTorch and Torchaudio to support CUDA 12.X, execute the following:
+
 ```bash
-pip install torch==2.3.1+cu118 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.3.1+cu121 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 ```
-for CUDA 12.X.  
 
-Replace 2.3.1 by your desired CUDA version.
+Replace `2.3.1` with the version of CUDA that matches your system and requirements.
+
+### Steps That Might Be Necessary Before
 
 > **Note**: *To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).*
 
-
-Some additional steps might be needed to prepare the system for CUDA support and install the **GPU-optimized** installation, for those who require **better performance** and have a compatible NVIDIA GPU. To use RealtimeSTT with GPU support via CUDA you might need to also follow these steps:
+If you didn't use CUDA models before, some additional steps might be needed one time before installation. These steps prepare the system for CUDA support and installation of the **GPU-optimized** installation. This is recommended for those who require **better performance** and have a compatible NVIDIA GPU. To use RealtimeSTT with GPU support via CUDA please also follow these steps:
 
 1. **Install NVIDIA CUDA Toolkit**:
     - select between CUDA 11.8 or CUDA 12.X Toolkit
