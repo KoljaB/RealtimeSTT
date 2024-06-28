@@ -64,24 +64,9 @@ Although it is possible to run RealtimeSTT with a CPU installation only (use a s
 ### GPU Support with CUDA (recommended)
 
 
-**Install RealtimeSTT with CUDA support**  
+### Updating PyTorch for CUDA Support
 
-*For Cuda 11.8:*  
-```bash
-pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu118
-```  
-
-
-*For Cuda 12.X:*  
-```bash
-pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu121
-```
-
-This command reinstalls PyTorch and Torchaudio with explicit support for CUDA.
-
-### Updating PyTorch Only for CUDA Support
-
-If you already have RealtimeSTT installed but want to upgrade your PyTorch installation to leverage GPU support with CUDA, follow these instructions based on your specific CUDA version. This process is useful if you initially installed RealtimeSTT with only CPU support and now wish to enhance its performance with CUDA capabilities.
+Tp upgrade your PyTorch installation to enable GPU support with CUDA, follow these instructions based on your specific CUDA version. This is useful if you wish to enhance the performance of RealtimeSTT with CUDA capabilities.
 
 #### For CUDA 11.8:
 To update PyTorch and Torchaudio to support CUDA 11.8, use the following commands:
