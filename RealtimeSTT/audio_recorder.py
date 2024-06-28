@@ -432,7 +432,7 @@ class AudioToTextRecorder:
             logging.debug("Explicitly setting the multiprocessing start method to 'spawn'")
             mp.set_start_method('spawn')
         except RuntimeError as e:
-            logging.debug("Start method has already been set. Details:", e)
+            logging.debug(f"Start method has already been set. Details: {e}")
 
         logging.info("Starting RealTimeSTT")
 
