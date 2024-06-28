@@ -67,13 +67,15 @@ Although it is possible to run RealtimeSTT with a CPU installation only (use a s
 **Install RealtimeSTT with CUDA support**  
 
 *For Cuda 11.8:*  
-    ```bash
-    pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu118
-    ```
+```bash
+pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu118
+```  
+
+
 *For Cuda 12.X:*  
-    ```bash
-    pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu121
-    ```
+```bash
+pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu121
+```
 
 > **Note**: *To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).*
 
