@@ -374,10 +374,11 @@ Look [here](https://github.com/dscripka/openWakeWord?tab=readme-ov-file#training
 ### Convert model to ONNX format
 
 You might need to use tf2onnx to convert tensorflow tflite models to onnx format:
-´´´bash
+
+```bash
 pip install -U tf2onnx
 python -m tf2onnx.convert --tflite my_model_filename.tflite --output my_model_filename.onnx
-´´´
+```
 
 ### Configure RealtimeSTT
 
