@@ -3,8 +3,8 @@ faster-whisper==1.0.2
 pvporcupine==1.9.5
 webrtcvad==2.0.10
 halo==0.0.31
-torch==2.3.0
-torchaudio==2.3.0
+torch==2.3.1
+torchaudio==2.3.1
 scipy==1.12.0
 websockets==v12.0
 openwakeword==0.6.0
