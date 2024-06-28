@@ -77,6 +77,23 @@ pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu118
 pip install RealtimeSTT --index-url https://download.pytorch.org/whl/cu121
 ```
 
+This command reinstalls PyTorch and Torchaudio with explicit support for CUDA.
+
+If RealtimeSTT is already installed with CPU support only, you may also update PyTorch only with:
+
+```bash
+pip install torch==2.3.1+cu118 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu118
+```
+for CUDA 11.8.  
+
+Or:
+```bash
+pip install torch==2.3.1+cu118 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
+```
+for CUDA 12.X.  
+
+Replace 2.3.1 by your desired CUDA version.
+
 > **Note**: *To check if your NVIDIA GPU supports CUDA, visit the [official CUDA GPUs list](https://developer.nvidia.com/cuda-gpus).*
 
 
