@@ -40,8 +40,8 @@ if __name__ == '__main__':
         language="en", 
         wakeword_backend="oww",
         wake_words_sensitivity=0.35,
-        openwakeword_model_paths="model_wake_word1.onnx,model_wake_word2.onnx",
-        # openwakeword_model_paths="suh_man_tuh.onnx,suh_mahn_thuh.onnx", # load these test models from https://huggingface.co/KoljaB/SamanthaOpenwakeword/tree/main and save in tests folder
+        # openwakeword_model_paths="model_wake_word1.onnx,model_wake_word2.onnx",
+        openwakeword_model_paths="suh_man_tuh.onnx,suh_mahn_thuh.onnx", # load these test models from https://huggingface.co/KoljaB/SamanthaOpenwakeword/tree/main and save in tests folder
         on_wakeword_detected=on_wakeword_detected,
         on_recording_start=on_recording_start,
         on_recording_stop=on_recording_stop,
