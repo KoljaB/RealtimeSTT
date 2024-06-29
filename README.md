@@ -82,7 +82,7 @@ To update PyTorch and Torchaudio to support CUDA 12.X, execute the following:
 pip install torch==2.3.1+cu121 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Replace `2.3.1` with the version of CUDA that matches your system and requirements.
+Replace `2.3.1` with the version of PyTorch that matches your system and requirements.
 
 ### Steps That Might Be Necessary Before
 
