@@ -28,7 +28,7 @@ WORKDIR /app
 RUN apt-get update -y && \
   apt-get install -y python3 python3-pip portaudio19-dev
 
-RUN pip3 install torch==2.2.2+cu118 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu118
+RUN pip3 install torch==2.3.0 torchaudio==2.3.0
 
 COPY requirements.txt /app/requirements.txt
 RUN pip3 install -r /app/requirements.txt
