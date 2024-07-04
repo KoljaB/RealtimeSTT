@@ -21,7 +21,7 @@ CMD ["python3", "example_browserclient/server.py"]
 
 # --------------------------------------------
 
-FROM ubuntu22.04 as cpu
+FROM ubuntu:22.04 as cpu
 
 WORKDIR /app
 
