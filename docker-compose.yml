@@ -9,9 +9,10 @@ services:
       # - ./RealtimeSTT:/app/RealtimeSTT
       # - ./example_browserclient:/app/example_browserclient
       - cache:/root/.cache
+      - ./nginx/certs:/etc/nginx/ssl
     ports:
-      - "9001:9001"
-
+      - "8001:8001"
+      - "8002:8002"
     # if 'gpu' target
     deploy:
       resources:
@@ -23,8 +24,11 @@ services:
     container_name: nginx_web
     ports:
       - "8081:80"
+      - "8082:443"
     volumes:
       - ./example_browserclient:/usr/share/nginx/html
+      - ./nginx/conf/:/etc/nginx/conf.d/:ro
+      - ./nginx/certs:/etc/nginx/ssl
 
 volumes:
   cache:
