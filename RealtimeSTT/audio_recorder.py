@@ -1009,7 +1009,7 @@ class AudioToTextRecorder:
         using the `faster_whisper` model.
 
         - Automatically starts recording upon voice activity if not manually
-          started using `recorder.`.
+          started using `recorder.start()`.
         - Automatically stops recording upon voice deactivity if not manually
           stopped with `recorder.stop()`.
         - Processes the recorded audio to generate transcription.
@@ -1037,8 +1037,8 @@ class AudioToTextRecorder:
             return ""
 
         if on_transcription_finished:
-            self._start_thread(target=on_transcription_finished,
-                             args=(self.transcribe(),))
+            threading.Thread(target=on_transcription_finished,
+                             args=(self.transcribe(),)).start()
         else:
             return self.transcribe()
 
@@ -1614,9 +1614,9 @@ class AudioToTextRecorder:
                 self.silero_working = True
 
                 # Run the intensive check in a separate thread
-                self._start_thread(
+                threading.Thread(
                     target=self._is_silero_speech,
-                    args=(data,))
+                    args=(data,)).start()
 
     def _is_voice_active(self):
         """
