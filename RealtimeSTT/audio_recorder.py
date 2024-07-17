@@ -630,11 +630,15 @@ class AudioToTextRecorder:
         self.stop_recording_on_voice_deactivity = False
 
         # Start the recording worker thread
-        self.recording_thread = self._start_thread(target=self._recording_worker)
+        self.recording_thread = threading.Thread(target=self._recording_worker)
+        self.recording_thread.daemon = True
+        self.recording_thread.start()
 
         # Start the realtime transcription worker thread
-        self.realtime_thread = self._start_thread(target=self._realtime_worker)
-
+        self.realtime_thread = threading.Thread(target=self._realtime_worker)
+        self.realtime_thread.daemon = True
+        self.realtime_thread.start()
+                   
         # Wait for transcription models to start
         logging.debug('Waiting for main transcription model to start')
         self.main_transcription_ready_event.wait()
