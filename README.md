@@ -22,7 +22,7 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
-Latest Version: v0.2.0
+Latest Version: v0.2.1
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -66,7 +66,7 @@ Although it is possible to run RealtimeSTT with a CPU installation only (use a s
 
 ### Updating PyTorch for CUDA Support
 
-Tp upgrade your PyTorch installation to enable GPU support with CUDA, follow these instructions based on your specific CUDA version. This is useful if you wish to enhance the performance of RealtimeSTT with CUDA capabilities.
+To upgrade your PyTorch installation to enable GPU support with CUDA, follow these instructions based on your specific CUDA version. This is useful if you wish to enhance the performance of RealtimeSTT with CUDA capabilities.
 
 #### For CUDA 11.8:
 To update PyTorch and Torchaudio to support CUDA 11.8, use the following commands:
