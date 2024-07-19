@@ -536,50 +536,50 @@ class AudioToTextRecorder:
                     "Porcupine wake word detection engine initialized successfully"
                 )
 
-        elif self.wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
-                
-            openwakeword.utils.download_models()
+            elif self.wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
+                    
+                openwakeword.utils.download_models()
 
-            try:
-                if openwakeword_model_paths:
-                    model_paths = openwakeword_model_paths.split(',')
-                    self.owwModel = Model(
-                        wakeword_models=model_paths,
-                        inference_framework=openwakeword_inference_framework
-                    )
-                    logging.info(
-                        "Successfully loaded wakeword model(s): "
-                        f"{openwakeword_model_paths}"
-                    )
-                else:
-                    self.owwModel = Model(
-                        inference_framework=openwakeword_inference_framework)
-                
-                self.oww_n_models = len(self.owwModel.models.keys())
-                if not self.oww_n_models:
-                    logging.error(
-                        "No wake word models loaded."
-                    )
+                try:
+                    if openwakeword_model_paths:
+                        model_paths = openwakeword_model_paths.split(',')
+                        self.owwModel = Model(
+                            wakeword_models=model_paths,
+                            inference_framework=openwakeword_inference_framework
+                        )
+                        logging.info(
+                            "Successfully loaded wakeword model(s): "
+                            f"{openwakeword_model_paths}"
+                        )
+                    else:
+                        self.owwModel = Model(
+                            inference_framework=openwakeword_inference_framework)
+                    
+                    self.oww_n_models = len(self.owwModel.models.keys())
+                    if not self.oww_n_models:
+                        logging.error(
+                            "No wake word models loaded."
+                        )
 
-                for model_key in self.owwModel.models.keys():
-                    logging.info(
-                        "Successfully loaded openwakeword model: "
-                        f"{model_key}"
-                    )
+                    for model_key in self.owwModel.models.keys():
+                        logging.info(
+                            "Successfully loaded openwakeword model: "
+                            f"{model_key}"
+                        )
 
-            except Exception as e:
-                logging.exception(
-                    "Error initializing openwakeword "
-                    f"wake word detection engine: {e}"
+                except Exception as e:
+                    logging.exception(
+                        "Error initializing openwakeword "
+                        f"wake word detection engine: {e}"
+                    )
+                    raise
+
+                logging.debug(
+                    "Open wake word detection engine initialized successfully"
                 )
-                raise
-
-            logging.debug(
-                "Open wake word detection engine initialized successfully"
-            )
-        
-        else:
-            logging.exception(f"Wakeword engine {self.wakeword_backend} unknown/unsupported. Please specify one of: pvporcupine, openwakeword.")
+            
+            else:
+                logging.exception(f"Wakeword engine {self.wakeword_backend} unknown/unsupported. Please specify one of: pvporcupine, openwakeword.")
 
 
         # Setup voice activity detection model WebRTC
@@ -971,37 +971,36 @@ class AudioToTextRecorder:
         """
         Processes audio data to detect wake words.
         """
-        match self.wakeword_backend:
-            case 'pvp' | 'pvporcupine':
-                pcm = struct.unpack_from(
-                    "h" * self.buffer_size,
-                    data
-                )
-                porcupine_index = self.porcupine.process(pcm)
-                if self.debug_mode:
-                    print (f"wake words porcupine_index: {porcupine_index}")
-                return self.porcupine.process(pcm)
+        if self.wakeword_backend in {'pvp', 'pvporcupine'}:
+            pcm = struct.unpack_from(
+                "h" * self.buffer_size,
+                data
+            )
+            porcupine_index = self.porcupine.process(pcm)
+            if self.debug_mode:
+                print (f"wake words porcupine_index: {porcupine_index}")
+            return self.porcupine.process(pcm)
 
-            case 'oww' | 'openwakeword' | 'openwakewords':
-                pcm = np.frombuffer(data, dtype=np.int16)
-                prediction = self.owwModel.predict(pcm)
-                max_score = -1
-                max_index = -1
-                wake_words_in_prediction = len(self.owwModel.prediction_buffer.keys())
-                self.wake_words_sensitivities
-                if wake_words_in_prediction:
-                    for idx, mdl in enumerate(self.owwModel.prediction_buffer.keys()):
-                        scores = list(self.owwModel.prediction_buffer[mdl])
-                        if scores[-1] >= self.wake_words_sensitivity and scores[-1] > max_score:
-                            max_score = scores[-1]
-                            max_index = idx
-                    if self.debug_mode:
-                        print (f"wake words oww max_index, max_score: {max_index} {max_score}")
-                    return max_index  
-                else:
-                    if self.debug_mode:
-                        print (f"wake words oww_index: -1")
-                    return -1
+        elif self.wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
+            pcm = np.frombuffer(data, dtype=np.int16)
+            prediction = self.owwModel.predict(pcm)
+            max_score = -1
+            max_index = -1
+            wake_words_in_prediction = len(self.owwModel.prediction_buffer.keys())
+            self.wake_words_sensitivities
+            if wake_words_in_prediction:
+                for idx, mdl in enumerate(self.owwModel.prediction_buffer.keys()):
+                    scores = list(self.owwModel.prediction_buffer[mdl])
+                    if scores[-1] >= self.wake_words_sensitivity and scores[-1] > max_score:
+                        max_score = scores[-1]
+                        max_index = idx
+                if self.debug_mode:
+                    print (f"wake words oww max_index, max_score: {max_index} {max_score}")
+                return max_index  
+            else:
+                if self.debug_mode:
+                    print (f"wake words oww_index: -1")
+                return -1
 
         if self.debug_mode:        
             print("wake words no match")
