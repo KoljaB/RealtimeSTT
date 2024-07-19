@@ -517,69 +517,71 @@ class AudioToTextRecorder:
                 for _ in range(len(self.wake_words_list))
             ]
 
-            match self.wakeword_backend:
-                case 'pvp' | 'pvporcupine':
-                    try:
-                        self.porcupine = pvporcupine.create(
-                            keywords=self.wake_words_list,
-                            sensitivities=self.wake_words_sensitivities
-                        )
-                        self.buffer_size = self.porcupine.frame_length
-                        self.sample_rate = self.porcupine.sample_rate
+            if self.wakeword_backend in {'pvp', 'pvporcupine'}:
 
-                    except Exception as e:
-                        logging.exception(
-                            "Error initializing porcupine "
-                            f"wake word detection engine: {e}"
-                        )
-                        raise
+                try:
+                    self.porcupine = pvporcupine.create(
+                        keywords=self.wake_words_list,
+                        sensitivities=self.wake_words_sensitivities
+                    )
+                    self.buffer_size = self.porcupine.frame_length
+                    self.sample_rate = self.porcupine.sample_rate
 
-                    logging.debug(
-                        "Porcupine wake word detection engine initialized successfully"
+                except Exception as e:
+                    logging.exception(
+                        "Error initializing porcupine "
+                        f"wake word detection engine: {e}"
+                    )
+                    raise
+
+                logging.debug(
+                    "Porcupine wake word detection engine initialized successfully"
+                )
+
+        elif self.wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
+                
+            openwakeword.utils.download_models()
+
+            try:
+                if openwakeword_model_paths:
+                    model_paths = openwakeword_model_paths.split(',')
+                    self.owwModel = Model(
+                        wakeword_models=model_paths,
+                        inference_framework=openwakeword_inference_framework
+                    )
+                    logging.info(
+                        "Successfully loaded wakeword model(s): "
+                        f"{openwakeword_model_paths}"
+                    )
+                else:
+                    self.owwModel = Model(
+                        inference_framework=openwakeword_inference_framework)
+                
+                self.oww_n_models = len(self.owwModel.models.keys())
+                if not self.oww_n_models:
+                    logging.error(
+                        "No wake word models loaded."
                     )
 
-                case 'oww' | 'openwakeword' | 'openwakewords':
-                    openwakeword.utils.download_models()
-
-                    try:
-                        if openwakeword_model_paths:
-                            model_paths = openwakeword_model_paths.split(',')
-                            self.owwModel = Model(
-                                wakeword_models=model_paths,
-                                inference_framework=openwakeword_inference_framework
-                            )
-                            logging.info(
-                                "Successfully loaded wakeword model(s): "
-                                f"{openwakeword_model_paths}"
-                            )
-                        else:
-                            self.owwModel = Model(
-                                inference_framework=openwakeword_inference_framework)
-                        
-                        self.oww_n_models = len(self.owwModel.models.keys())
-                        if not self.oww_n_models:
-                            logging.error(
-                                "No wake word models loaded."
-                            )
-   
-                        for model_key in self.owwModel.models.keys():
-                            logging.info(
-                                "Successfully loaded openwakeword model: "
-                                f"{model_key}"
-                            )
-
-                    except Exception as e:
-                        logging.exception(
-                            "Error initializing openwakeword "
-                            f"wake word detection engine: {e}"
-                        )
-                        raise
-
-                    logging.debug(
-                        "Open wake word detection engine initialized successfully"
+                for model_key in self.owwModel.models.keys():
+                    logging.info(
+                        "Successfully loaded openwakeword model: "
+                        f"{model_key}"
                     )
-                case _:
-                    logging.exception("Wakeword engine {} unknown/unsupported. Please specify one of: pvporcupine, openwakeword.")
+
+            except Exception as e:
+                logging.exception(
+                    "Error initializing openwakeword "
+                    f"wake word detection engine: {e}"
+                )
+                raise
+
+            logging.debug(
+                "Open wake word detection engine initialized successfully"
+            )
+        
+        else:
+            logging.exception(f"Wakeword engine {self.wakeword_backend} unknown/unsupported. Please specify one of: pvporcupine, openwakeword.")
 
 
         # Setup voice activity detection model WebRTC
