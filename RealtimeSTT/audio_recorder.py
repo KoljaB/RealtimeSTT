@@ -835,7 +835,7 @@ class AudioToTextRecorder:
         try:
             while not shutdown_event.is_set():
                 try:
-                    data = stream.read(buffer_size)
+                    data = stream.read(buffer_size, exception_on_overflow=False)
 
                 except OSError as e:
                     if e.errno == pyaudio.paInputOverflowed:
