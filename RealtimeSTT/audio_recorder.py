@@ -229,7 +229,7 @@ class AudioToTextRecorder:
             pre-trained model from Silero in the ONNX (Open Neural Network
             Exchange) format instead of the PyTorch format. This is
             recommended for faster performance.
-		- silero_deactivity_detection (bool, default=False): Enables the Silero
+        - silero_deactivity_detection (bool, default=False): Enables the Silero
             model for end-of-speech detection. More robust against background
             noise. Utilizes additional GPU resources but improves accuracy in
             noisy environments. When False, uses the default WebRTC VAD,
