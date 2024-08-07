@@ -115,6 +115,7 @@ class AudioToTextRecorder:
                  # Voice activation parameters
                  silero_sensitivity: float = INIT_SILERO_SENSITIVITY,
                  silero_use_onnx: bool = False,
+                 silero_deactivity_detection: bool = False,
                  webrtc_sensitivity: int = INIT_WEBRTC_SENSITIVITY,
                  post_speech_silence_duration: float = (
                      INIT_POST_SPEECH_SILENCE_DURATION
@@ -228,6 +229,12 @@ class AudioToTextRecorder:
             pre-trained model from Silero in the ONNX (Open Neural Network
             Exchange) format instead of the PyTorch format. This is
             recommended for faster performance.
+		- silero_deactivity_detection (bool, default=False): Enables the Silero
+            model for end-of-speech detection. More robust against background
+            noise. Utilizes additional GPU resources but improves accuracy in
+            noisy environments. When False, uses the default WebRTC VAD,
+            which is more sensitive but may continue recording longer due
+            to background sounds.
         - webrtc_sensitivity (int, default=WEBRTC_SENSITIVITY): Sensitivity
             for the WebRTC Voice Activity Detection engine ranging from 0
             (least aggressive / most sensitive) to 3 (most aggressive,
@@ -381,6 +388,7 @@ class AudioToTextRecorder:
         self.silero_working = False
         self.speech_end_silence_start = 0
         self.silero_sensitivity = silero_sensitivity
+        self.silero_deactivity_detection = silero_deactivity_detection
         self.listen_start = 0
         self.spinner = spinner
         self.halo = None
@@ -1350,14 +1358,16 @@ class AudioToTextRecorder:
 
                     # Stop the recording if silence is detected after speech
                     if self.stop_recording_on_voice_deactivity:
+                        is_speech = (
+                            self._is_silero_speech(data) if self.silero_deactivity_detection
+                            else self._is_webrtc_speech(data, True)
+                        )
 
-                        if not self._is_webrtc_speech(data, True):
-
+                        if not is_speech:
                             # Voice deactivity was detected, so we start
                             # measuring silence time before stopping recording
                             if self.speech_end_silence_start == 0:
                                 self.speech_end_silence_start = time.time()
-
                         else:
                             self.speech_end_silence_start = 0
 

@@ -22,7 +22,7 @@ https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-072
 
 ### Updates
 
-Latest Version: v0.2.1
+Latest Version: v0.2.2
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -332,6 +332,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
 - **silero_use_onnx** (bool, default=False): Enables usage of the pre-trained model from Silero in the ONNX (Open Neural Network Exchange) format instead of the PyTorch format. Default is False. Recommended for faster performance.
+
+- **silero_deactivity_detection** (bool, default=False): Enables the Silero model for end-of-speech detection. More robust against background noise. Utilizes additional GPU resources but improves accuracy in noisy environments. When False, uses the default WebRTC VAD, which is more sensitive but may continue recording longer due to background sounds.
 
 - **webrtc_sensitivity** (int, default=3): Sensitivity for the WebRTC Voice Activity Detection engine ranging from 0 (least aggressive / most sensitive) to 3 (most aggressive, least sensitive). Default is 3.
 
