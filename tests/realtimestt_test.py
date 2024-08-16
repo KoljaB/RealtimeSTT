@@ -26,6 +26,7 @@ if __name__ == '__main__':
         if new_text != displayed_text:
             displayed_text = new_text
             clear_console()
+            print(f"Language: {recorder.detected_language} (realtime: {recorder.detected_realtime_language})")
             print(displayed_text, end="", flush=True)
 
     def process_text(text):
@@ -35,7 +36,6 @@ if __name__ == '__main__':
     recorder_config = {
         'spinner': False,
         'model': 'large-v2',
-        'language': 'en',
         'silero_sensitivity': 0.4,
         'webrtc_sensitivity': 2,
         'post_speech_silence_duration': 0.4,
@@ -43,8 +43,9 @@ if __name__ == '__main__':
         'min_gap_between_recordings': 0,
         'enable_realtime_transcription': True,
         'realtime_processing_pause': 0.2,
-        'realtime_model_type': 'tiny.en',
+        'realtime_model_type': 'tiny',
         'on_realtime_transcription_update': text_detected, 
+        'silero_deactivity_detection': True,
     }
 
     recorder = AudioToTextRecorder(**recorder_config)
