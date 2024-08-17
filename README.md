@@ -316,6 +316,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **enable_realtime_transcription** (bool, default=False): Enables or disables real-time transcription of audio. When set to True, the audio will be transcribed continuously as it is being recorded.
 
+- **use_main_model_for_realtime** (bool, default=False): If set to True, the main transcription model will be used for both regular and real-time transcription. If False, a separate model specified by `realtime_model_type` will be used for real-time transcription. Using a single model can save memory and potentially improve performance, but may not be optimized for real-time processing. Using separate models allows for a smaller, faster model for real-time transcription while keeping a more accurate model for final transcription.
+
 - **realtime_model_type** (str, default="tiny"): Specifies the size or path of the machine learning model to be used for real-time transcription.
     - Valid options: 'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
 

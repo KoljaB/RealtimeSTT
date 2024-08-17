@@ -107,6 +107,7 @@ class AudioToTextRecorder:
 
                  # Realtime transcription parameters
                  enable_realtime_transcription=False,
+                 use_main_model_for_realtime=False,
                  realtime_model_type=INIT_MODEL_TRANSCRIPTION_REALTIME,
                  realtime_processing_pause=INIT_REALTIME_PROCESSING_PAUSE,
                  on_realtime_transcription_update=None,
@@ -206,6 +207,15 @@ class AudioToTextRecorder:
         - enable_realtime_transcription (bool, default=False): Enables or
             disables real-time transcription of audio. When set to True, the
             audio will be transcribed continuously as it is being recorded.
+        - use_main_model_for_realtime (str, default=False):
+            If True, use the main transcription model for both regular and
+            real-time transcription. If False, use a separate model specified
+            by realtime_model_type for real-time transcription.
+            Using a single model can save memory and potentially improve
+            performance, but may not be optimized for real-time processing.
+            Using separate models allows for a smaller, faster model for
+            real-time transcription while keeping a more accurate model for
+            final transcription.
         - realtime_model_type (str, default="tiny"): Specifies the machine
             learning model to be used for real-time transcription. Valid
             options include 'tiny', 'tiny.en', 'base', 'base.en', 'small',
@@ -363,6 +373,7 @@ class AudioToTextRecorder:
         self.on_recorded_chunk = on_recorded_chunk
         self.on_transcription_start = on_transcription_start
         self.enable_realtime_transcription = enable_realtime_transcription
+        self.use_main_model_for_realtime = use_main_model_for_realtime
         self.realtime_model_type = realtime_model_type
         self.realtime_processing_pause = realtime_processing_pause
         self.on_realtime_transcription_update = (
@@ -414,6 +425,7 @@ class AudioToTextRecorder:
         self.detected_language_probability = 0
         self.detected_realtime_language = None
         self.detected_realtime_language_probability = 0
+        self.transcription_lock = threading.Lock()
 
         # Initialize the logging configuration with the specified level
         log_format = 'RealTimeSTT: %(name)s - %(levelname)s - %(message)s'
@@ -493,7 +505,7 @@ class AudioToTextRecorder:
             )
 
         # Initialize the realtime transcription model
-        if self.enable_realtime_transcription:
+        if self.enable_realtime_transcription and not self.use_main_model_for_realtime:
             try:
                 logging.info("Initializing faster_whisper realtime "
                              f"transcription model {self.realtime_model_type}"
@@ -967,19 +979,26 @@ class AudioToTextRecorder:
         """
         self._set_state("transcribing")
         audio_copy = copy.deepcopy(self.audio)
-        self.parent_transcription_pipe.send((self.audio, self.language))
-        status, result = self.parent_transcription_pipe.recv()
 
-        self._set_state("inactive")
-        if status == 'success':
-            segments, info = result
-            self.detected_language = info.language if info.language_probability > 0 else None
-            self.detected_language_probability = info.language_probability
-            self.last_transcription_bytes = audio_copy
-            return self._preprocess_output(segments)
-        else:
-            logging.error(result)
-            raise Exception(result)
+
+        with self.transcription_lock:
+            try:
+                self.parent_transcription_pipe.send((self.audio, self.language))
+                status, result = self.parent_transcription_pipe.recv()
+
+                self._set_state("inactive")
+                if status == 'success':
+                    segments, info = result
+                    self.detected_language = info.language if info.language_probability > 0 else None
+                    self.detected_language_probability = info.language_probability
+                    self.last_transcription_bytes = audio_copy
+                    return self._preprocess_output(segments)
+                else:
+                    logging.error(f"Transcription error: {result}")
+                    raise Exception(result)
+            except Exception as e:
+                logging.error(f"Error during transcription: {str(e)}")
+                raise e
 
     def _process_wakeword(self, data):
         """
@@ -1452,17 +1471,41 @@ class AudioToTextRecorder:
                     audio_array = audio_array.astype(np.float32) / \
                         INT16_MAX_ABS_VALUE
 
-                    # Perform transcription and assemble the text
-                    segments, info = self.realtime_model_type.transcribe(
-                        audio_array,
-                        language=self.language if self.language else None,
-                        beam_size=self.beam_size_realtime,
-                        initial_prompt=self.initial_prompt,
-                        suppress_tokens=self.suppress_tokens,
-                    )
+                    if self.use_main_model_for_realtime#:
+                        with self.transcription_lock:
+                            try:
+                                self.parent_transcription_pipe.send((audio_array, self.language))
+                                if self.parent_transcription_pipe.poll(timeout=5):  # Wait for 5 seconds
+                                    status, result = self.parent_transcription_pipe.recv()
+                                    if status == 'success':
+                                        segments, info = result
+                                        self.detected_realtime_language = info.language if info.language_probability > 0 else None
+                                        self.detected_realtime_language_probability = info.language_probability
+                                        realtime_text = segments
+                                    else:
+                                        logging.error(f"Realtime transcription error: {result}")
+                                        continue
+                                else:
+                                    logging.warning("Realtime transcription timed out")
+                                    continue
+                            except Exception as e:
+                                logging.error(f"Error in realtime transcription: {str(e)}")
+                                continue
+                    else:
+                        # Perform transcription and assemble the text
+                        segments, info = self.realtime_model_type.transcribe(
+                            audio_array,
+                            language=self.language if self.language else None,
+                            beam_size=self.beam_size_realtime,
+                            initial_prompt=self.initial_prompt,
+                            suppress_tokens=self.suppress_tokens,
+                        )
 
-                    self.detected_realtime_language = info.language if info.language_probability > 0 else None
-                    self.detected_realtime_language_probability = info.language_probability
+                        self.detected_realtime_language = info.language if info.language_probability > 0 else None
+                        self.detected_realtime_language_probability = info.language_probability
+                        realtime_text = " ".join(
+                            seg.text for seg in segments
+                        )
 
                     # double check recording state
                     # because it could have changed mid-transcription
@@ -1470,9 +1513,7 @@ class AudioToTextRecorder:
                             self.recording_start_time > 0.5:
 
                         logging.debug('Starting realtime transcription')
-                        self.realtime_transcription_text = " ".join(
-                            seg.text for seg in segments
-                        )
+                        self.realtime_transcription_text = realtime_text
                         self.realtime_transcription_text = \
                             self.realtime_transcription_text.strip()
 
