@@ -1471,7 +1471,7 @@ class AudioToTextRecorder:
                     audio_array = audio_array.astype(np.float32) / \
                         INT16_MAX_ABS_VALUE
 
-                    if self.use_main_model_for_realtime#:
+                    if self.use_main_model_for_realtime:
                         with self.transcription_lock:
                             try:
                                 self.parent_transcription_pipe.send((audio_array, self.language))
