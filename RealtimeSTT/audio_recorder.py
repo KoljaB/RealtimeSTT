@@ -53,6 +53,7 @@ import copy
 import os
 import re
 import gc
+import queue
 
 # Set OpenMP runtime duplicate library handling to OK (Use only for development!)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -1258,7 +1259,7 @@ class AudioToTextRecorder:
 
                 try:
 
-                    data = self.audio_queue.get()
+                    data = self.audio_queue.get(True, 1)
                     if self.on_recorded_chunk:
                         self.on_recorded_chunk(data)
 
@@ -1275,8 +1276,11 @@ class AudioToTextRecorder:
                         while (self.audio_queue.qsize() >
                                 self.allowed_latency_limit):
 
-                            data = self.audio_queue.get()
+                            data = self.audio_queue.get(True, 1)
 
+                except queue.Empty:
+                  continue
+                
                 except BrokenPipeError:
                     print("BrokenPipeError _recording_worker")
                     self.is_running = False
