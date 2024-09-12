@@ -799,96 +799,88 @@ class AudioToTextRecorder:
 
     @staticmethod
     def _audio_data_worker(audio_queue,
-                           sample_rate,
-                           buffer_size,
-                           input_device_index,
-                           shutdown_event,
-                           interrupt_stop_event,
-                           use_microphone):
+                        sample_rate,
+                        buffer_size,
+                        input_device_index,
+                        shutdown_event,
+                        interrupt_stop_event,
+                        use_microphone):
         """
-        Worker method that handles the audio recording process.
-
-        This method runs in a separate process and is responsible for:
-        - Setting up the audio input stream for recording.
-        - Continuously reading audio data from the input stream
-          and placing it in a queue.
-        - Handling errors during the recording process, including
-          input overflow.
-        - Gracefully terminating the recording process when a shutdown
-          event is set.
-
-        Args:
-            audio_queue (queue.Queue): A queue where recorded audio
-              data is placed.
-            sample_rate (int): The sample rate of the audio input stream.
-            buffer_size (int): The size of the buffer used in the audio
-              input stream.
-            input_device_index (int): The index of the audio input device
-            shutdown_event (threading.Event): An event that, when set, signals
-              this worker method to terminate.
-
-        Raises:
-            Exception: If there is an error while initializing the audio
-              recording.
+        Worker method that handles the audio recording process, with exception handling for microphone disconnection.
         """
-        try:
-            audio_interface = pyaudio.PyAudio()
-            if input_device_index is None:
-                default_device = audio_interface.get_default_input_device_info()
-                input_device_index = default_device['index']
-            stream = audio_interface.open(
-                rate=sample_rate,
-                format=pyaudio.paInt16,
-                channels=1,
-                input=True,
-                frames_per_buffer=buffer_size,
-                input_device_index=input_device_index,
-                )
+        audio_interface = pyaudio.PyAudio()
+        stream = None
 
-        except Exception as e:
-            logging.exception("Error initializing pyaudio "
-                              f"audio recording: {e}"
-                              )
-            raise
+        def start_stream():
+            nonlocal stream, input_device_index  # Ensure input_device_index is updated here as well
+            while True:
+                try:
+                    # Check and assign the input device index if it is not set
+                    if input_device_index is None: 
+                        default_device = audio_interface.get_default_input_device_info()
+                        input_device_index = default_device['index']
 
-        logging.debug("Audio recording (pyAudio input "
-                      "stream) initialized successfully"
-                      )
+                    stream = audio_interface.open(
+                        rate=sample_rate,
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        input=True,
+                        frames_per_buffer=buffer_size,
+                        input_device_index=input_device_index
+                    )
+                    logging.info("Microphone connected successfully.")
+                    break  # Exit the loop once the microphone is successfully connected
+                except Exception as e:
+                    logging.error(f"Microphone connection failed: {e}. Retrying...")
+                    input_device_index = None
+                    time.sleep(3)  # Wait for 5 seconds before retrying
+
+        # Initialize the stream for the first time
+        start_stream()
+
+        logging.debug("Audio recording (pyAudio input stream) initialized successfully")
 
         try:
             while not shutdown_event.is_set():
                 try:
                     data = stream.read(buffer_size)
-
                 except OSError as e:
+                    logging.error(f"Error during recording: {e}")
                     if e.errno == pyaudio.paInputOverflowed:
                         logging.warning("Input overflowed. Frame dropped.")
+                        continue
+                    elif e.errno == pyaudio.paUnanticipatedHostError or e.errno == -9999:
+                        logging.error("Microphone disconnected. Attempting to reconnect...")
+                        # if mic disconnection -> stream stop and close
+                        
+                        # close()를 호출한 후 다시 스트리밍을 시작하려면, PyAudio.open()을 호출
+                        stream.close()
+
+                        input_device_index = None
+
+                        # restream start
+                        start_stream()  # Retry to reconnect the microphone
+                        continue
                     else:
                         logging.error(f"Error during recording: {e}")
-                    tb_str = traceback.format_exc()
-                    print(f"Traceback: {tb_str}")
-                    print(f"Error: {e}")
-                    continue
+                        tb_str = traceback.format_exc()
+                        print(f"Traceback: {tb_str}")
+                        print(f"Error: {e}")
+                        continue
 
-                except Exception as e:
-                    logging.error(f"Error during recording: {e}")
-                    tb_str = traceback.format_exc()
-                    print(f"Traceback: {tb_str}")
-                    print(f"Error: {e}")
-                    continue
-
+                # If microphone is active, send the data to the audio queue
                 if use_microphone.value:
                     audio_queue.put(data)
 
         except KeyboardInterrupt:
             interrupt_stop_event.set()
-            logging.debug("Audio data worker process "
-                          "finished due to KeyboardInterrupt"
-                          )
+            logging.debug("Audio data worker process finished due to KeyboardInterrupt")
         finally:
-            stream.stop_stream()
-            stream.close()
+            if stream is not None:
+                stream.stop_stream()
+                stream.close()
             audio_interface.terminate()
+
 
     def wakeup(self):
         """
