@@ -11,7 +11,7 @@ if __name__ == '__main__':
     print ("└─ ... ", end='', flush=True)
 
     from RealtimeSTT import AudioToTextRecorder
-    from colorama import Fore, Back, Style
+    from colorama import Fore, Style
     import websockets
     import threading
     import colorama

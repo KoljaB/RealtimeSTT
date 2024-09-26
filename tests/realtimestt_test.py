@@ -1,5 +1,5 @@
 from RealtimeSTT import AudioToTextRecorder
-from colorama import Fore, Back, Style
+from colorama import Fore, Style
 import colorama
 import os
 
