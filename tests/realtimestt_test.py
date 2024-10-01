@@ -54,7 +54,7 @@ if __name__ == '__main__':
         'post_speech_silence_duration': 0.4,
         'min_length_of_recording': 0,
         'min_gap_between_recordings': 0,
-        'enable_realtime_transcription': False,
+        'enable_realtime_transcription': True,
         'realtime_processing_pause': 0,
         'on_realtime_transcription_update': text_detected, 
         'silero_deactivity_detection': True,
