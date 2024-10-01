@@ -159,7 +159,8 @@ class AudioToTextRecorder:
                  sample_rate: int = SAMPLE_RATE,
                  initial_prompt: Optional[Union[str, Iterable[int]]] = None,
                  suppress_tokens: Optional[List[int]] = [-1],
-                 log_transcription_time: bool = False
+                 log_transcription_time: bool = False,
+                 early_transcription_on_silence: bool = True
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -432,6 +433,7 @@ class AudioToTextRecorder:
         self.transcription_lock = threading.Lock()
         self.transcribe_count = 0
         self.log_transcription_time = log_transcription_time
+        self.early_transcription_on_silence = early_transcription_on_silence
 
         # Initialize the logging configuration with the specified level
         log_format = 'RealTimeSTT: %(name)s - %(levelname)s - %(message)s'
@@ -723,12 +725,6 @@ class AudioToTextRecorder:
             except (BrokenPipeError, EOFError, OSError):
                 # The pipe probably has been closed, so we ignore the error
                 pass
-            # except BrokenPipeError as e:  # handle broken pipe error
-            #     pass                
-            # except EOFError as e:
-            #     logging.error(f"EOFError in read from stdout: {e}")
-            #     logging.error(traceback.format_exc())
-            #     break            
             except KeyboardInterrupt:  # handle manual interruption (Ctrl+C)
                 logging.info("KeyboardInterrupt in read from stdout detected, exiting...")
                 break
@@ -1085,83 +1081,6 @@ class AudioToTextRecorder:
                 stream.close()
             if audio_interface:
                 audio_interface.terminate()
-
-        # try:
-        #     audio_interface = pyaudio.PyAudio()
-        #     if input_device_index is None:
-        #         try:
-        #             default_device = audio_interface.get_default_input_device_info()
-        #             input_device_index = default_device['index']
-        #         except OSError as e:
-        #             input_device_index = None
-
-
-        #     if input_device_index is not None:
-        #         device_sample_rate = get_highest_sample_rate(audio_interface, input_device_index)
-        #     else:
-        #         device_sample_rate = 16000  # better: try 16000, 48000, ... until it works
-
-        #     stream = initialize_audio_stream(audio_interface, input_device_index, device_sample_rate, chunk_size)
-
-        #     if stream is None:
-        #         raise Exception("Failed to initialize audio stream.")
-
-        # except Exception as e:
-        #     logging.exception(f"Error initializing pyaudio audio recording: {e}")
-        #     if audio_interface:
-        #         audio_interface.terminate()
-        #     raise
-
-        # logging.debug(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
-
-        # buffer = bytearray()
-        # silero_buffer_size = 2 * buffer_size  # silero complains if too short
-
-        # try:
-        #     while not shutdown_event.is_set():
-        #         try:
-        #             data = stream.read(chunk_size)
-                    
-        #             if use_microphone.value:
-        #                 processed_data = preprocess_audio(data, device_sample_rate, target_sample_rate)
-        #                 buffer += processed_data
-
-        #                 # Check if the buffer has reached or exceeded the silero_buffer_size
-        #                 while len(buffer) >= silero_buffer_size:
-        #                     # Extract silero_buffer_size amount of data from the buffer
-        #                     to_process = buffer[:silero_buffer_size]
-        #                     buffer = buffer[silero_buffer_size:]
-
-        #                     # Feed the extracted data to the audio_queue
-        #                     audio_queue.put(to_process)
-
-        #         except OSError as e:
-        #             if e.errno == pyaudio.paInputOverflowed:
-        #                 logging.warning("Input overflowed. Frame dropped.")
-        #             else:
-        #                 logging.error(f"Error during recording: {e}")
-        #             continue
-
-        #         except Exception as e:
-        #             logging.error(f"Error during recording: {e}")
-        #             tb_str = traceback.format_exc()
-        #             print(f"Traceback: {tb_str}")
-        #             print(f"Error: {e}")
-        #             continue
-
-        # except KeyboardInterrupt:
-        #     interrupt_stop_event.set()
-        #     logging.debug("Audio data worker process finished due to KeyboardInterrupt")
-        # finally:
-        #     # After recording stops, feed any remaining audio data
-        #     if buffer:
-        #         audio_queue.put(bytes(buffer))
-            
-        #     if stream:
-        #         stream.stop_stream()
-        #         stream.close()
-        #     if audio_interface:
-        #         audio_interface.terminate()
 
     def wakeup(self):
         """
@@ -1689,11 +1608,11 @@ class AudioToTextRecorder:
                             # measuring silence time before stopping recording
                             if self.speech_end_silence_start == 0:
                                 self.speech_end_silence_start = time.time()
-                                # if(len(self.frames) > 0):
-                                #     audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
-                                #     audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
-                                #     self.parent_transcription_pipe.send((audio, self.language))
-                                #     self.transcribe_count += 1                                
+                                if self.early_transcription_on_silence and len(self.frames) > 0:
+                                     audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
+                                     audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
+                                     self.parent_transcription_pipe.send((audio, self.language))
+                                     self.transcribe_count += 1                                
                         else:
                             self.speech_end_silence_start = 0
 
@@ -1703,12 +1622,8 @@ class AudioToTextRecorder:
                                 self.post_speech_silence_duration:
                             logging.info("voice deactivity detected")
                             self.frames.append(data)
-                            logging.info("stopping recording")
                             self.stop()
-                            logging.info("stopped recording")
 
-
-                            ####
                             if not self.use_wake_words:
                                 self.listen_start = time.time()
                                 self._set_state("listening")
@@ -1743,7 +1658,6 @@ class AudioToTextRecorder:
             if not self.interrupt_stop_event.is_set():
                 logging.error(f"Unhandled exeption in _recording_worker: {e}")
                 raise
-
 
 
     def _realtime_worker(self):
