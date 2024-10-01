@@ -1,9 +1,20 @@
-from RealtimeSTT import AudioToTextRecorder
-from colorama import Fore, Back, Style
-import colorama
-import os
-
 if __name__ == '__main__':
+
+    EXTENDED_LOGGING = False
+
+    import os
+    import sys
+    if os.name == "nt" and (3, 8) <= sys.version_info < (3, 99):
+        from torchaudio._extension.utils import _init_dll_path
+        _init_dll_path()    
+
+    if EXTENDED_LOGGING:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+
+    from RealtimeSTT import AudioToTextRecorder
+    from colorama import Fore, Back, Style
+    import colorama
 
     print("Initializing RealtimeSTT test...")
 
@@ -36,23 +47,34 @@ if __name__ == '__main__':
     recorder_config = {
         'spinner': False,
         'model': 'large-v2',
-        'silero_sensitivity': 0.4,
-        'webrtc_sensitivity': 2,
+        'realtime_model_type': 'tiny',
+        'language': 'en',
+        'silero_sensitivity': 0.05,
+        'webrtc_sensitivity': 3,
         'post_speech_silence_duration': 0.4,
         'min_length_of_recording': 0,
         'min_gap_between_recordings': 0,
-        'enable_realtime_transcription': True,
-        'realtime_processing_pause': 0.2,
-        'realtime_model_type': 'tiny',
+        'enable_realtime_transcription': False,
+        'realtime_processing_pause': 0,
         'on_realtime_transcription_update': text_detected, 
         'silero_deactivity_detection': True,
+        'min_length_of_recording': 0.5, 
+        'early_transcription_on_silence': False
     }
+
+   # Conditionally add logging level if EXTENDED_LOGGING is True
+    if EXTENDED_LOGGING:
+        recorder_config['level'] = logging.DEBUG
 
     recorder = AudioToTextRecorder(**recorder_config)
 
     clear_console()
     print("Say something...", end="", flush=True)
 
-    while True:
-        recorder.text(process_text)
+
+    try:
+        while (True):
+            recorder.text(process_text)
+    except KeyboardInterrupt:
+        print("Exiting application due to keyboard interrupt")
 
