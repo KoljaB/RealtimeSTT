@@ -160,7 +160,7 @@ class AudioToTextRecorder:
                  initial_prompt: Optional[Union[str, Iterable[int]]] = None,
                  suppress_tokens: Optional[List[int]] = [-1],
                  log_transcription_time: bool = False,
-                 early_transcription_on_silence: bool = True
+                 early_transcription_on_silence: bool = False
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -343,13 +343,14 @@ class AudioToTextRecorder:
             from the transcription output.
         - log_transcription_time (bool, default=False): Logs processing time
             of main model transcription 
-        - early_transcription_on_silence (bool, default=True):  If True, the
+        - early_transcription_on_silence (bool, default=False):  If True, the
             system will immediately transcribe audio when silence is detected.
             If silence lasts longer than post_speech_silence_duration, the 
             recording is stopped, and the transcription is submitted. If 
             voice activity resumes within this period, the transcription 
             is discarded. Results in faster final transcriptions to the cost
-            of some unnecessary final transcriptions
+            of some unnecessary final transcriptions. Recommended only
+            when transcription occurs fast enough (strong GPU required).
 
         Raises:
             Exception: Errors related to initializing transcription
