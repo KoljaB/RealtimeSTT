@@ -341,6 +341,15 @@ class AudioToTextRecorder:
             prompt to be fed to the transcription models.
         - suppress_tokens (list of int, default=[-1]): Tokens to be suppressed
             from the transcription output.
+        - log_transcription_time (bool, default=False): Logs processing time
+            of main model transcription 
+        - early_transcription_on_silence (bool, default=True):  If True, the
+            system will immediately transcribe audio when silence is detected.
+            If silence lasts longer than post_speech_silence_duration, the 
+            recording is stopped, and the transcription is submitted. If 
+            voice activity resumes within this period, the transcription 
+            is discarded. Results in faster final transcriptions to the cost
+            of some unnecessary final transcriptions
 
         Raises:
             Exception: Errors related to initializing transcription
