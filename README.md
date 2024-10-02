@@ -18,7 +18,7 @@ It's ideal for:
 - **Voice Assistants**
 - Applications requiring **fast and precise** speech-to-text conversion
 
-https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-0722c3ee6d14
+https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
