@@ -1,6 +1,25 @@
-from RealtimeSTT import AudioToTextRecorder
 if __name__ == '__main__':
-    recorder = AudioToTextRecorder(spinner=False, model="tiny.en", language="en")
+
+    import os
+    import sys
+    if os.name == "nt" and (3, 8) <= sys.version_info < (3, 99):
+        from torchaudio._extension.utils import _init_dll_path
+        _init_dll_path()
+
+    from RealtimeSTT import AudioToTextRecorder
+
+    recorder = AudioToTextRecorder(
+        spinner=False,
+        input_device_index=1,
+        silero_sensitivity=0.01,
+        model="tiny.en",
+        language="en",
+        )
 
     print("Say something...")
-    while (True): print(recorder.text(), end=" ", flush=True)
+    
+    try:
+        while (True):
+            print("Detected text: " + recorder.text())
+    except KeyboardInterrupt:
+        print("Exiting application due to keyboard interrupt")
