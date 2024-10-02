@@ -18,11 +18,11 @@ It's ideal for:
 - **Voice Assistants**
 - Applications requiring **fast and precise** speech-to-text conversion
 
-https://github.com/KoljaB/RealtimeSTT/assets/7604638/207cb9a2-4482-48e7-9d2b-0722c3ee6d14
+https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.2.42
+Latest Version: v0.2.5
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -309,6 +309,14 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **on_recorded_chunk**: A callback function that is triggered when a chunk of audio is recorded. Submits the chunk data as parameter.
 
 - **debug_mode** (bool, default=False): If set, the system prints additional debug information to the console.
+
+- **print_transcription_time** (bool, default=False): Logs the processing time of the main model transcription. This can be useful for performance monitoring and debugging.
+
+- **early_transcription_on_silence** (int, default=0): If set, the system will transcribe audio faster when silence is detected. Transcription will start after the specified milliseconds. Keep this value lower than `post_speech_silence_duration`, ideally around `post_speech_silence_duration` minus the estimated transcription time with the main model. If silence lasts longer than `post_speech_silence_duration`, the recording is stopped, and the transcription is submitted. If voice activity resumes within this period, the transcription is discarded. This results in faster final transcriptions at the cost of additional GPU load due to some unnecessary final transcriptions.
+
+- **allowed_latency_limit** (int, default=100): Specifies the maximum number of unprocessed chunks in the queue before discarding chunks. This helps prevent the system from being overwhelmed and losing responsiveness in real-time applications.
+
+- **no_log_file** (bool, default=False): If set, the system will skip writing the debug log file, reducing disk I/O. Useful if logging to a file is not needed and performance is a priority.
 
 #### Real-time Transcription Parameters
 
