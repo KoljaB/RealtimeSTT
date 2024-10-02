@@ -1557,6 +1557,8 @@ class AudioToTextRecorder:
         logging.debug('Starting recording worker')
 
         logging.debug('Debug: Entering try block')
+
+        last_inner_try_time = 0
         try:
             logging.debug('Debug: Initializing variables')
             time_since_last_buffer_message = 0
@@ -1571,10 +1573,15 @@ class AudioToTextRecorder:
             while self.is_running:
 
                 logging.debug('Debug: Entering inner try block')
+                if last_inner_try_time:
+                    last_processing_time = time.time() - last_inner_try_time
+                    if last_processing_time > 0.05:
+                        logging.warning('### WARNING: PROCESSING TOOK TOO LONG')
+                last_inner_try_time = time.time()
                 try:
                     logging.debug('Debug: Trying to get data from audio queue')
                     try:
-                        data = self.audio_queue.get(timeout=0.1)
+                        data = self.audio_queue.get(timeout=0.02)
                     except queue.Empty:
                         logging.debug('Debug: Queue is empty, checking if still running')
                         if not self.is_running:
@@ -1781,11 +1788,13 @@ class AudioToTextRecorder:
                             if self.speech_end_silence_start and self.early_transcription_on_silence and len(self.frames) > 0 and \
                                 (time.time() - self.speech_end_silence_start > self.early_transcription_on_silence) and \
                                 self.allowed_to_early_transcribe:
-                                    logging.debug("Adding early transcription request")
+                                    logging.debug("Debug:Adding early transcription request")
                                     self.transcribe_count += 1
                                     audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
                                     audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
+                                    logging.debug("Debug: early transcription request pipe send")
                                     self.parent_transcription_pipe.send((audio, self.language))
+                                    logging.debug("Debug: early transcription request pipe send return")
                                     self.allowed_to_early_transcribe = False
 
                         else:
