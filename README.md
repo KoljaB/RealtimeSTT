@@ -22,7 +22,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.2.5
+Latest Version: v0.3.0
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
