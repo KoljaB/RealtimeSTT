@@ -10,7 +10,6 @@ if __name__ == '__main__':
 
     recorder = AudioToTextRecorder(
         spinner=False,
-        input_device_index=1,
         silero_sensitivity=0.01,
         model="tiny.en",
         language="en",
