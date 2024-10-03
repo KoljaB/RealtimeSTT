@@ -110,7 +110,7 @@ def main():
         text = preprocess_text(text)
         text = text.rstrip()
         if text.endswith("..."):
-            text = text[:-3]  # Remove ellipsis
+            text = text[:-2]  # Remove ellipsis
 
         full_sentences.append(text)
         prev_text = ""
