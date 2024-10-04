@@ -1,32 +1,55 @@
-import os
-import sys
-import threading
-import time
-import pyaudio
-from rich.console import Console
-from rich.live import Live
-from rich.text import Text
-from rich.panel import Panel
-from rich.spinner import Spinner
-from rich.progress import Progress, SpinnerColumn, TextColumn
-from colorama import Fore, Style, init as colorama_init
-
-from RealtimeSTT import AudioToTextRecorder 
-
-# Configuration Constants
-LOOPBACK_DEVICE_NAME = "stereomix"
-LOOPBACK_DEVICE_HOST_API = 0
-BUFFER_SIZE = 512 
-AUDIO_FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 16000
-
 EXTENDED_LOGGING = False
 
 def main():
+
+    import subprocess
+    import sys
+
+    def install_rich():
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "rich"])
+
+    try:
+        import rich
+    except ImportError:
+        user_input = input("This demo needs the 'rich' library, which is not installed.\nDo you want to install it now? (y/n): ")
+        if user_input.lower() == 'y':
+            try:
+                install_rich()
+                import rich
+                print("Successfully installed 'rich'.")
+            except Exception as e:
+                print(f"An error occurred while installing 'rich': {e}")
+                sys.exit(1)
+        else:
+            print("The program requires the 'rich' library to run. Exiting...")
+            sys.exit(1)
+
     if EXTENDED_LOGGING:
         import logging
         logging.basicConfig(level=logging.DEBUG)
+
+    import os
+    import sys
+    import threading
+    import time
+    import pyaudio
+    from rich.console import Console
+    from rich.live import Live
+    from rich.text import Text
+    from rich.panel import Panel
+    from rich.spinner import Spinner
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    from colorama import Fore, Style, init as colorama_init
+
+    from RealtimeSTT import AudioToTextRecorder 
+
+    # Configuration Constants
+    LOOPBACK_DEVICE_NAME = "stereomix"
+    LOOPBACK_DEVICE_HOST_API = 0
+    BUFFER_SIZE = 512 
+    AUDIO_FORMAT = pyaudio.paInt16
+    CHANNELS = 1
+    RATE = 16000
 
     console = Console()
     console.print("System initializing, please wait")
