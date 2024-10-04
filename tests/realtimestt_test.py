@@ -16,13 +16,6 @@ if __name__ == '__main__':
     # console.print("[bold yellow]System initializing, please wait...[/bold yellow]")
     console.print("System initializing, please wait")
 
-    
-    # # Initial display message
-    # with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True) as progress:
-    #     task = progress.add_task("[cyan]Setting up transcription...", total=None)
-    #     console.print("[bold yellow]System initializing, please wait...[/bold yellow]")
-    #     progress.update(task, description="[green]Initialization complete!")
-
     import os
     import sys
     from RealtimeSTT import AudioToTextRecorder
@@ -122,10 +115,9 @@ if __name__ == '__main__':
     # Recorder configuration
     recorder_config = {
         'spinner': False,
-        'model': 'large-v2',
+        'model': 'distil-medium.en', # or large-v2 or deepdml/faster-whisper-large-v3-turbo-ct2 or ...
         'input_device_index': 1,
-        'realtime_model_type': 'small.en',
-        #'realtime_model_type': 'small.en',
+        'realtime_model_type': 'tiny.en', # or small.en or distil-small.en or ...
         'language': 'en',
         'silero_sensitivity': 0.05,
         'webrtc_sensitivity': 3,
@@ -137,11 +129,11 @@ if __name__ == '__main__':
         'on_realtime_transcription_update': text_detected,
         #'on_realtime_transcription_stabilized': text_detected,
         'silero_deactivity_detection': True,
-        'early_transcription_on_silence': 0.2,
+        'early_transcription_on_silence': 0,
         'beam_size': 5,
-        'beam_size_realtime': 5,
+        'beam_size_realtime': 3,
         'no_log_file': True,
-        'initial_prompt': "Only add a period at the end of a sentence if you are 100 percent certain that the speaker has finished their statement. If you're unsure or the sentence seems incomplete, leave the sentence open or use ellipses to reflect continuation. For example: 'I went to the...' or 'I think it was...'"
+        'initial_prompt': "Use ellipses for incomplete sentences like: I went to the..."        
     }
 
     if EXTENDED_LOGGING:
