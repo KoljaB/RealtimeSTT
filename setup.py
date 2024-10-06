@@ -24,5 +24,11 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     install_requires=requirements,
-    keywords="real-time, audio, transcription, speech-to-text, voice-activity-detection, VAD, real-time-transcription, ambient-noise-detection, microphone-input, faster_whisper, speech-recognition, voice-assistants, audio-processing, buffered-transcription, pyaudio, ambient-noise-level, voice-deactivity"
+    keywords="real-time, audio, transcription, speech-to-text, voice-activity-detection, VAD, real-time-transcription, ambient-noise-detection, microphone-input, faster_whisper, speech-recognition, voice-assistants, audio-processing, buffered-transcription, pyaudio, ambient-noise-level, voice-deactivity",
+    entry_points={
+        'console_scripts': [
+            'stt-server=server.stt_server:main',
+            'stt=server.stt_cli_client:main',
+        ],
+    },
 )

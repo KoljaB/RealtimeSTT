@@ -1377,6 +1377,17 @@ class AudioToTextRecorder:
 
         return self
 
+    def listen(self):
+        """
+        Puts recorder in immediate "listen" state.
+        This is the state after a wake word detection, for example.
+        The recorder now "listens" for voice activation.
+        Once voice is detected we enter "recording" state.
+        """
+        self.listen_start = time.time()
+        self._set_state("listening")
+        self.start_recording_on_voice_activity = True
+
     def feed_audio(self, chunk, original_sample_rate=16000):
         """
         Feed an audio chunk into the processing pipeline. Chunks are
@@ -1453,14 +1464,14 @@ class AudioToTextRecorder:
             logging.debug('Terminating reader process')
 
             # Give it some time to finish the loop and cleanup.
-            if self.use_microphone:
+            if self.use_microphone.value:
                 self.reader_process.join(timeout=10)
 
-            if self.reader_process.is_alive():
-                logging.warning("Reader process did not terminate "
-                                "in time. Terminating forcefully."
-                                )
-                self.reader_process.terminate()
+                if self.reader_process.is_alive():
+                    logging.warning("Reader process did not terminate "
+                                    "in time. Terminating forcefully."
+                                    )
+                    self.reader_process.terminate()
 
             logging.debug('Terminating transcription process')
             self.transcript_process.join(timeout=10)
@@ -1819,9 +1830,7 @@ class AudioToTextRecorder:
                                 if self.use_extended_logging:
                                     logging.debug('Debug: Handling non-wake word scenario')
                                 if not self.use_wake_words:
-                                    self.listen_start = time.time()
-                                    self._set_state("listening")
-                                    self.start_recording_on_voice_activity = True
+                                    self.listen()
                             else:
                                 if self.use_extended_logging:
                                     logging.debug('Debug: Setting failed_stop_attempt to True')
