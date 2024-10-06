@@ -2,27 +2,12 @@ EXTENDED_LOGGING = False
 
 def main():
 
-    import subprocess
-    import sys
-
-    def install_rich():
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "rich"])
-
-    try:
-        import rich
-    except ImportError:
-        user_input = input("This demo needs the 'rich' library, which is not installed.\nDo you want to install it now? (y/n): ")
-        if user_input.lower() == 'y':
-            try:
-                install_rich()
-                import rich
-                print("Successfully installed 'rich'.")
-            except Exception as e:
-                print(f"An error occurred while installing 'rich': {e}")
-                sys.exit(1)
-        else:
-            print("The program requires the 'rich' library to run. Exiting...")
-            sys.exit(1)
+    from install_packages import check_and_install_packages
+    check_and_install_packages([
+        {
+            'import_name': 'rich',
+        }
+    ])
 
     if EXTENDED_LOGGING:
         import logging
