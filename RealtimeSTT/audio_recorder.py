@@ -57,6 +57,8 @@ import os
 import re
 import gc
 
+print(f"### whaaaat #######")
+
 # Set OpenMP runtime duplicate library handling to OK (Use only for development!)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
@@ -121,8 +123,10 @@ class TranscriptionWorker:
                 time.sleep(TIME_SLEEP)
 
     def run(self):
-        system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
-        __builtins__['print'] = self.custom_print
+        if __name__ == "__main__":
+             system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
+
+        # __builtins__['print'] = self.custom_print
 
         logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
 
@@ -171,7 +175,7 @@ class TranscriptionWorker:
                 except Exception as e:
                     logging.error(f"General error in processing queue item: {e}")
         finally:
-            __builtins__['print'] = print  # Restore the original print function
+            # __builtins__['print'] = print  # Restore the original print function
             self.conn.close()
             self.stdout_pipe.close()
             self.shutdown_event.set()  # Ensure the polling thread will stop
@@ -891,10 +895,13 @@ class AudioToTextRecorder:
         Raises:
             Exception: If there is an error while initializing the audio recording.
         """
+        # logging.error("### TEST")
         import pyaudio
         import numpy as np
         from scipy import signal
-        system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
+        
+        if __name__ == '__main__':
+            system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
 
         def get_highest_sample_rate(audio_interface, device_index):
             """Get the highest supported sample rate for the specified device."""
@@ -962,6 +969,8 @@ class AudioToTextRecorder:
         def setup_audio():  
             nonlocal audio_interface, stream, device_sample_rate, input_device_index
             try:
+                print(f"### start #######")
+
                 audio_interface = pyaudio.PyAudio()
                 if input_device_index is None:
                     try:
@@ -979,18 +988,26 @@ class AudioToTextRecorder:
                     sample_rates_to_try.append(48000)  # Fallback sample rate
 
                 for rate in sample_rates_to_try:
+                    logging.error(f"rates to try: {rate}")
+                    # print(f"rates to try: {rate}")
+
+                for rate in sample_rates_to_try:
                     try:
+                        logging.error(f"trying rate: {rate}")
                         device_sample_rate = rate
                         stream = initialize_audio_stream(audio_interface, input_device_index, device_sample_rate, chunk_size)
                         if stream is not None:
                             logging.debug(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
+                            logging.error(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
                             return True
                     except Exception as e:
-                        logging.warning(f"Failed to initialize audio stream at {device_sample_rate} Hz: {e}")
+                        logging.warning(f"Failed to initialize audio23 stream at {device_sample_rate} Hz: {e}")
                         continue
+                    
+                    
 
                 # If we reach here, none of the sample rates worked
-                raise Exception("Failed to initialize audio stream with all sample rates.")
+                raise Exception("Failed to initialize audio stream12 with all sample rates.")
 
             except Exception as e:
                 logging.exception(f"Error initializing pyaudio audio recording: {e}")

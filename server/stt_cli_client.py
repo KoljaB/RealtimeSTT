@@ -1,3 +1,112 @@
+import os
+import sys
+import pyaudio
+import numpy as np
+from scipy import signal
+import logging
+os.environ['ALSA_LOG_LEVEL'] = 'none'
+
+CHUNK = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100  # Default fallback rate
+input_device_index = None
+audio_interface = None
+stream = None
+device_sample_rate = None
+chunk_size = CHUNK
+
+def get_highest_sample_rate(audio_interface, device_index):
+    """Get the highest supported sample rate for the specified device."""
+    try:
+        device_info = audio_interface.get_device_info_by_index(device_index)
+        max_rate = int(device_info['defaultSampleRate'])
+
+        if 'supportedSampleRates' in device_info:
+            supported_rates = [int(rate) for rate in device_info['supportedSampleRates']]
+            if supported_rates:
+                max_rate = max(supported_rates)
+
+        return max_rate
+    except Exception as e:
+        logging.warning(f"Failed to get highest sample rate: {e}")
+        return 48000  # Fallback to a common high sample rate
+
+def initialize_audio_stream(audio_interface, device_index, sample_rate, chunk_size):
+    """Initialize the audio stream with error handling."""
+    try:
+        stream = audio_interface.open(
+            format=pyaudio.paInt16,
+            channels=CHANNELS,
+            rate=sample_rate,
+            input=True,
+            frames_per_buffer=chunk_size,
+            input_device_index=device_index,
+        )
+        return stream
+    except Exception as e:
+        logging.error(f"Error initializing audio stream: {e}")
+        raise
+
+def preprocess_audio(chunk, original_sample_rate, target_sample_rate):
+    """Preprocess audio chunk similar to feed_audio method."""
+    if isinstance(chunk, np.ndarray):
+        if chunk.ndim == 2:  # Stereo to mono conversion
+            chunk = np.mean(chunk, axis=1)
+
+        # Resample if needed
+        if original_sample_rate != target_sample_rate:
+            num_samples = int(len(chunk) * target_sample_rate / original_sample_rate)
+            chunk = signal.resample(chunk, num_samples)
+
+        chunk = chunk.astype(np.int16)
+    else:
+        chunk = np.frombuffer(chunk, dtype=np.int16)
+
+        if original_sample_rate != target_sample_rate:
+            num_samples = int(len(chunk) * target_sample_rate / original_sample_rate)
+            chunk = signal.resample(chunk, num_samples)
+            chunk = chunk.astype(np.int16)
+
+    return chunk.tobytes()
+
+def setup_audio():
+    global audio_interface, stream, device_sample_rate, input_device_index
+    try:
+        audio_interface = pyaudio.PyAudio()
+        if input_device_index is None:
+            try:
+                default_device = audio_interface.get_default_input_device_info()
+                input_device_index = default_device['index']
+            except OSError as e:
+                input_device_index = None
+
+        sample_rates_to_try = [16000]  # Try 16000 Hz first
+        if input_device_index is not None:
+            highest_rate = get_highest_sample_rate(audio_interface, input_device_index)
+            if highest_rate != 16000:
+                sample_rates_to_try.append(highest_rate)
+        else:
+            sample_rates_to_try.append(48000)  # Fallback sample rate
+
+        for rate in sample_rates_to_try:
+            try:
+                device_sample_rate = rate
+                stream = initialize_audio_stream(audio_interface, input_device_index, device_sample_rate, chunk_size)
+                if stream is not None:
+                    logging.debug(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
+                    return True
+            except Exception as e:
+                logging.warning(f"Failed to initialize audio stream at {device_sample_rate} Hz: {e}")
+                continue
+
+        raise Exception("Failed to initialize audio stream with all sample rates.")
+    except Exception as e:
+        logging.exception(f"Error initializing audio recording: {e}")
+        if audio_interface:
+            audio_interface.terminate()
+        return False
+
 from .install_packages import check_and_install_packages
 
 check_and_install_packages([
@@ -26,8 +135,6 @@ import json
 import threading
 import time
 import struct
-import os
-import sys
 import socket
 import subprocess
 import shutil
@@ -38,7 +145,7 @@ from queue import Queue
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
-RATE = 16000
+RATE = 44100
 DEFAULT_SERVER_URL = "ws://localhost:8011"
 
 class STTWebSocketClient:
@@ -88,7 +195,6 @@ class STTWebSocketClient:
         except Exception as e:
             self.debug_print(f"Error while connecting to the server: {e}")
             return False
-
 
     def on_open(self, ws):
         self.debug_print("WebSocket connection opened.")
@@ -159,26 +265,7 @@ class STTWebSocketClient:
                     self.file_output.flush()  # Ensure it's written immediately
                 else:
                     self.finish_progress_bar()
-                    print(f"{data['text']}")                    
-                    # self.update_progress_bar("") 
-                    # print(f"\r\033[K{data['text']}")
-                    # #print(f"\r\033[KHello")
-                    # self.stop() 
-                    # print("what the fuck")
-                    # print("what the fuck")
-                    # print(f"what the fuck self.file_output {self.file_output}")
-                    # self.update_progress_bar("FGINAAL") 
-                    # self.stop()
-                    # sys.stderr.write(f"\n{data['text']}")
-                    # sys.stderr.write(f"\n{data['text']}")
-                    # sys.stderr.write(f"\nTEEEST")
-                    # sys.stderr.write(f"\nTEEEST")
-                    # sys.stderr.flush()
-                    # print("what the fuck")
-                    # print("what the fuck")
-                    # print("what the fuck")
-                    # print("what the fuck")
-                    # print("what the fuck")
+                    print(f"{data['text']}")        
                 self.stop()
                 
         except json.JSONDecodeError:
@@ -225,47 +312,42 @@ class STTWebSocketClient:
         self.is_running = False
         if self.ws:
             self.ws.close()
-        if hasattr(self, 'ws_thread'):
-            self.ws_thread.join(timeout=2)
+        #if hasattr(self, 'ws_thread'):
+        #    self.ws_thread.join(timeout=2)
 
     def start_recording(self):
-        self.show_initial_indicator()
         threading.Thread(target=self.record_and_send_audio).start()
 
     def record_and_send_audio(self):
-        p = pyaudio.PyAudio()
-        stream = p.open(format=FORMAT,
-                        input_device_index=1,
-                        channels=CHANNELS,
-                        rate=RATE,
-                        input=True,
-                        frames_per_buffer=CHUNK)
+        if not setup_audio():
+            raise Exception("Failed to set up audio recording.")
 
         self.debug_print("Recording and sending audio...")
+        self.show_initial_indicator()
 
         while self.is_running:
             try:
                 audio_data = stream.read(CHUNK)
-                
+
                 # Prepare metadata
                 metadata = {
-                    "sampleRate": RATE
+                    "sampleRate": device_sample_rate
                 }
                 metadata_json = json.dumps(metadata)
                 metadata_length = len(metadata_json)
-                
+
                 # Construct the message
                 message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
-                
+
                 self.ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
             except Exception as e:
-                self.debug_print(f"\nError sending audio data: {e}")
+                self.debug_print(f"Error sending audio data: {e}")
                 break
 
         self.debug_print("Stopped recording.")
         stream.stop_stream()
         stream.close()
-        p.terminate()
+        audio_interface.terminate()
 
 
 def main():
