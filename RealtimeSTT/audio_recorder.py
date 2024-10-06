@@ -57,8 +57,6 @@ import os
 import re
 import gc
 
-print(f"### whaaaat #######")
-
 # Set OpenMP runtime duplicate library handling to OK (Use only for development!)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
