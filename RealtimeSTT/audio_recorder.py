@@ -895,7 +895,6 @@ class AudioToTextRecorder:
         Raises:
             Exception: If there is an error while initializing the audio recording.
         """
-        # logging.error("### TEST")
         import pyaudio
         import numpy as np
         from scipy import signal
@@ -969,8 +968,6 @@ class AudioToTextRecorder:
         def setup_audio():  
             nonlocal audio_interface, stream, device_sample_rate, input_device_index
             try:
-                print(f"### start #######")
-
                 audio_interface = pyaudio.PyAudio()
                 if input_device_index is None:
                     try:
@@ -988,12 +985,7 @@ class AudioToTextRecorder:
                     sample_rates_to_try.append(48000)  # Fallback sample rate
 
                 for rate in sample_rates_to_try:
-                    logging.error(f"rates to try: {rate}")
-                    # print(f"rates to try: {rate}")
-
-                for rate in sample_rates_to_try:
                     try:
-                        logging.error(f"trying rate: {rate}")
                         device_sample_rate = rate
                         stream = initialize_audio_stream(audio_interface, input_device_index, device_sample_rate, chunk_size)
                         if stream is not None:
