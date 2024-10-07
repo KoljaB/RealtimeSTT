@@ -217,6 +217,14 @@ if __name__ == '__main__':
         'beam_size': 5,
         'beam_size_realtime': 1,
         'no_log_file': True,
+        'initial_prompt': (
+            "End incomplete sentences with ellipses.\n"
+            "Examples:\n"
+            "Complete: The sky is blue.\n"
+            "Incomplete: When the sky...\n"
+            "Complete: She walked home.\n"
+            "Incomplete: Because he...\n"
+        )
         #'initial_prompt': "Use ellipses for incomplete sentences like: I went to the..."        
     }
 
