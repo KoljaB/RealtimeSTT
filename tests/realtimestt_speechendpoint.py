@@ -75,7 +75,15 @@ if __name__ == '__main__':
 
     prev_text = ""
 
+    speech_finished_cache = {}
+
     def is_speech_finished(text):
+        # Check if the result is already in the cache
+        if text in speech_finished_cache:
+            if IS_DEBUG:
+                print(f"Cache hit for: '{text}'")
+            return speech_finished_cache[text]
+        
         user_prompt = (
             "Please reply with only 'c' if the following text is a complete thought (a sentence that stands on its own), "
             "or 'i' if it is not finished. Do not include any additional text in your reply. "
@@ -99,7 +107,12 @@ if __name__ == '__main__':
             print(f"t:'{response.choices[0].message.content.strip().lower()}'", end="", flush=True)
 
         reply = response.choices[0].message.content.strip().lower()
-        return reply == 'c'
+        result = reply == 'c'
+
+        # Cache the result
+        speech_finished_cache[text] = result
+
+        return result
 
     def preprocess_text(text):
         # Remove leading whitespaces
@@ -201,10 +214,11 @@ if __name__ == '__main__':
     recorder_config = {
         'spinner': False,
         'model': 'medium.en',
-        'input_device_index': 1,
+        # 'input_device_index': 2,
         'realtime_model_type': 'tiny.en',
         'language': 'en',
-        'silero_sensitivity': 0.05,
+        #'silero_sensitivity': 0.05,
+        'silero_sensitivity': 0.4,
         'webrtc_sensitivity': 3,
         'post_speech_silence_duration': unknown_sentence_detection_pause,
         'min_length_of_recording': 1.1,        
