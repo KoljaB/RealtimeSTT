@@ -1,12 +1,19 @@
 EXTENDED_LOGGING = False
 
+# set to 0 to deactivate writing to keyboard
+# try lower values like 0.002 (fast) first, take higher values like 0.05 in case it fails
+WRITE_TO_KEYBOARD_INTERVAL = 0.002
+
 if __name__ == '__main__':
 
     from install_packages import check_and_install_packages
     check_and_install_packages([
         {
             'import_name': 'rich',
-        }
+        },
+        {
+            'import_name': 'pyautogui',
+        }        
     ])
 
     if EXTENDED_LOGGING:
@@ -20,7 +27,6 @@ if __name__ == '__main__':
     from rich.spinner import Spinner
     from rich.progress import Progress, SpinnerColumn, TextColumn
     console = Console()
-    # console.print("[bold yellow]System initializing, please wait...[/bold yellow]")
     console.print("System initializing, please wait")
 
     import os
@@ -28,6 +34,7 @@ if __name__ == '__main__':
     from RealtimeSTT import AudioToTextRecorder
     from colorama import Fore, Style
     import colorama
+    import pyautogui
 
     if os.name == "nt" and (3, 8) <= sys.version_info < (3, 99):
         from torchaudio._extension.utils import _init_dll_path
@@ -110,20 +117,27 @@ if __name__ == '__main__':
     def process_text(text):
         global recorder, full_sentences, prev_text
         recorder.post_speech_silence_duration = unknown_sentence_detection_pause
+
         text = preprocess_text(text)
         text = text.rstrip()
         if text.endswith("..."):
             text = text[:-2]
                 
+        if not text:
+            return
+
         full_sentences.append(text)
         prev_text = ""
         text_detected("")
 
+        if WRITE_TO_KEYBOARD_INTERVAL:
+            pyautogui.write(f"{text} ", interval=WRITE_TO_KEYBOARD_INTERVAL)  # Adjust interval as needed
+
     # Recorder configuration
     recorder_config = {
         'spinner': False,
-        'model': 'distil-medium.en', # or large-v2 or deepdml/faster-whisper-large-v3-turbo-ct2 or ...
-        'input_device_index': 1,
+        'model': 'large-v2', # or large-v2 or deepdml/faster-whisper-large-v3-turbo-ct2 or ...
+        # 'input_device_index': 1,
         'realtime_model_type': 'tiny.en', # or small.en or distil-small.en or ...
         'language': 'en',
         'silero_sensitivity': 0.05,
@@ -140,7 +154,14 @@ if __name__ == '__main__':
         'beam_size': 5,
         'beam_size_realtime': 3,
         'no_log_file': True,
-        'initial_prompt': "Use ellipses for incomplete sentences like: I went to the..."        
+        'initial_prompt': (
+            "End incomplete sentences with ellipses.\n"
+            "Examples:\n"
+            "Complete: The sky is blue.\n"
+            "Incomplete: When the sky...\n"
+            "Complete: She walked home.\n"
+            "Incomplete: Because he...\n"
+        )
     }
 
     if EXTENDED_LOGGING:
