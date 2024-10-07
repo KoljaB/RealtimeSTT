@@ -5,6 +5,8 @@ import sys
 import threading
 import queue
 import time
+from collections import deque
+from difflib import SequenceMatcher
 from install_packages import check_and_install_packages
 
 # Check and install required packages
@@ -64,11 +66,19 @@ if __name__ == '__main__':
     rich_text_stored = ""
     recorder = None
     displayed_text = ""
+    text_time_deque = deque()
 
     rapid_sentence_end_detection = 0.4
     end_of_sentence_detection_pause = 1.2
-    unknown_sentence_detection_pause = 2.5
-    mid_sentence_detection_pause = 3.8
+    unknown_sentence_detection_pause = 1.8
+    mid_sentence_detection_pause = 2.4
+    hard_break_even_on_background_noise = 3.0
+    hard_break_even_on_background_noise_min_texts = 3
+    hard_break_even_on_background_noise_min_chars = 15
+    hard_break_even_on_background_noise_min_similarity = 0.99
+    relisten_on_abrupt_stop = True
+
+    abrupt_stop = False
 
     def clear_console():
         os.system('clear' if os.name == 'posix' else 'cls')
@@ -137,9 +147,11 @@ if __name__ == '__main__':
         """
         text_queue.put(text)
 
-    def process_queue():
-        global recorder, full_sentences, prev_text, displayed_text, rich_text_stored
 
+    def process_queue():
+        global recorder, full_sentences, prev_text, displayed_text, rich_text_stored, text_time_deque, abrupt_stop
+
+        # Initialize a deque to store texts with their timestamps
         while True:
             try:
                 text = text_queue.get(timeout=1)  # Wait for text or timeout after 1 second
@@ -151,6 +163,7 @@ if __name__ == '__main__':
                 break
 
             text = preprocess_text(text)
+            current_time = time.time()
 
             sentence_end_marks = ['.', '!', '?', '。'] 
             if text.endswith("..."):
@@ -176,6 +189,34 @@ if __name__ == '__main__':
                     recorder.post_speech_silence_duration = rapid_sentence_end_detection
                     if IS_DEBUG: print(f"RT: {transtext} post_speech_silence_duration: {recorder.post_speech_silence_duration}")
 
+            # Append the new text with its timestamp
+            text_time_deque.append((current_time, text))
+
+            # Remove texts older than 1 second
+            while text_time_deque and text_time_deque[0][0] < current_time - hard_break_even_on_background_noise:
+                text_time_deque.popleft()
+
+            # Check if at least 3 texts have arrived within the last full second
+            if len(text_time_deque) >= hard_break_even_on_background_noise_min_texts:
+                texts = [t[1] for t in text_time_deque]
+                first_text = texts[0]
+                last_text = texts[-1]
+
+
+            # Check if at least 3 texts have arrived within the last full second
+            if len(text_time_deque) >= 3:
+                texts = [t[1] for t in text_time_deque]
+                first_text = texts[0]
+                last_text = texts[-1]
+
+                # Compute the similarity ratio between the first and last texts
+                similarity = SequenceMatcher(None, first_text, last_text).ratio()
+                #print(f"Similarity: {similarity:.2f}")
+
+                if similarity > hard_break_even_on_background_noise_min_similarity and len(first_text) > hard_break_even_on_background_noise_min_chars:
+                    abrupt_stop = True
+                    recorder.stop()
+
             rich_text = Text()
             for i, sentence in enumerate(full_sentences):
                 if i % 2 == 0:
@@ -198,11 +239,12 @@ if __name__ == '__main__':
             text_queue.task_done()
 
     def process_text(text):
-        global recorder, full_sentences, prev_text
+        global recorder, full_sentences, prev_text, abrupt_stop
         if IS_DEBUG: print(f"SENTENCE: post_speech_silence_duration: {recorder.post_speech_silence_duration}")
         recorder.post_speech_silence_duration = unknown_sentence_detection_pause
         text = preprocess_text(text)
         text = text.rstrip()
+        text_time_deque.clear()
         if text.endswith("..."):
             text = text[:-2]
                 
@@ -210,11 +252,20 @@ if __name__ == '__main__':
         prev_text = ""
         text_detected("")
 
+        if abrupt_stop:
+            abrupt_stop = False
+            if relisten_on_abrupt_stop:
+                recorder.listen()
+                recorder.start()
+                if hasattr(recorder, "last_words_buffer"):
+                    recorder.frames.extend(list(recorder.last_words_buffer))
+
     # Recorder configuration
     recorder_config = {
         'spinner': False,
         'model': 'medium.en',
-        # 'input_device_index': 2,
+        #'input_device_index': 1, # mic
+        #'input_device_index': 2, # stereomix
         'realtime_model_type': 'tiny.en',
         'language': 'en',
         #'silero_sensitivity': 0.05,
