@@ -108,7 +108,7 @@ If you didn't use CUDA models before, some additional steps might be needed one 
     
 3. **Install ffmpeg**:
 
-    > **Note**: *Installation of ffmpeg might not actually be needed to operate RealtimeSTT* <sup> *thanks to jgilbert2017 for pointing this out</sup>
+    > **Note**: *Installation of ffmpeg might not actually be needed to operate RealtimeSTT* <sup> *thanks to jgilbert2017 for pointing this out</sup>  
     > Upstream does not support the use of ffmpeg7 yet. Please ensure that the installed ffmpeg version is correct (either ffmpeg5 or ffmpeg6).
 
     You can download an installer for your OS from the [ffmpeg Website](https://ffmpeg.org/download.html).  
