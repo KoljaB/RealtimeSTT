@@ -121,7 +121,9 @@ class TranscriptionWorker:
                 time.sleep(TIME_SLEEP)
 
     def run(self):
-        system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
+        if __name__ == "__main__":
+             system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)      
+
         __builtins__['print'] = self.custom_print
 
         logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
@@ -894,7 +896,9 @@ class AudioToTextRecorder:
         import pyaudio
         import numpy as np
         from scipy import signal
-        system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
+        
+        if __name__ == '__main__':
+            system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
 
         def get_highest_sample_rate(audio_interface, device_index):
             """Get the highest supported sample rate for the specified device."""
