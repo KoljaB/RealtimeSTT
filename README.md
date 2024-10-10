@@ -1,6 +1,5 @@
-
 # RealtimeSTT
-[![PyPI](https://img.shields.io/pypi/v/RealtimeSTT)(https://pypi.org/project/RealtimeTTS/)
+[![PyPI](https://img.shields.io/pypi/v/RealtimeSTT)](https://pypi.org/project/RealtimeSTT/)
 [![Downloads](https://static.pepy.tech/badge/RealtimeSTT)](https://pepy.tech/project/KoljaB/RealtimeSTT)
 [![GitHub release](https://img.shields.io/github/release/KoljaB/RealtimeSTT.svg)](https://GitHub.com/KoljaB/RealtimeSTT/releases/)
 [![GitHub commits](https://badgen.net/github/commits/KoljaB/RealtimeSTT)](https://GitHub.com/Naereen/KoljaB/RealtimeSTT/commit/)
