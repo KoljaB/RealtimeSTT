@@ -1,5 +1,11 @@
 
 # RealtimeSTT
+[![PyPI](https://img.shields.io/pypi/v/RealtimeSTT)(https://pypi.org/project/RealtimeTTS/)
+[![Downloads](https://static.pepy.tech/badge/RealtimeSTT)](https://pepy.tech/project/KoljaB/RealtimeSTT)
+[![GitHub release](https://img.shields.io/github/release/KoljaB/RealtimeSTT.svg)](https://GitHub.com/KoljaB/RealtimeSTT/releases/)
+[![GitHub commits](https://badgen.net/github/commits/KoljaB/RealtimeSTT)](https://GitHub.com/Naereen/KoljaB/RealtimeSTT/commit/)
+[![GitHub forks](https://img.shields.io/github/forks/KoljaB/RealtimeSTT.svg?style=social&label=Fork&maxAge=2592000)](https://GitHub.com/KoljaB/RealtimeSTT/network/)
+[![GitHub stars](https://img.shields.io/github/stars/KoljaB/RealtimeSTT.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/KoljaB/RealtimeSTT/stargazers/)
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
