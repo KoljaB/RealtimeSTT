@@ -162,24 +162,27 @@ if __name__ == '__main__':
     # Recorder configuration
     recorder_config = {
         'spinner': False,
-        'model': 'tiny.en',
+        'model': 'Systran/faster-distil-whisper-large-v3',  # distil-medium.en or large-v2 or deepdml/faster-whisper-large-v3-turbo-ct2 or ...
         'input_device_index': 1,
-        'realtime_model_type': 'tiny.en',
+        'realtime_model_type': 'Systran/faster-distil-whisper-large-v3',  # Using the same model for realtime
         'language': 'en',
         'silero_sensitivity': 0.05,
         'webrtc_sensitivity': 3,
         'post_speech_silence_duration': unknown_sentence_detection_pause,
         'min_length_of_recording': 1.1,
         'min_gap_between_recordings': 0,
-        'enable_realtime_transcription': False,
+        'enable_realtime_transcription': True,
         'realtime_processing_pause': 0.02,
         'on_realtime_transcription_update': text_detected,
+        # 'on_realtime_transcription_stabilized': text_detected,
         'silero_deactivity_detection': True,
         'early_transcription_on_silence': 0,
         'beam_size': 5,
-        'beam_size_realtime': 3,
+        'beam_size_realtime': 5,  # Matching beam_size for consistency
         'no_log_file': True,
-        'initial_prompt': "Use ellipses for incomplete sentences like: I went to the..."
+        'initial_prompt': "Use ellipses for incomplete sentences like: I went to the...",
+        'device': 'cuda',          # Added device configuration
+        'compute_type': 'float16'  # Added compute_type configuration
     }
 
     if EXTENDED_LOGGING:
@@ -204,6 +207,14 @@ if __name__ == '__main__':
     static_audio_frames = []
     live_recording_enabled = True  # Track whether live recording was enabled before static recording
 
+    # Audio settings for static recording
+    audio_settings = {
+        'FORMAT': pyaudio.paInt16,  # PyAudio format
+        'CHANNELS': 1,               # Mono audio
+        'RATE': 16000,               # Sample rate
+        'CHUNK': 1024                # Buffer size
+    }
+
     # Note: The maximum recommended length of static recording is about 5 minutes.
 
     def static_recording_worker():
@@ -213,11 +224,11 @@ if __name__ == '__main__':
         global static_audio_frames, static_recording_active
         # Set up pyaudio
         p = pyaudio.PyAudio()
-        # Use the same audio format as the recorder
-        FORMAT = pyaudio.paInt16
-        CHANNELS = 1
-        RATE = 16000  # Sample rate
-        CHUNK = 1024  # Buffer size
+        # Use the same audio format as defined in audio_settings
+        FORMAT = audio_settings['FORMAT']
+        CHANNELS = audio_settings['CHANNELS']
+        RATE = audio_settings['RATE']  # Sample rate
+        CHUNK = audio_settings['CHUNK']  # Buffer size
 
         # Open the audio stream
         try:
@@ -303,10 +314,10 @@ if __name__ == '__main__':
             console.print("[bold red]faster_whisper is not installed. Please install it to use static transcription.[/bold red]")
             return
 
-        # Load the model
-        model_size = recorder_config.get('model', 'tiny.en')
-        device = recorder_config.get('device', 'cpu')
-        compute_type = recorder_config.get('compute_type', 'default')
+        # Load the model using recorder_config
+        model_size = recorder_config['model']
+        device = recorder_config['device']
+        compute_type = recorder_config['compute_type']
 
         console.print("Loading transcription model... This may take a moment.")
         try:
@@ -317,7 +328,7 @@ if __name__ == '__main__':
 
         # Transcribe the audio
         try:
-            segments, info = model.transcribe(audio_array, beam_size=5)
+            segments, info = model.transcribe(audio_array, beam_size=recorder_config['beam_size'])
             transcription = ' '.join([segment.text for segment in segments]).strip()
         except Exception as e:
             console.print(f"[bold red]Error during transcription: {e}[/bold red]")
