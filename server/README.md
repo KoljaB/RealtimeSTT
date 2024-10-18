@@ -1,6 +1,6 @@
 # RealtimeSTT Server and Client
 
-This directory contains the server and client implementations for the RealtimeSTT library, providing real-time speech-to-text transcription with WebSocket interfaces. The server allows clients to connect via WebSocket to send audio data and receive real-time transcription updates. The client facilitates interaction with the server, enabling audio recording, parameter management, and control commands.
+This directory contains the server and client implementations for the RealtimeSTT library, providing real-time speech-to-text transcription with WebSocket interfaces. The server allows clients to connect via WebSocket to send audio data and receive real-time transcription updates. The client handles communication with the server, allowing audio recording, parameter management, and control commands.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ This directory contains the server and client implementations for the RealtimeST
 ## Features
 
 - **Real-Time Transcription**: Provides real-time speech-to-text transcription using pre-configured or user-defined STT models.
-- **WebSocket Communication**: Utilizes WebSocket connections for control commands and data handling.
+- **WebSocket Communication**: Makes use of WebSocket connections for control commands and data handling.
 - **Flexible Recording Options**: Supports configurable pauses for sentence detection and various voice activity detection (VAD) methods.
 - **VAD Support**: Includes support for Silero and WebRTC VAD for robust voice activity detection.
 - **Wake Word Detection**: Capable of detecting wake words to initiate transcription.
