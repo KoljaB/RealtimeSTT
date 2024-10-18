@@ -788,6 +788,10 @@ class AudioToTextRecorder:
             maxlen=int((self.sample_rate // self.buffer_size) *
                        self.pre_recording_buffer_duration)
         )
+        self.last_words_buffer = collections.deque(
+            maxlen=int((self.sample_rate // self.buffer_size) *
+                       0.3)
+        )
         self.frames = []
 
         # Recording control flags
@@ -988,7 +992,7 @@ class AudioToTextRecorder:
                         stream = initialize_audio_stream(audio_interface, input_device_index, device_sample_rate, chunk_size)
                         if stream is not None:
                             logging.debug(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
-                            logging.error(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
+                            # logging.error(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
                             return True
                     except Exception as e:
                         logging.warning(f"Failed to initialize audio23 stream at {device_sample_rate} Hz: {e}")
@@ -1539,6 +1543,7 @@ class AudioToTextRecorder:
                         logging.debug('Debug: Trying to get data from audio queue')
                     try:
                         data = self.audio_queue.get(timeout=0.01)
+                        self.last_words_buffer.append(data)
                     except queue.Empty:
                         if self.use_extended_logging:
                             logging.debug('Debug: Queue is empty, checking if still running')
@@ -1836,8 +1841,6 @@ class AudioToTextRecorder:
 
                                 if self.use_extended_logging:
                                     logging.debug('Debug: Handling non-wake word scenario')
-                                if not self.use_wake_words:
-                                    self.listen()
                             else:
                                 if self.use_extended_logging:
                                     logging.debug('Debug: Setting failed_stop_attempt to True')
