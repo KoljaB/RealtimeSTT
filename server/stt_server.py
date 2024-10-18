@@ -1,3 +1,77 @@
+"""
+Speech-to-Text (STT) Server with Real-Time Transcription and WebSocket Interface
+
+This server provides real-time speech-to-text (STT) transcription using the RealtimeSTT library. It allows clients to connect via WebSocket to send audio data and receive real-time transcription updates. The server supports configurable audio recording parameters, voice activity detection (VAD), and wake word detection. It is designed to handle continuous transcription as well as post-recording processing, enabling real-time feedback with the option to improve final transcription quality after the complete sentence is recognized.
+
+### Features:
+- Real-time transcription using pre-configured or user-defined STT models.
+- WebSocket-based communication for control and data handling.
+- Flexible recording and transcription options, including configurable pauses for sentence detection.
+- Supports Silero and WebRTC VAD for robust voice activity detection.
+
+### Starting the Server:
+You can start the server using the command-line interface (CLI) command `stt-server`, passing the desired configuration options.
+
+```bash
+stt-server [OPTIONS]
+```
+
+### Available Parameters:
+- `--model` (str, default: 'medium.en'): Path to the STT model or model size. Options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, or any huggingface CTranslate2 STT model like `deepdml/faster-whisper-large-v3-turbo-ct2`.
+  
+- `--realtime_model_type` (str, default: 'tiny.en'): Model size for real-time transcription. Same options as `--model`.
+
+- `--language` (str, default: 'en'): Language code for the STT model. Leave empty for auto-detection.
+
+- `--input_device_index` (int, default: 1): Index of the audio input device to use.
+
+- `--silero_sensitivity` (float, default: 0.05): Sensitivity for Silero Voice Activity Detection (VAD). Lower values are less sensitive.
+
+- `--webrtc_sensitivity` (float, default: 3): Sensitivity for WebRTC VAD. Higher values are less sensitive.
+
+- `--min_length_of_recording` (float, default: 1.1): Minimum duration (in seconds) for a valid recording. Prevents short recordings.
+
+- `--min_gap_between_recordings` (float, default: 0): Minimum time (in seconds) between consecutive recordings.
+
+- `--enable_realtime_transcription` (flag, default: True): Enable real-time transcription of audio.
+
+- `--realtime_processing_pause` (float, default: 0.02): Time interval (in seconds) between processing audio chunks for real-time transcription. Lower values increase responsiveness.
+
+- `--silero_deactivity_detection` (flag, default: True): Use Silero model for end-of-speech detection.
+
+- `--early_transcription_on_silence` (float, default: 0.2): Start transcription after specified seconds of silence.
+
+- `--beam_size` (int, default: 5): Beam size for the main transcription model.
+
+- `--beam_size_realtime` (int, default: 3): Beam size for the real-time transcription model.
+
+- `--initial_prompt` (str, default: 'Add periods only for complete sentences...'): Initial prompt for the transcription model to guide its output format and style.
+
+- `--end_of_sentence_detection_pause` (float, default: 0.45): Duration of pause (in seconds) to consider as the end of a sentence.
+
+- `--unknown_sentence_detection_pause` (float, default: 0.7): Duration of pause (in seconds) to consider as an unknown or incomplete sentence.
+
+- `--mid_sentence_detection_pause` (float, default: 2.0): Duration of pause (in seconds) to consider as a mid-sentence break.
+
+- `--control_port` (int, default: 8011): Port for the control WebSocket connection.
+
+- `--data_port` (int, default: 8012): Port for the data WebSocket connection.
+
+### WebSocket Interface:
+The server supports two WebSocket connections:
+1. **Control WebSocket**: Used to send and receive commands, such as setting parameters or calling recorder methods.
+2. **Data WebSocket**: Used to send audio data for transcription and receive real-time transcription updates.
+
+The server will broadcast real-time transcription updates to all connected clients on the data WebSocket.
+"""
+
+
+import asyncio
+import sys
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from .install_packages import check_and_install_packages
 
 check_and_install_packages([
@@ -23,7 +97,6 @@ check_and_install_packages([
 
 print("Starting server, please wait...")
 
-import asyncio
 import threading
 import json
 import websockets
@@ -35,28 +108,40 @@ global_args = None
 recorder = None
 recorder_config = {}
 recorder_ready = threading.Event()
-client_websocket = None
 stop_recorder = False
 prev_text = ""
 
+# Define allowed methods and parameters for security
+allowed_methods = [
+    'set_microphone',
+    'abort',
+    'stop',
+    'clear_audio_queue',
+    'wakeup',
+    'shutdown',
+    'text',  # Allow 'text' method to initiate transcription
+]
+allowed_parameters = [
+    'silero_sensitivity',
+    'wake_word_activation_delay',
+    'post_speech_silence_duration',
+    'listen_start',
+    'recording_stop_time',
+    'recorderActive',
+    # Add other parameters as needed
+]
 
-async def send_to_client(message):
-    global client_websocket
-    if client_websocket and client_websocket.open:
-        try:
-            await client_websocket.send(message)
-        except websockets.exceptions.ConnectionClosed:
-            print("Client websocket is closed, resetting client_websocket")
-            client_websocket = None
-    else:
-        print("No client connected or connection is closed.")
-        client_websocket = None  # Ensure it resets
+# Queues and connections for control and data
+control_connections = set()
+data_connections = set()
+control_queue = asyncio.Queue()
+audio_queue = asyncio.Queue()
 
 def preprocess_text(text):
     # Remove leading whitespaces
     text = text.lstrip()
 
-    #  Remove starting ellipses if present
+    # Remove starting ellipses if present
     if text.startswith("..."):
         text = text[3:]
 
@@ -69,7 +154,7 @@ def preprocess_text(text):
     
     return text
 
-def text_detected(text):
+def text_detected(text, loop):
     global prev_text
 
     text = preprocess_text(text)
@@ -84,18 +169,67 @@ def text_detected(text):
 
     prev_text = text
 
-    try:
-        asyncio.new_event_loop().run_until_complete(
-            send_to_client(
-                json.dumps({
-                    'type': 'realtime',
-                    'text': text
-                })
-            )
-        )
-    except Exception as e:
-        print(f"Error in text_detected while sending to client: {e}")
+    # Put the message in the audio queue to be sent to clients
+    message = json.dumps({
+        'type': 'realtime',
+        'text': text
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
     print(f"\r{text}", flush=True, end='')
+
+def on_recording_start(loop):
+    # Send a message to the client indicating recording has started
+    message = json.dumps({
+        'type': 'recording_start'
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_recording_stop(loop):
+    # Send a message to the client indicating recording has stopped
+    message = json.dumps({
+        'type': 'recording_stop'
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_vad_detect_start(loop):
+    message = json.dumps({
+        'type': 'vad_detect_start'
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_wakeword_detection_start(loop):
+    # Send a message to the client when wake word detection starts
+    message = json.dumps({
+        'type': 'wakeword_detection_start'
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_wakeword_detection_end(loop):
+    # Send a message to the client when wake word detection ends
+    message = json.dumps({
+        'type': 'wakeword_detection_end'
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_transcription_start(loop):
+    # Send a message to the client when transcription starts
+    message = json.dumps({
+        'type': 'transcription_start'
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_realtime_transcription_update(text, loop):
+    # Send real-time transcription updates to the client
+    text = preprocess_text(text)
+    message = json.dumps({
+        'type': 'realtime_update',
+        'text': text
+    })
+    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+def on_recorded_chunk(chunk):
+    # Process each recorded audio chunk (optional implementation)
+    pass
 
 # Define the server's arguments
 def parse_arguments():
@@ -157,11 +291,16 @@ def parse_arguments():
     parser.add_argument('--mid_sentence_detection_pause', type=float, default=2.0,
                         help='Duration of pause (in seconds) to consider as a mid-sentence break. Default: 2.0')
     
+    parser.add_argument('--control_port', type=int, default=8011,
+                        help='Port for the control WebSocket connection. Default: 8011')
+    
+    parser.add_argument('--data_port', type=int, default=8012,
+                        help='Port for the data WebSocket connection. Default: 8012')
+    
     return parser.parse_args()
 
-def _recorder_thread():
+def _recorder_thread(loop):
     global recorder, prev_text, stop_recorder
-    # print("Initializing RealtimeSTT...")
     print(f"Initializing RealtimeSTT server with parameters {recorder_config}")
     recorder = AudioToTextRecorder(**recorder_config)
     print("RealtimeSTT initialized")
@@ -170,17 +309,12 @@ def _recorder_thread():
     def process_text(full_sentence):
         full_sentence = preprocess_text(full_sentence)
         prev_text = ""
-        try:
-            asyncio.new_event_loop().run_until_complete(
-                send_to_client(
-                    json.dumps({
-                        'type': 'fullSentence',
-                        'text': full_sentence
-                    })
-                )
-            )
-        except Exception as e:
-            print(f"Error in _recorder_thread while sending to client: {e}")
+        message = json.dumps({
+            'type': 'fullSentence',
+            'text': full_sentence
+        })
+        # Use the passed event loop here
+        asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
         print(f"\rSentence: {full_sentence}")
 
     try:
@@ -210,34 +344,113 @@ def decode_and_resample(
 
     return resampled_audio.astype(np.int16).tobytes()
 
-async def echo(websocket, path):
-    print("Client connected")
-    global client_websocket
-    client_websocket = websocket
-    recorder.post_speech_silence_duration = global_args.unknown_sentence_detection_pause
+async def control_handler(websocket, path):
+    print("Control client connected")
+    global recorder
+    control_connections.add(websocket)
     try:
         async for message in websocket:
             if not recorder_ready.is_set():
                 print("Recorder not ready")
                 continue
-
-            metadata_length = int.from_bytes(message[:4], byteorder='little')
-            metadata_json = message[4:4+metadata_length].decode('utf-8')
-            metadata = json.loads(metadata_json)
-            sample_rate = metadata['sampleRate']
-            chunk = message[4+metadata_length:]
-            resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
-            recorder.feed_audio(resampled_chunk)
+            if isinstance(message, str):
+                # Handle text message (command)
+                try:
+                    command_data = json.loads(message)
+                    command = command_data.get("command")
+                    if command == "set_parameter":
+                        parameter = command_data.get("parameter")
+                        value = command_data.get("value")
+                        if parameter in allowed_parameters and hasattr(recorder, parameter):
+                            setattr(recorder, parameter, value)
+                            print(f"Set recorder.{parameter} to {value}")
+                            # Optionally send a response back to the client
+                            await websocket.send(json.dumps({"status": "success", "message": f"Parameter {parameter} set to {value}"}))
+                        else:
+                            print(f"Parameter {parameter} is not allowed or does not exist")
+                            await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} is not allowed or does not exist"}))
+                    elif command == "get_parameter":
+                        parameter = command_data.get("parameter")
+                        if parameter in allowed_parameters and hasattr(recorder, parameter):
+                            value = getattr(recorder, parameter)
+                            await websocket.send(json.dumps({"status": "success", "parameter": parameter, "value": value}))
+                        else:
+                            print(f"Parameter {parameter} is not allowed or does not exist")
+                            await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} is not allowed or does not exist"}))
+                    elif command == "call_method":
+                        method_name = command_data.get("method")
+                        if method_name in allowed_methods:
+                            method = getattr(recorder, method_name, None)
+                            if method and callable(method):
+                                args = command_data.get("args", [])
+                                kwargs = command_data.get("kwargs", {})
+                                method(*args, **kwargs)
+                                print(f"Called method recorder.{method_name}")
+                                await websocket.send(json.dumps({"status": "success", "message": f"Method {method_name} called"}))
+                            else:
+                                print(f"Recorder does not have method {method_name}")
+                                await websocket.send(json.dumps({"status": "error", "message": f"Recorder does not have method {method_name}"}))
+                        else:
+                            print(f"Method {method_name} is not allowed")
+                            await websocket.send(json.dumps({"status": "error", "message": f"Method {method_name} is not allowed"}))
+                    else:
+                        print(f"Unknown command: {command}")
+                        await websocket.send(json.dumps({"status": "error", "message": f"Unknown command {command}"}))
+                except json.JSONDecodeError:
+                    print("Received invalid JSON command")
+                    await websocket.send(json.dumps({"status": "error", "message": "Invalid JSON command"}))
+            else:
+                print("Received unknown message type on control connection")
     except websockets.exceptions.ConnectionClosed as e:
-        print(f"Client disconnected: {e}")
+        print(f"Control client disconnected: {e}")
     finally:
-        print("Resetting client_websocket after disconnect")
-        client_websocket = None  # Reset websocket reference
+        control_connections.remove(websocket)
+
+async def data_handler(websocket, path):
+    print("Data client connected")
+    data_connections.add(websocket)
+    try:
+        while True:
+            message = await websocket.recv()
+            if isinstance(message, bytes):
+                # Handle binary message (audio data)
+                metadata_length = int.from_bytes(message[:4], byteorder='little')
+                metadata_json = message[4:4+metadata_length].decode('utf-8')
+                metadata = json.loads(metadata_json)
+                sample_rate = metadata['sampleRate']
+                chunk = message[4+metadata_length:]
+                resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
+                recorder.feed_audio(resampled_chunk)
+            else:
+                print("Received non-binary message on data connection")
+    except websockets.exceptions.ConnectionClosed as e:
+        print(f"Data client disconnected: {e}")
+    finally:
+        data_connections.remove(websocket)
+        recorder.clear_audio_queue()  # Ensure audio queue is cleared if client disconnects
+
+async def broadcast_audio_messages():
+    while True:
+        message = await audio_queue.get()
+        for conn in list(data_connections):
+            try:
+                await conn.send(message)
+            except websockets.exceptions.ConnectionClosed:
+                data_connections.remove(conn)
+
+# Helper function to create event loop bound closures for callbacks
+def make_callback(loop, callback):
+    def inner_callback(*args, **kwargs):
+        callback(*args, **kwargs, loop=loop)
+    return inner_callback
 
 async def main_async():            
     global stop_recorder, recorder_config, global_args
     args = parse_arguments()
     global_args = args
+
+    # Get the event loop here and pass it to the recorder thread
+    loop = asyncio.get_event_loop()
 
     recorder_config = {
         'model': args.model,
@@ -259,20 +472,33 @@ async def main_async():
 
         'spinner': False,
         'use_microphone': False,
-        'on_realtime_transcription_update': text_detected,
+
+        'on_realtime_transcription_update': make_callback(loop, text_detected),
+        'on_recording_start': make_callback(loop, on_recording_start),
+        'on_recording_stop': make_callback(loop, on_recording_stop),
+        'on_vad_detect_start': make_callback(loop, on_vad_detect_start),
+        'on_wakeword_detection_start': make_callback(loop, on_wakeword_detection_start),
+        'on_wakeword_detection_end': make_callback(loop, on_wakeword_detection_end),
+        'on_transcription_start': make_callback(loop, on_transcription_start),
         'no_log_file': True,
     }
 
-    start_server = await websockets.serve(echo, "localhost", 8011)
+    control_server = await websockets.serve(control_handler, "localhost", args.control_port)
+    data_server = await websockets.serve(data_handler, "localhost", args.data_port)
+    print(f"Control server started on ws://localhost:{args.control_port}")
+    print(f"Data server started on ws://localhost:{args.data_port}")
 
-    recorder_thread = threading.Thread(target=_recorder_thread)
+    # Task to broadcast audio messages
+    broadcast_task = asyncio.create_task(broadcast_audio_messages())
+
+    recorder_thread = threading.Thread(target=_recorder_thread, args=(loop,))
     recorder_thread.start()
     recorder_ready.wait()
 
     print("Server started. Press Ctrl+C to stop the server.")
-    
+
     try:
-        await start_server.wait_closed()  # This will keep the server running
+        await asyncio.gather(control_server.wait_closed(), data_server.wait_closed(), broadcast_task)
     except KeyboardInterrupt:
         print("Shutting down gracefully...")
     finally:
