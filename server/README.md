@@ -179,7 +179,7 @@ stt --get-param silero_sensitivity
 Call the `set_microphone` method on the recorder:
 
 ```bash
-stt --call-method set_microphone
+stt --call-method set_microphone False
 ```
 
 ### Running in Debug Mode
