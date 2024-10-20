@@ -27,7 +27,7 @@ stt-server [OPTIONS]
 
 - `--silero_sensitivity` (float, default: 0.05): Sensitivity for Silero Voice Activity Detection (VAD). Lower values are less sensitive.
 
-- `--webrtc_sensitivity` (float, default: 3): Sensitivity for WebRTC VAD. Higher values are less sensitive.
+- `--webrtc_sensitivity` (int, default: 3): Sensitivity for WebRTC VAD. Higher values are less sensitive.
 
 - `--min_length_of_recording` (float, default: 1.1): Minimum duration (in seconds) for a valid recording. Prevents short recordings.
 
@@ -251,7 +251,7 @@ def parse_arguments():
     parser.add_argument('--silero_sensitivity', type=float, default=0.05,
                         help='Sensitivity for Silero Voice Activity Detection (0 to 1). Lower values are less sensitive. Default: 0.05')
     
-    parser.add_argument('--webrtc_sensitivity', type=float, default=3,
+    parser.add_argument('--webrtc_sensitivity', type=int, default=3,
                         help='Sensitivity for WebRTC Voice Activity Detection (0 to 3). Higher values are less sensitive. Default: 3')
     
     parser.add_argument('--min_length_of_recording', type=float, default=1.1,
