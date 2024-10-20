@@ -45,7 +45,7 @@ stt-server [OPTIONS]
 
 - `--beam_size_realtime` (int, default: 3): Beam size for the real-time transcription model.
 
-- `--initial_prompt` (str, default: 'Add periods only for complete sentences...'): Initial prompt for the transcription model to guide its output format and style.
+- `--initial_prompt` (str, default: '...'): Initial prompt for the transcription model to guide its output format and style.
 
 - `--end_of_sentence_detection_pause` (float, default: 0.45): Duration of pause (in seconds) to consider as the end of a sentence.
 
@@ -236,7 +236,7 @@ def parse_arguments():
     import argparse
     parser = argparse.ArgumentParser(description='Start the Speech-to-Text (STT) server with various configuration options.')
     
-    parser.add_argument('--model', type=str, default='medium.en',
+    parser.add_argument('--model', type=str, default='large-v2',
                         help='Path to the STT model or model size. Options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2 or any hugginface CTranslate2 stt model like deepdml/faster-whisper-large-v3-turbo-ct2. Default: medium.en')
     
     parser.add_argument('--realtime_model_type', type=str, default='tiny.en',
@@ -279,8 +279,8 @@ def parse_arguments():
                         help='Beam size for the real-time transcription model. Smaller than main beam_size for faster processing. Default: 3')
     
     parser.add_argument('--initial_prompt', type=str, 
-                        default='Add periods only for complete sentences. Use ellipsis (...) for unfinished thoughts or unclear endings. Examples: \n- Complete: "I went to the store."\n- Incomplete: "I think it was..."',
-                        help='Initial prompt for the transcription model to guide its output format and style. Default provides instructions for sentence completion and ellipsis usage.')
+                    default='End incomplete sentences with ellipses.\nExamples:\nComplete: The sky is blue.\nIncomplete: When the sky...\nComplete: She walked home.\nIncomplete: Because he...',
+                    help='Initial prompt for the transcription model to guide its output format and style. Default provides instructions for sentence completion and ellipsis usage.')
     
     parser.add_argument('--end_of_sentence_detection_pause', type=float, default=0.45,
                         help='Duration of pause (in seconds) to consider as end of a sentence. Default: 0.45')
