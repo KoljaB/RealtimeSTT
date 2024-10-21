@@ -119,7 +119,7 @@ allowed_methods = [
     'clear_audio_queue',
     'wakeup',
     'shutdown',
-    'text',  # Allow 'text' method to initiate transcription
+    'text',
 ]
 allowed_parameters = [
     'silero_sensitivity',
@@ -127,8 +127,8 @@ allowed_parameters = [
     'post_speech_silence_duration',
     'listen_start',
     'recording_stop_time',
-    'recorderActive',
-    # Add other parameters as needed
+    'last_transcription_bytes',
+    'last_transcription_bytes_b64',
 ]
 
 # Queues and connections for control and data
@@ -308,7 +308,6 @@ def _recorder_thread(loop):
     
     def process_text(full_sentence):
         full_sentence = preprocess_text(full_sentence)
-        prev_text = ""
         message = json.dumps({
             'type': 'fullSentence',
             'text': full_sentence
@@ -367,16 +366,24 @@ async def control_handler(websocket, path):
                             # Optionally send a response back to the client
                             await websocket.send(json.dumps({"status": "success", "message": f"Parameter {parameter} set to {value}"}))
                         else:
-                            print(f"Parameter {parameter} is not allowed or does not exist")
-                            await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} is not allowed or does not exist"}))
+                            if not parameter in allowed_parameters:
+                                print(f"Parameter {parameter} is not allowed (set_parameter)")
+                                await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} is not allowed (set_parameter)"}))
+                            else:
+                                print(f"Parameter {parameter} does not exist (set_parameter)")
+                                await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} does not exist (set_parameter)"}))
                     elif command == "get_parameter":
                         parameter = command_data.get("parameter")
                         if parameter in allowed_parameters and hasattr(recorder, parameter):
                             value = getattr(recorder, parameter)
                             await websocket.send(json.dumps({"status": "success", "parameter": parameter, "value": value}))
                         else:
-                            print(f"Parameter {parameter} is not allowed or does not exist")
-                            await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} is not allowed or does not exist"}))
+                            if not parameter in allowed_parameters:
+                                print(f"Parameter {parameter} is not allowed (get_parameter)")
+                                await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} is not allowed (get_parameter)"}))
+                            else:
+                                print(f"Parameter {parameter} does not exist (get_parameter)")
+                                await websocket.send(json.dumps({"status": "error", "message": f"Parameter {parameter} does not exist (get_parameter)"}))
                     elif command == "call_method":
                         method_name = command_data.get("method")
                         if method_name in allowed_methods:
@@ -434,6 +441,7 @@ async def broadcast_audio_messages():
         message = await audio_queue.get()
         for conn in list(data_connections):
             try:
+                # print(f"Sending message: {message}")
                 await conn.send(message)
             except websockets.exceptions.ConnectionClosed:
                 data_connections.remove(conn)

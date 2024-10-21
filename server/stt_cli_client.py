@@ -80,6 +80,7 @@ import threading
 import time
 import struct
 import socket
+import subprocess
 import shutil
 from urllib.parse import urlparse
 import queue 
@@ -92,8 +93,8 @@ CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
-DEFAULT_CONTROL_URL = "ws://localhost:8011"
-DEFAULT_DATA_URL = "ws://localhost:8012"
+DEFAULT_CONTROL_URL = "ws://127.0.0.1:8011"
+DEFAULT_DATA_URL = "ws://127.0.0.1:8012"
 
 # Initialize colorama
 from colorama import init, Fore, Style

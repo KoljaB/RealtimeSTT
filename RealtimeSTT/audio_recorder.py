@@ -29,7 +29,6 @@ Author: Kolja Beigel
 from typing import Iterable, List, Optional, Union
 import torch.multiprocessing as mp
 import torch
-from typing import List, Union
 from ctypes import c_bool
 from openwakeword.model import Model
 from scipy.signal import resample
@@ -49,6 +48,7 @@ import platform
 import pyaudio
 import logging
 import struct
+import base64
 import queue
 import halo
 import time
@@ -541,6 +541,7 @@ class AudioToTextRecorder:
         self.start_recording_event = threading.Event()
         self.stop_recording_event = threading.Event()
         self.last_transcription_bytes = None
+        self.last_transcription_bytes_b64 = None
         self.initial_prompt = initial_prompt
         self.suppress_tokens = suppress_tokens
         self.use_wake_words = wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}
@@ -1209,7 +1210,7 @@ class AudioToTextRecorder:
                 if self.transcribe_count == 0:
                     logging.debug("Adding transcription request, no early transcription started")
                     start_time = time.time()  # Start timing
-                    self.parent_transcription_pipe.send((self.audio, self.language))
+                    self.parent_transcription_pipe.send((audio_copy, self.language))
                     self.transcribe_count += 1
 
                 while self.transcribe_count > 0:
@@ -1223,7 +1224,8 @@ class AudioToTextRecorder:
                     segments, info = result
                     self.detected_language = info.language if info.language_probability > 0 else None
                     self.detected_language_probability = info.language_probability
-                    self.last_transcription_bytes = audio_copy
+                    self.last_transcription_bytes = copy.deepcopy(audio_copy)                    
+                    self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
                     transcription = self._preprocess_output(segments)
                     end_time = time.time()  # End timing
                     transcription_time = end_time - start_time

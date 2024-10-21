@@ -199,6 +199,8 @@ class AudioToTextRecorderClient:
         self.autostart_server = autostart_server
 
         # Instance variables
+        self.muted = False
+        self.recording_thread = None
         self.is_running = True
         self.connection_established = threading.Event()
         self.recording_start = threading.Event()
@@ -214,7 +216,8 @@ class AudioToTextRecorderClient:
             if self.debug_mode:
                 print("STT server is running and connected.")
 
-        self.start_recording()
+        if self.use_microphone:
+            self.start_recording()
 
     def text(self, on_transcription_finished=None):
         self.realtime_text = ""
@@ -255,10 +258,44 @@ class AudioToTextRecorderClient:
                 threading.Thread(target=on_transcription_finished, args=(self.final_text,)).start()
 
             return self.final_text
+
         except KeyboardInterrupt:
             if self.debug_mode:
                 print("KeyboardInterrupt in record_and_send_audio, exiting...")
             raise KeyboardInterrupt
+
+        except Exception as e:
+            print(f"Error in AudioToTextRecorderClient.text(): {e}")
+            return ""
+
+    def feed_audio(self, chunk, original_sample_rate=16000):
+        metadata = {"sampleRate": original_sample_rate}
+        metadata_json = json.dumps(metadata)
+        metadata_length = len(metadata_json)
+        message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + chunk
+
+        if self.is_running:
+            self.data_ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+
+    def set_microphone(self, microphone_on=True):
+        """
+        Set the microphone on or off.
+        """
+        self.muted = not microphone_on
+        #self.call_method("set_microphone", [microphone_on])
+        # self.use_microphone.value = microphone_on
+
+    def abort(self):
+        self.call_method("abort")
+
+    def wakeup(self):
+        self.call_method("wakeup")
+
+    def clear_audio_queue(self):
+        self.call_method("clear_audio_queue")
+
+    def stop(self):
+        self.call_method("stop")
 
     def connect(self):
         if not self.ensure_server_running():
@@ -423,8 +460,18 @@ class AudioToTextRecorderClient:
                 print("Recording and sending audio...")
 
             while self.is_running:
+                if self.muted:
+                    time.sleep(0.01)
+                    continue
+
                 try:
                     audio_data = self.stream.read(CHUNK)
+
+                    if self.on_recorded_chunk:
+                        self.on_recorded_chunk(audio_data)
+
+                    if self.muted:
+                        continue
 
                     if self.recording_start.is_set():
                         metadata = {"sampleRate": self.device_sample_rate}
@@ -503,6 +550,12 @@ class AudioToTextRecorderClient:
             elif data.get('type') == 'vad_detect_start':
                 if self.on_vad_detect_start:
                     self.on_vad_detect_start()
+            elif data.get('type') == 'wakeword_detection_start':
+                if self.on_wakeword_detection_start:
+                    self.on_wakeword_detection_start()
+            elif data.get('type') == 'wakeword_detection_end':
+                if self.on_wakeword_detection_end:
+                    self.on_wakeword_detection_end()
 
             else:
                 print(f"Unknown data message format: {data}")
@@ -532,6 +585,30 @@ class AudioToTextRecorderClient:
     def on_data_open(self, ws):
         if self.debug_mode:
             print("Data WebSocket connection opened.")
+
+    def set_parameter(self, parameter, value):
+        command = {
+            "command": "set_parameter",
+            "parameter": parameter,
+            "value": value
+        }
+        self.control_ws.send(json.dumps(command))
+
+    def get_parameter(self, parameter):
+        command = {
+            "command": "get_parameter",
+            "parameter": parameter
+        }
+        self.control_ws.send(json.dumps(command))
+
+    def call_method(self, method, args=None, kwargs=None):
+        command = {
+            "command": "call_method",
+            "method": method,
+            "args": args or [],
+            "kwargs": kwargs or {}
+        }
+        self.control_ws.send(json.dumps(command))
 
     def shutdown(self):
         self.is_running = False
