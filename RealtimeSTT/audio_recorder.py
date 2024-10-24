@@ -921,21 +921,31 @@ class AudioToTextRecorder:
                 logging.warning(f"Failed to get highest sample rate: {e}")
                 return 48000  # Fallback to a common high sample rate
 
-        def initialize_audio_stream(audio_interface, device_index, sample_rate, chunk_size):
+        def initialize_audio_stream(audio_interface, sample_rate, chunk_size):
+            nonlocal input_device_index
             """Initialize the audio stream with error handling."""
-            try:
-                stream = audio_interface.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=sample_rate,
-                    input=True,
-                    frames_per_buffer=chunk_size,
-                    input_device_index=device_index,
-                )
-                return stream
-            except Exception as e:
-                logging.error(f"Error initializing audio stream: {e}")
-                raise
+            while not shutdown_event.is_set():
+                try:
+                    # Check and assign the input device index if it is not set
+                    if input_device_index is None:
+                        default_device = audio_interface.get_default_input_device_info()
+                        input_device_index = default_device['index']
+
+                    stream = audio_interface.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=sample_rate,
+                        input=True,
+                        frames_per_buffer=chunk_size,
+                        input_device_index=input_device_index,
+                    )
+                    logging.info("Microphone connected successfully.")
+                    return stream
+
+                except Exception as e:
+                    logging.error(f"Microphone connection failed: {e}. Retrying...")
+                    input_device_index = None
+                    time.sleep(3)  # Wait for 3 seconds before retrying
 
         def preprocess_audio(chunk, original_sample_rate, target_sample_rate):
             """Preprocess audio chunk similar to feed_audio method."""
@@ -990,7 +1000,7 @@ class AudioToTextRecorder:
                 for rate in sample_rates_to_try:
                     try:
                         device_sample_rate = rate
-                        stream = initialize_audio_stream(audio_interface, input_device_index, device_sample_rate, chunk_size)
+                        stream = initialize_audio_stream(audio_interface, device_sample_rate, chunk_size)
                         if stream is not None:
                             logging.debug(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
                             # logging.error(f"Audio recording initialized successfully at {device_sample_rate} Hz, reading {chunk_size} frames at a time")
@@ -998,8 +1008,6 @@ class AudioToTextRecorder:
                     except Exception as e:
                         logging.warning(f"Failed to initialize audio23 stream at {device_sample_rate} Hz: {e}")
                         continue
-                    
-                    
 
                 # If we reach here, none of the sample rates worked
                 raise Exception("Failed to initialize audio stream12 with all sample rates.")
@@ -1048,12 +1056,17 @@ class AudioToTextRecorder:
                     if e.errno == pyaudio.paInputOverflowed:
                         logging.warning("Input overflowed. Frame dropped.")
                     else:
-                        logging.error(f"Error during recording: {e}")
+                        logging.error(f"OSError during recording: {e}")
                         # Attempt to reinitialize the stream
                         logging.info("Attempting to reinitialize the audio stream...")
-                        if stream:
-                            stream.stop_stream()
-                            stream.close()
+
+                        try:
+                            if stream:
+                                stream.stop_stream()
+                                stream.close()
+                        except Exception as e:
+                            pass
+
                         if audio_interface:
                             audio_interface.terminate()
                         
@@ -1068,7 +1081,7 @@ class AudioToTextRecorder:
                     continue
 
                 except Exception as e:
-                    logging.error(f"Error during recording: {e}")
+                    logging.error(f"Unknown error during recording: {e}")
                     tb_str = traceback.format_exc()
                     logging.error(f"Traceback: {tb_str}")
                     logging.error(f"Error: {e}")
