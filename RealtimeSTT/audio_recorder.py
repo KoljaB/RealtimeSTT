@@ -123,8 +123,7 @@ class TranscriptionWorker:
     def run(self):
         if __name__ == "__main__":
              system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
-
-        # __builtins__['print'] = self.custom_print
+            # __builtins__['print'] = self.custom_print
 
         logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
 

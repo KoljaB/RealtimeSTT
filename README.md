@@ -1,5 +1,10 @@
-
 # RealtimeSTT
+[![PyPI](https://img.shields.io/pypi/v/RealtimeSTT)](https://pypi.org/project/RealtimeSTT/)
+[![Downloads](https://static.pepy.tech/badge/RealtimeSTT)](https://pepy.tech/project/KoljaB/RealtimeSTT)
+[![GitHub release](https://img.shields.io/github/release/KoljaB/RealtimeSTT.svg)](https://GitHub.com/KoljaB/RealtimeSTT/releases/)
+[![GitHub commits](https://badgen.net/github/commits/KoljaB/RealtimeSTT)](https://GitHub.com/Naereen/KoljaB/RealtimeSTT/commit/)
+[![GitHub forks](https://img.shields.io/github/forks/KoljaB/RealtimeSTT.svg?style=social&label=Fork&maxAge=2592000)](https://GitHub.com/KoljaB/RealtimeSTT/network/)
+[![GitHub stars](https://img.shields.io/github/stars/KoljaB/RealtimeSTT.svg?style=social&label=Star&maxAge=2592000)](https://GitHub.com/KoljaB/RealtimeSTT/stargazers/)
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
@@ -27,6 +32,43 @@ Latest Version: v0.3.0
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
 > **Hint:** *Since we use the `multiprocessing` module now, ensure to include the `if __name__ == '__main__':` protection in your code to prevent unexpected behavior, especially on platforms like Windows. For a detailed explanation on why this is important, visit the [official Python documentation on `multiprocessing`](https://docs.python.org/3/library/multiprocessing.html#multiprocessing-programming).*
+
+## Quick Examples
+
+### Print everything being said:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+import pyautogui
+
+def process_text(text):
+    print(text)
+
+if __name__ == '__main__':
+    print("Wait until it says 'speak now'")
+    recorder = AudioToTextRecorder()
+
+    while True:
+        recorder.text(process_text)
+```
+
+### Type everything being said:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+import pyautogui
+
+def process_text(text):
+    pyautogui.typewrite(text + " ")
+
+if __name__ == '__main__':
+    print("Wait until it says 'speak now'")
+    recorder = AudioToTextRecorder()
+
+    while True:
+        recorder.text(process_text)
+```
+*Will type everything being said into your selected text box*
 
 ### Features
 
@@ -158,6 +200,19 @@ recorder.stop()
 print(recorder.text())
 ```
 
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+if __name__ == '__main__':
+    recorder = AudioToTextRecorder()
+    recorder.start()
+    input("Press Enter to stop recording...")
+    recorder.stop()
+    print("Transcription: ", recorder.text())
+```
+
 ### Automatic Recording
 
 Recording based on voice activity detection.
@@ -167,7 +222,18 @@ with AudioToTextRecorder() as recorder:
     print(recorder.text())
 ```
 
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+if __name__ == '__main__':
+    with AudioToTextRecorder() as recorder:
+        print("Transcription: ", recorder.text())
+```
+
 When running recorder.text in a loop it is recommended to use a callback, allowing the transcription to be run asynchronously:
+
 
 ```python
 def process_text(text):
@@ -175,6 +241,21 @@ def process_text(text):
     
 while True:
     recorder.text(process_text)
+```
+
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+def process_text(text):
+    print(text)
+
+if __name__ == '__main__':
+    recorder = AudioToTextRecorder()
+
+    while True:
+        recorder.text(process_text)
 ```
 
 ### Wakewords
@@ -186,6 +267,18 @@ recorder = AudioToTextRecorder(wake_words="jarvis")
 
 print('Say "Jarvis" then speak.')
 print(recorder.text())
+```
+
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+if __name__ == '__main__':
+    recorder = AudioToTextRecorder(wake_words="jarvis")
+
+    print('Say "Jarvis" to start recording.')
+    print(recorder.text())
 ```
 
 ### Callbacks
@@ -203,12 +296,42 @@ recorder = AudioToTextRecorder(on_recording_start=my_start_callback,
                                on_recording_stop=my_stop_callback)
 ```
 
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+def start_callback():
+    print("Recording started!")
+
+def stop_callback():
+    print("Recording stopped!")
+
+if __name__ == '__main__':
+    recorder = AudioToTextRecorder(on_recording_start=start_callback,
+                                   on_recording_stop=stop_callback)
+```
+
 ### Feed chunks
 
 If you don't want to use the local microphone set use_microphone parameter to false and provide raw PCM audiochunks in 16-bit mono (samplerate 16000) with this method:
 
 ```python
 recorder.feed_audio(audio_chunk)
+```
+
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+if __name__ == '__main__':
+    recorder = AudioToTextRecorder(use_microphone=False)
+    with open("audio_chunk.pcm", "rb") as f:
+        audio_chunk = f.read()
+
+    recorder.feed_audio(audio_chunk)
+    print("Transcription: ", recorder.text())
 ```
 
 ### Shutdown
@@ -220,10 +343,23 @@ with AudioToTextRecorder() as recorder:
     [...]
 ```
 
+
 Or you can call the shutdown method manually (if using "with" is not feasible):
 
 ```python
 recorder.shutdown()
+```
+
+#### Standalone Example:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+if __name__ == '__main__':
+    with AudioToTextRecorder() as recorder:
+        [...]
+    # or manually shutdown if "with" is not used
+    recorder.shutdown()
 ```
 
 ## Testing the Library
@@ -420,7 +556,7 @@ Shoutout to [Steven Linn](https://github.com/stevenlafl) for providing docker su
 
 ## License
 
-MIT
+[MIT](https://github.com/KoljaB/RealtimeSTT?tab=MIT-1-ov-file)
 
 ## Author
 
