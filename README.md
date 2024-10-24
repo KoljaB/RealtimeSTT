@@ -10,7 +10,8 @@
 
 ## New
 
-Custom wake words with [OpenWakeWord](#openwakeword). Thanks to the [developers](https://github.com/dscripka/openWakeWord) of this!
+- AudioToTextRecorderClient class, which automatically starts a server if none is running and connects to it. The class shares the same interface as AudioToTextRecorder, making it easy to upgrade or switch between the two. (Work in progress, most parameters and callbacks of AudioToTextRecorder are already implemented into AudioToTextRecorderClient, but not all. Also the server can not handle concurrent (parallel) requests yet.)
+- reworked CLI interface ("stt-server" to start the server, "stt" to start the client, look at "server" folder for more info)
 
 ## About the Project
 
@@ -27,7 +28,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.3.0
+Latest Version: v0.3.1
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
