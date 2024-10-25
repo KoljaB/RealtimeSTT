@@ -1065,9 +1065,6 @@ class AudioToTextRecorder:
                                 stream.close()
                         except Exception as e:
                             pass
-
-                        if audio_interface:
-                            audio_interface.terminate()
                         
                         # Wait a bit before trying to reinitialize
                         time.sleep(1)
