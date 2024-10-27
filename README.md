@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.3.1
+Latest Version: v0.3.2
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -548,6 +548,17 @@ Suggested starting parameters for OpenWakeWord usage:
         wake_word_buffer_duration=1,
         ) as recorder:
 ```
+
+## FAQ
+
+### Q: I encountered the following error: "Unable to load any of {libcudnn_ops.so.9.1.0, libcudnn_ops.so.9.1, libcudnn_ops.so.9, libcudnn_ops.so} Invalid handle. Cannot load symbol cudnnCreateTensorDescriptor." How do I fix this?
+
+**A:** This issue arises from a mismatch between the version of `ctranslate2` and cuDNN. The `ctranslate2` library was updated to version 4.5.0, which uses cuDNN 9.2. There are two ways to resolve this issue:
+1. **Downgrade `ctranslate2` to version 4.4.0**:
+   ```bash
+   pip install ctranslate2==4.4.0
+   ```
+2. **Upgrade cuDNN** on your system to version 9.2 or above.
 
 ## Contribution
 

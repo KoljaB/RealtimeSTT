@@ -1,3 +1,5 @@
+log_outgoing_chunks = False
+
 from typing import Iterable, List, Optional, Union
 from urllib.parse import urlparse
 import subprocess
@@ -208,6 +210,9 @@ class AudioToTextRecorderClient:
         self.realtime_text = ""
         self.final_text = ""
 
+        self.request_counter = 0
+        self.pending_requests = {}  # Map from request_id to threading.Event and value
+
         if self.debug_mode:
             print("Checking STT server")
         if not self.connect():
@@ -349,6 +354,8 @@ class AudioToTextRecorderClient:
             args += ['--language', self.language]
         if self.silero_sensitivity is not None:
             args += ['--silero_sensitivity', str(self.silero_sensitivity)]
+        if self.silero_use_onnx:
+            args.append('--silero_use_onnx')  # flag, no need for True/False
         if self.webrtc_sensitivity is not None:
             args += ['--webrtc_sensitivity', str(self.webrtc_sensitivity)]
         if self.min_length_of_recording is not None:
@@ -359,12 +366,35 @@ class AudioToTextRecorderClient:
             args += ['--realtime_processing_pause', str(self.realtime_processing_pause)]
         if self.early_transcription_on_silence is not None:
             args += ['--early_transcription_on_silence', str(self.early_transcription_on_silence)]
+        if self.silero_deactivity_detection:
+            args.append('--silero_deactivity_detection')  # flag, no need for True/False
         if self.beam_size is not None:
             args += ['--beam_size', str(self.beam_size)]
         if self.beam_size_realtime is not None:
             args += ['--beam_size_realtime', str(self.beam_size_realtime)]
         if self.initial_prompt:
             args += ['--initial_prompt', self.initial_prompt]
+        if self.wake_words is not None:
+            args += ['--wake_words', str(self.wake_words)]
+        if self.wake_words_sensitivity is not None:
+            args += ['--wake_words_sensitivity', str(self.wake_words_sensitivity)]
+        if self.wake_word_timeout is not None:
+            args += ['--wake_word_timeout', str(self.wake_word_timeout)]
+        if self.wake_word_activation_delay is not None:
+            args += ['--wake_word_activation_delay', str(self.wake_word_activation_delay)]
+        if self.wakeword_backend is not None:
+            args += ['--wakeword_backend', str(self.wakeword_backend)]
+        if self.openwakeword_model_paths:
+            args += ['--openwakeword_model_paths', str(self.openwakeword_model_paths)]
+        if self.openwakeword_inference_framework is not None:
+            args += ['--openwakeword_inference_framework', str(self.openwakeword_inference_framework)]
+        if self.wake_word_buffer_duration is not None:
+            args += ['--wake_word_buffer_duration', str(self.wake_word_buffer_duration)]
+        if self.use_main_model_for_realtime:
+            args.append('--use_main_model_for_realtime')  # flag, no need for True/False
+        if self.use_extended_logging:
+            args.append('--use_extended_logging')  # flag, no need for True/False
+
         if self.control_url:
             parsed_control_url = urlparse(self.control_url)
             if parsed_control_url.port:
@@ -377,6 +407,7 @@ class AudioToTextRecorderClient:
         # Start the subprocess with the mapped arguments
         if os.name == 'nt':  # Windows
             cmd = 'start /min cmd /c ' + subprocess.list2cmdline(args)
+            # print(f"Opening server with cli command: {cmd}")
             subprocess.Popen(cmd, shell=True)
         else:  # Unix-like systems
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -480,6 +511,8 @@ class AudioToTextRecorderClient:
                         message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
 
                         if self.is_running:
+                            if log_outgoing_chunks:
+                                print(".", flush=True, end='')
                             self.data_ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
                 except KeyboardInterrupt:  # handle manual interruption (Ctrl+C)
                     if self.debug_mode:
@@ -513,8 +546,12 @@ class AudioToTextRecorderClient:
             if 'status' in data:
                 if data['status'] == 'success':
                     if 'parameter' in data and 'value' in data:
-                        if self.debug_mode:
-                            print(f"Parameter {data['parameter']} = {data['value']}")
+                        request_id = data.get('request_id')
+                        if request_id is not None and request_id in self.pending_requests:
+                            if self.debug_mode:
+                                print(f"Parameter {data['parameter']} = {data['value']}")
+                            self.pending_requests[request_id]['value'] = data['value']
+                            self.pending_requests[request_id]['event'].set()
                 elif data['status'] == 'error':
                     print(f"Server Error: {data.get('message', '')}")
             else:
@@ -550,12 +587,20 @@ class AudioToTextRecorderClient:
             elif data.get('type') == 'vad_detect_start':
                 if self.on_vad_detect_start:
                     self.on_vad_detect_start()
+            elif data.get('type') == 'vad_detect_stop':
+                if self.on_vad_detect_stop:
+                    self.on_vad_detect_stop()
+            elif data.get('type') == 'wakeword_detected':
+                if self.on_wakeword_detected:
+                    self.on_wakeword_detected()
             elif data.get('type') == 'wakeword_detection_start':
                 if self.on_wakeword_detection_start:
                     self.on_wakeword_detection_start()
             elif data.get('type') == 'wakeword_detection_end':
                 if self.on_wakeword_detection_end:
                     self.on_wakeword_detection_end()
+            elif data.get('type') == 'recorded_chunk':
+                pass
 
             else:
                 print(f"Unknown data message format: {data}")
@@ -595,11 +640,35 @@ class AudioToTextRecorderClient:
         self.control_ws.send(json.dumps(command))
 
     def get_parameter(self, parameter):
+        # Generate a unique request_id
+        request_id = self.request_counter
+        self.request_counter += 1
+
+        # Prepare the command with the request_id
         command = {
             "command": "get_parameter",
-            "parameter": parameter
+            "parameter": parameter,
+            "request_id": request_id
         }
+
+        # Create an event to wait for the response
+        event = threading.Event()
+        self.pending_requests[request_id] = {'event': event, 'value': None}
+
+        # Send the command to the server
         self.control_ws.send(json.dumps(command))
+
+        # Wait for the response or timeout after 5 seconds
+        if event.wait(timeout=5):
+            value = self.pending_requests[request_id]['value']
+            # Clean up the pending request
+            del self.pending_requests[request_id]
+            return value
+        else:
+            print(f"Timeout waiting for get_parameter {parameter}")
+            # Clean up the pending request
+            del self.pending_requests[request_id]
+            return None
 
     def call_method(self, method, args=None, kwargs=None):
         command = {

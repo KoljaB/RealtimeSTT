@@ -463,6 +463,7 @@ class AudioToTextRecorder:
             Exception: Errors related to initializing transcription
             model, wake word detection, or audio recording.
         """
+
         self.language = language
         self.compute_type = compute_type
         self.input_device_index = input_device_index
@@ -597,6 +598,11 @@ class AudioToTextRecorder:
             logging.info(f"Start method has already been set. Details: {e}")
 
         logging.info("Starting RealTimeSTT")
+
+        if use_extended_logging:
+            logging.info("RealtimeSTT was called with these parameters:")
+            for param, value in locals().items():
+                logging.info(f"{param}: {value}")
 
         self.interrupt_stop_event = mp.Event()
         self.was_interrupted = mp.Event()
@@ -922,14 +928,78 @@ class AudioToTextRecorder:
 
         def initialize_audio_stream(audio_interface, sample_rate, chunk_size):
             nonlocal input_device_index
+
+            def validate_device(device_index):
+                """Validate that the device exists and is actually available for input."""
+                try:
+                    device_info = audio_interface.get_device_info_by_index(device_index)
+                    if not device_info.get('maxInputChannels', 0) > 0:
+                        return False
+
+                    # Try to actually read from the device
+                    test_stream = audio_interface.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=target_sample_rate,
+                        input=True,
+                        frames_per_buffer=chunk_size,
+                        input_device_index=device_index,
+                        start=False  # Don't start the stream yet
+                    )
+
+                    # Start the stream and try to read from it
+                    test_stream.start_stream()
+                    test_data = test_stream.read(chunk_size, exception_on_overflow=False)
+                    test_stream.stop_stream()
+                    test_stream.close()
+
+                    # Check if we got valid data
+                    if len(test_data) == 0:
+                        return False
+
+                    return True
+
+                except Exception as e:
+                    logging.debug(f"Device validation failed: {e}")
+                    return False
+
             """Initialize the audio stream with error handling."""
             while not shutdown_event.is_set():
                 try:
-                    # Check and assign the input device index if it is not set
-                    if input_device_index is None:
-                        default_device = audio_interface.get_default_input_device_info()
-                        input_device_index = default_device['index']
+                    # First, get a list of all available input devices
+                    input_devices = []
+                    for i in range(audio_interface.get_device_count()):
+                        try:
+                            device_info = audio_interface.get_device_info_by_index(i)
+                            if device_info.get('maxInputChannels', 0) > 0:
+                                input_devices.append(i)
+                        except Exception:
+                            continue
 
+                    if not input_devices:
+                        raise Exception("No input devices found")
+
+                    # If input_device_index is None or invalid, try to find a working device
+                    if input_device_index is None or input_device_index not in input_devices:
+                        # First try the default device
+                        try:
+                            default_device = audio_interface.get_default_input_device_info()
+                            if validate_device(default_device['index']):
+                                input_device_index = default_device['index']
+                        except Exception:
+                            # If default device fails, try other available input devices
+                            for device_index in input_devices:
+                                if validate_device(device_index):
+                                    input_device_index = device_index
+                                    break
+                            else:
+                                raise Exception("No working input devices found")
+
+                    # Validate the selected device one final time
+                    if not validate_device(input_device_index):
+                        raise Exception("Selected device validation failed")
+
+                    # If we get here, we have a validated device
                     stream = audio_interface.open(
                         format=pyaudio.paInt16,
                         channels=1,
@@ -938,13 +1008,15 @@ class AudioToTextRecorder:
                         frames_per_buffer=chunk_size,
                         input_device_index=input_device_index,
                     )
-                    logging.info("Microphone connected successfully.")
+
+                    logging.info(f"Microphone connected and validated (input_device_index: {input_device_index})")
                     return stream
 
                 except Exception as e:
                     logging.error(f"Microphone connection failed: {e}. Retrying...")
                     input_device_index = None
-                    time.sleep(3)  # Wait for 3 seconds before retrying
+                    time.sleep(3)  # Wait before retrying
+                    continue
 
         def preprocess_audio(chunk, original_sample_rate, target_sample_rate):
             """Preprocess audio chunk similar to feed_audio method."""
@@ -980,7 +1052,8 @@ class AudioToTextRecorder:
         def setup_audio():  
             nonlocal audio_interface, stream, device_sample_rate, input_device_index
             try:
-                audio_interface = pyaudio.PyAudio()
+                if audio_interface is None:
+                    audio_interface = pyaudio.PyAudio()
                 if input_device_index is None:
                     try:
                         default_device = audio_interface.get_default_input_device_info()
@@ -1024,6 +1097,7 @@ class AudioToTextRecorder:
         silero_buffer_size = 2 * buffer_size  # silero complains if too short
 
         time_since_last_buffer_message = 0
+
         try:
             while not shutdown_event.is_set():
                 try:
@@ -1057,7 +1131,7 @@ class AudioToTextRecorder:
                     else:
                         logging.error(f"OSError during recording: {e}")
                         # Attempt to reinitialize the stream
-                        logging.info("Attempting to reinitialize the audio stream...")
+                        logging.error("Attempting to reinitialize the audio stream...")
 
                         try:
                             if stream:
@@ -1065,9 +1139,6 @@ class AudioToTextRecorder:
                                 stream.close()
                         except Exception as e:
                             pass
-
-                        if audio_interface:
-                            audio_interface.terminate()
                         
                         # Wait a bit before trying to reinitialize
                         time.sleep(1)
@@ -1076,7 +1147,7 @@ class AudioToTextRecorder:
                             logging.error("Failed to reinitialize audio stream. Exiting.")
                             break
                         else:
-                            logging.info("Audio stream reinitialized successfully.")
+                            logging.error("Audio stream reinitialized successfully.")
                     continue
 
                 except Exception as e:
@@ -1086,14 +1157,15 @@ class AudioToTextRecorder:
                     logging.error(f"Error: {e}")
                     # Attempt to reinitialize the stream
                     logging.info("Attempting to reinitialize the audio stream...")
-                    if stream:
-                        stream.stop_stream()
-                        stream.close()
-                    if audio_interface:
-                        audio_interface.terminate()
+                    try:
+                        if stream:
+                            stream.stop_stream()
+                            stream.close()
+                    except Exception as e:
+                        pass
                     
                     # Wait a bit before trying to reinitialize
-                    time.sleep(0.5)
+                    time.sleep(1)
                     
                     if not setup_audio():
                         logging.error("Failed to reinitialize audio stream. Exiting.")
@@ -1110,9 +1182,12 @@ class AudioToTextRecorder:
             if buffer:
                 audio_queue.put(bytes(buffer))
             
-            if stream:
-                stream.stop_stream()
-                stream.close()
+            try:
+                if stream:
+                    stream.stop_stream()
+                    stream.close()
+            except Exception as e:
+                pass
             if audio_interface:
                 audio_interface.terminate()
 
