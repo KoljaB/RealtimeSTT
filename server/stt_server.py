@@ -69,8 +69,11 @@ The server will broadcast real-time transcription updates to all connected clien
 extended_logging = True
 send_recorded_chunk = False
 log_incoming_chunks = False
+stt_optimizations = False
 
 
+from .install_packages import check_and_install_packages
+from datetime import datetime
 import asyncio
 import base64
 import sys
@@ -78,7 +81,6 @@ import sys
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from .install_packages import check_and_install_packages
 
 check_and_install_packages([
     {
@@ -177,13 +179,14 @@ def text_detected(text, loop):
 
     text = preprocess_text(text)
 
-    sentence_end_marks = ['.', '!', '?', '。'] 
-    if text.endswith("..."):
-        recorder.post_speech_silence_duration = global_args.mid_sentence_detection_pause
-    elif text and text[-1] in sentence_end_marks and prev_text and prev_text[-1] in sentence_end_marks:
-        recorder.post_speech_silence_duration = global_args.end_of_sentence_detection_pause
-    else:
-        recorder.post_speech_silence_duration = global_args.unknown_sentence_detection_pause
+    if stt_optimizations:
+        sentence_end_marks = ['.', '!', '?', '。'] 
+        if text.endswith("..."):
+            recorder.post_speech_silence_duration = global_args.mid_sentence_detection_pause
+        elif text and text[-1] in sentence_end_marks and prev_text and prev_text[-1] in sentence_end_marks:
+            recorder.post_speech_silence_duration = global_args.end_of_sentence_detection_pause
+        else:
+            recorder.post_speech_silence_duration = global_args.unknown_sentence_detection_pause
 
     prev_text = text
 
@@ -193,10 +196,14 @@ def text_detected(text, loop):
         'text': text
     })
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+
+    # Get current timestamp in HH:MM:SS.nnn format
+    timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+
     if extended_logging:
-        print(f"Realtime text: {bcolors.OKCYAN}{text}{bcolors.ENDC}\n", flush=True, end="")
+        print(f"  [{timestamp}] Realtime text: {bcolors.OKCYAN}{text}{bcolors.ENDC}\n", flush=True, end="")
     else:
-        print(f"\r{bcolors.OKCYAN}{text}{bcolors.ENDC}", flush=True, end='')
+        print(f"\r[{timestamp}] {bcolors.OKCYAN}{text}{bcolors.ENDC}", flush=True, end='')
 
 def on_recording_start(loop):
     # Send a message to the client indicating recording has started
@@ -348,7 +355,7 @@ def parse_arguments():
     parser.add_argument('--wake_word_timeout', type=float, default=5.0,
                         help='Maximum time in seconds that the system will wait for a wake word before timing out. After this timeout, the system stops listening for wake words until reactivated. Default is 5.0 seconds.')
 
-    parser.add_argument('--wake_word_activation_delay', type=float, default=0.5,
+    parser.add_argument('--wake_word_activation_delay', type=float, default=20,
                         help='The delay in seconds before the wake word detection is activated after the system starts listening. This prevents false positives during the start of a session. Default is 0.5 seconds.')
 
     parser.add_argument('--wakeword_backend', type=str, default='pvporcupine',
@@ -369,8 +376,14 @@ def parse_arguments():
     parser.add_argument('--use_extended_logging', action='store_true',
                         help='Writes extensive log messages for the recording worker, that processes the audio chunks.')
 
+    # Parse arguments
+    args = parser.parse_args()
 
-    return parser.parse_args()
+    # Replace escaped newlines with actual newlines in initial_prompt
+    if args.initial_prompt:
+        args.initial_prompt = args.initial_prompt.replace("\\n", "\n")
+
+    return args
 
 def _recorder_thread(loop):
     global recorder, prev_text, stop_recorder
@@ -390,10 +403,12 @@ def _recorder_thread(loop):
         # Use the passed event loop here
         asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
+        timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+
         if extended_logging:
-            print(f"Full text: {bcolors.BOLD}Sentence:{bcolors.ENDC} {bcolors.OKGREEN}{full_sentence}{bcolors.ENDC}")
+            print(f"  [{timestamp}] Full text: {bcolors.BOLD}Sentence:{bcolors.ENDC} {bcolors.OKGREEN}{full_sentence}{bcolors.ENDC}\n", flush=True, end="")
         else:
-            print(f"\r{bcolors.BOLD}Sentence:{bcolors.ENDC} {bcolors.OKGREEN}{full_sentence}{bcolors.ENDC}\n")
+            print(f"\r[{timestamp}] {bcolors.BOLD}Sentence:{bcolors.ENDC} {bcolors.OKGREEN}{full_sentence}{bcolors.ENDC}\n")
     try:
         while not stop_recorder:
             recorder.text(process_text)
@@ -445,8 +460,9 @@ async def control_handler(websocket, path):
                                 value_formatted = f"{value:.2f}"
                             else:
                                 value_formatted = value
+                            timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
                             if extended_logging:
-                                print(f"{bcolors.OKGREEN}Set recorder.{parameter} to: {bcolors.OKBLUE}{value_formatted}{bcolors.ENDC}")
+                                print(f"  [{timestamp}] {bcolors.OKGREEN}Set recorder.{parameter} to: {bcolors.OKBLUE}{value_formatted}{bcolors.ENDC}")
                             # Optionally send a response back to the client
                             await websocket.send(json.dumps({"status": "success", "message": f"Parameter {parameter} set to {value}"}))
                         else:
@@ -469,8 +485,9 @@ async def control_handler(websocket, path):
 
                             value_truncated = value_formatted[:39] + "…" if len(value_formatted) > 40 else value_formatted
 
+                            timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
                             if extended_logging:
-                                print(f"{bcolors.OKGREEN}Get recorder.{parameter}: {bcolors.OKBLUE}{value_truncated}{bcolors.ENDC}")
+                                print(f"  [{timestamp}] {bcolors.OKGREEN}Get recorder.{parameter}: {bcolors.OKBLUE}{value_truncated}{bcolors.ENDC}")
                             response = {"status": "success", "parameter": parameter, "value": value}
                             if request_id is not None:
                                 response["request_id"] = request_id
@@ -490,7 +507,8 @@ async def control_handler(websocket, path):
                                 args = command_data.get("args", [])
                                 kwargs = command_data.get("kwargs", {})
                                 method(*args, **kwargs)
-                                print(f"{bcolors.OKGREEN}Called method recorder.{bcolors.OKBLUE}{method_name}{bcolors.ENDC}")
+                                timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                                print(f"  [{timestamp}] {bcolors.OKGREEN}Called method recorder.{bcolors.OKBLUE}{method_name}{bcolors.ENDC}")
                                 await websocket.send(json.dumps({"status": "success", "message": f"Method {method_name} called"}))
                             else:
                                 print(f"{bcolors.WARNING}Recorder does not have method {method_name}{bcolors.ENDC}")
@@ -541,8 +559,10 @@ async def broadcast_audio_messages():
         message = await audio_queue.get()
         for conn in list(data_connections):
             try:
+                timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+
                 if extended_logging:
-                    print(f"    {bcolors.OKBLUE}Sending message: {message}{bcolors.ENDC}\n", flush=True, end="")
+                    print(f"  [{timestamp}] Sending message: {bcolors.OKBLUE}{message}{bcolors.ENDC}\n", flush=True, end="")
                 await conn.send(message)
             except websockets.exceptions.ConnectionClosed:
                 data_connections.remove(conn)

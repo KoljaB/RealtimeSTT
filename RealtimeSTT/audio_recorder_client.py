@@ -1,7 +1,9 @@
 log_outgoing_chunks = False
+debug_mode = False
 
 from typing import Iterable, List, Optional, Union
 from urllib.parse import urlparse
+from datetime import datetime
 import subprocess
 import websocket
 import threading
@@ -43,6 +45,18 @@ BUFFER_SIZE = 512
 INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
+
+# Define ANSI color codes for terminal output
+class bcolors:
+    HEADER = '\033[95m'   # Magenta
+    OKBLUE = '\033[94m'   # Blue
+    OKCYAN = '\033[96m'   # Cyan
+    OKGREEN = '\033[92m'  # Green
+    WARNING = '\033[93m'  # Yellow
+    FAIL = '\033[91m'     # Red
+    ENDC = '\033[0m'      # Reset to default
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 class AudioToTextRecorderClient:
     """
@@ -241,10 +255,10 @@ class AudioToTextRecorderClient:
                 if self.final_text_ready.wait(timeout=wait_interval):
                     break  # Break if transcription is ready
                 
-                if not self.realtime_text == self.submitted_realtime_text:
-                    if self.on_realtime_transcription_update:
-                        self.on_realtime_transcription_update(self.realtime_text)
-                    self.submitted_realtime_text = self.realtime_text
+                # if not self.realtime_text == self.submitted_realtime_text:
+                #     if self.on_realtime_transcription_update:
+                #         self.on_realtime_transcription_update(self.realtime_text)
+                #     self.submitted_realtime_text = self.realtime_text
 
                 total_wait_time += wait_interval
                 
@@ -287,8 +301,6 @@ class AudioToTextRecorderClient:
         Set the microphone on or off.
         """
         self.muted = not microphone_on
-        #self.call_method("set_microphone", [microphone_on])
-        # self.use_microphone.value = microphone_on
 
     def abort(self):
         self.call_method("abort")
@@ -372,8 +384,6 @@ class AudioToTextRecorderClient:
             args += ['--beam_size', str(self.beam_size)]
         if self.beam_size_realtime is not None:
             args += ['--beam_size_realtime', str(self.beam_size_realtime)]
-        if self.initial_prompt:
-            args += ['--initial_prompt', self.initial_prompt]
         if self.wake_words is not None:
             args += ['--wake_words', str(self.wake_words)]
         if self.wake_words_sensitivity is not None:
@@ -403,11 +413,15 @@ class AudioToTextRecorderClient:
             parsed_data_url = urlparse(self.data_url)
             if parsed_data_url.port:
                 args += ['--data_port', str(parsed_data_url.port)]
+        if self.initial_prompt:
+            sanitized_prompt = self.initial_prompt.replace("\n", "\\n")
+            args += ['--initial_prompt', sanitized_prompt]
 
         # Start the subprocess with the mapped arguments
         if os.name == 'nt':  # Windows
             cmd = 'start /min cmd /c ' + subprocess.list2cmdline(args)
-            # print(f"Opening server with cli command: {cmd}")
+            if debug_mode:
+                print(f"Opening server with cli command: {cmd}")
             subprocess.Popen(cmd, shell=True)
         else:  # Unix-like systems
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -569,6 +583,16 @@ class AudioToTextRecorderClient:
             if data.get('type') == 'realtime':
                 if data['text'] != self.realtime_text:
                     self.realtime_text = data['text']
+
+                    timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+                    print(f"Realtime text [{timestamp}]: {bcolors.OKCYAN}{self.realtime_text}{bcolors.ENDC}")
+
+                    if self.on_realtime_transcription_update:
+                        # Call the callback in a new thread to avoid blocking
+                        threading.Thread(
+                            target=self.on_realtime_transcription_update,
+                            args=(self.realtime_text,)
+                        ).start()
 
             # Handle full sentences
             elif data.get('type') == 'fullSentence':
