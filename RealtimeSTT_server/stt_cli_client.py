@@ -1,90 +1,21 @@
-"""
-Speech-to-Text (STT) Client CLI for WebSocket Server Interaction
-
-This command-line interface (CLI) allows interaction with the Speech-to-Text (STT) WebSocket server. It connects to the server via control and data WebSocket URLs to facilitate real-time speech transcription, control the server, and manage various parameters related to the STT process.
-
-The client can be used to start recording audio, set or retrieve STT parameters, and interact with the server using commands. Additionally, the CLI can disable real-time updates or run in debug mode for detailed output.
-
-### Features:
-- Connects to STT WebSocket server for real-time transcription and control.
-- Supports setting and retrieving parameters via the command line.
-- Allows calling server methods (e.g., start/stop recording).
-- Option to disable real-time updates during transcription.
-- Debug mode available for verbose logging.
-
-### Starting the Client:
-You can start the client using the command `stt` and optionally pass configuration options or commands for interacting with the server.
-
-```bash
-stt [OPTIONS]
-```
-
-### Available Parameters:
-- `--control-url` (default: "ws://localhost:8011"): The WebSocket URL for server control commands.
-  
-- `--data-url` (default: "ws://localhost:8012"): The WebSocket URL for sending audio data and receiving transcription updates.
-
-- `--debug`: Enable debug mode, which prints detailed logs to stderr.
-
-- `--nort` or `--norealtime`: Disable real-time output of transcription results.
-
-- `--set-param PARAM VALUE`: Set a recorder parameter (e.g., silero_sensitivity, beam_size, etc.). This option can be used multiple times to set different parameters.
-
-- `--get-param PARAM`: Retrieve the value of a specific recorder parameter. This option can be used multiple times to retrieve different parameters.
-
-- `--call-method METHOD [ARGS]`: Call a method on the recorder with optional arguments. This option can be used multiple times for different methods.
-
-### Example Usage:
-1. **Start the client with default settings:**
-   ```bash
-   stt
-   ```
-
-2. **Set a recorder parameter (e.g., set Silero sensitivity to 0.1):**
-   ```bash
-   stt --set-param silero_sensitivity 0.1
-   ```
-
-3. **Retrieve the value of a recorder parameter (e.g., get the current Silero sensitivity):**
-   ```bash
-   stt --get-param silero_sensitivity
-   ```
-
-4. **Call a method on the recorder (e.g., start the microphone input):**
-   ```bash
-   stt --call-method set_microphone
-   ```
-
-5. **Run in debug mode:**
-   ```bash
-   stt --debug
-   ```
-
-### WebSocket Interface:
-- **Control WebSocket**: Used for sending control commands like setting parameters or invoking methods.
-- **Data WebSocket**: Used for sending audio data for real-time transcription and receiving transcription results.
-
-The client can be used to send audio data to the server for transcription and to control the behavior of the server remotely.
-"""
-
-import os
-import sys
-import pyaudio
-import numpy as np
+from urllib.parse import urlparse
 from scipy import signal
-import logging
+from queue import Queue
+import numpy as np
+import subprocess
+import threading
 import websocket
 import argparse
-import json
-import threading
-import time
+import pyaudio
+import logging
 import struct
 import socket
-import subprocess
 import shutil
-from urllib.parse import urlparse
 import queue 
-from queue import Queue
+import json
+import time
+import sys
+import os
 
 os.environ['ALSA_LOG_LEVEL'] = 'none'
 
@@ -108,8 +39,9 @@ class STTWebSocketClient:
         self.control_url = control_url
         self.data_url = data_url
         self.control_ws = None
-        self.data_ws = None
-        self.is_running = False
+        self.data_ws_app = None
+        self.data_ws_connected = None  # WebSocket object that will be used for sending
+        self.is_running = True
         self.debug = debug
         self.file_output = file_output
         self.last_text = ""
@@ -154,13 +86,13 @@ class STTWebSocketClient:
             self.control_ws_thread.start()
 
             # Connect to data WebSocket
-            self.data_ws = websocket.WebSocketApp(self.data_url,
-                                                  on_message=self.on_data_message,
-                                                  on_error=self.on_error,
-                                                  on_close=self.on_close,
-                                                  on_open=self.on_data_open)
+            self.data_ws_app = websocket.WebSocketApp(self.data_url,
+                                                      on_message=self.on_data_message,
+                                                      on_error=self.on_error,
+                                                      on_close=self.on_close,
+                                                      on_open=self.on_data_open)
 
-            self.data_ws_thread = threading.Thread(target=self.data_ws.run_forever)
+            self.data_ws_thread = threading.Thread(target=self.data_ws_app.run_forever)
             self.data_ws_thread.daemon = False  # Set to False to ensure proper shutdown
             self.data_ws_thread.start()
 
@@ -182,7 +114,7 @@ class STTWebSocketClient:
 
     def on_data_open(self, ws):
         self.debug_print("Data WebSocket connection opened.")
-        self.is_running = True
+        self.data_ws_connected = ws  # Store the connected websocket object for sending data
         self.start_recording()
 
     def on_error(self, ws, error):
@@ -208,8 +140,57 @@ class STTWebSocketClient:
         if os.name == 'nt':  # Windows
             subprocess.Popen('start /min cmd /c stt-server', shell=True)
         else:  # Unix-like systems
-            subprocess.Popen(['stt-server'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        print("STT server start command issued. Please wait a moment for it to initialize.", file=sys.stderr)
+            terminal_emulators = [
+                'gnome-terminal',
+                'x-terminal-emulator',
+                'konsole',
+                'xfce4-terminal',
+                'lxterminal',
+                'xterm',
+                'mate-terminal',
+                'terminator',
+                'tilix',
+                'alacritty',
+                'urxvt',
+                'eterm',
+                'rxvt',
+                'kitty',
+                'hyper'
+            ]
+
+            terminal = None
+            for term in terminal_emulators:
+                if shutil.which(term):
+                    terminal = term
+                    break
+
+            if terminal:
+                terminal_exec_options = {
+                    'x-terminal-emulator': ['--'],
+                    'gnome-terminal': ['--'],
+                    'mate-terminal': ['--'],
+                    'terminator': ['--'],
+                    'tilix': ['--'],
+                    'konsole': ['-e'],
+                    'xfce4-terminal': ['-e'],
+                    'lxterminal': ['-e'],
+                    'alacritty': ['-e'],
+                    'xterm': ['-e'],
+                    'rxvt': ['-e'],
+                    'urxvt': ['-e'],
+                    'eterm': ['-e'],
+                    'kitty': [],
+                    'hyper': ['--command']
+                }
+
+                exec_option = terminal_exec_options.get(terminal, None)
+                if exec_option is not None:
+                    subprocess.Popen([terminal] + exec_option + ['stt-server'], start_new_session=True)
+                    print(f"STT server started in a new terminal window using {terminal}.", file=sys.stderr)
+                else:
+                    print(f"Unsupported terminal emulator '{terminal}'. Please start the STT server manually.", file=sys.stderr)
+            else:
+                print("No supported terminal emulator found. Please start the STT server manually.", file=sys.stderr)
 
     def ensure_server_running(self):
         if not self.is_server_running():
@@ -230,14 +211,11 @@ class STTWebSocketClient:
                 return False
         return True
 
-    # Handle control messages like set_parameter, get_parameter, etc.
     def on_control_message(self, ws, message):
         try:
             data = json.loads(message)
-            # Handle server response with status
             if 'status' in data:
                 if data['status'] == 'success':
-                    # print(f"Server Response: {data.get('message', '')}")
                     if 'parameter' in data and 'value' in data:
                         print(f"Parameter {data['parameter']} = {data['value']}")
                 elif data['status'] == 'error':
@@ -249,19 +227,16 @@ class STTWebSocketClient:
         except Exception as e:
             self.debug_print(f"Error processing control message: {e}")
 
-    # Handle real-time transcription and full sentence updates
     def on_data_message(self, ws, message):
         try:
             data = json.loads(message)
-            # Handle real-time transcription updates
-            if data.get('type') == 'realtime':
+            message_type = data.get('type')
+            if message_type == 'realtime':
                 if data['text'] != self.last_text:
                     self.last_text = data['text']
                     if not self.norealtime:
                         self.update_progress_bar(self.last_text)
-
-            # Handle full sentences
-            elif data.get('type') == 'fullSentence':
+            elif message_type == 'fullSentence':
                 if self.file_output:
                     sys.stderr.write('\r\033[K')
                     sys.stderr.write(data['text'])
@@ -273,6 +248,16 @@ class STTWebSocketClient:
                     self.finish_progress_bar()
                     print(f"{data['text']}")
                 self.stop()
+            elif message_type in {
+                'vad_detect_start',
+                'vad_detect_stop',
+                'recording_start',
+                'recording_stop',
+                'wakeword_detected',
+                'wakeword_detection_start',
+                'wakeword_detection_end',
+                'transcription_start'}:
+                pass  # Known message types, no action needed
 
             else:
                 self.debug_print(f"Unknown data message format: {data}")
@@ -317,10 +302,11 @@ class STTWebSocketClient:
         self.finish_progress_bar()
         self.is_running = False
         self.stop_event.set()
+        self.debug_print("Stopping client and cleaning up resources.")
         if self.control_ws:
             self.control_ws.close()
-        if self.data_ws:
-            self.data_ws.close()
+        if self.data_ws_connected:
+            self.data_ws_connected.close()
 
         # Join threads to ensure they finish before exiting
         if self.control_ws_thread:
@@ -357,7 +343,7 @@ class STTWebSocketClient:
                     metadata_json = json.dumps(metadata)
                     metadata_length = len(metadata_json)
                     message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
-                    self.data_ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+                    self.data_ws_connected.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
                 except Exception as e:
                     self.debug_print(f"Error sending audio data: {e}")
                     break  # Exit the recording loop
@@ -389,10 +375,10 @@ class STTWebSocketClient:
                     frames_per_buffer=CHUNK,
                     input_device_index=self.input_device_index,
                 )
-                self.debug_print(f"Audio recording initialized successfully at {self.device_sample_rate} Hz")
+                self.debug_print(f"Audio recording initialized successfully at {self.device_sample_rate} Hz, device index {self.input_device_index}")
                 return True
             except Exception as e:
-                self.debug_print(f"Failed to initialize audio stream at {self.device_sample_rate} Hz: {e}")
+                self.debug_print(f"Failed to initialize audio stream at {self.device_sample_rate} Hz, device index {self.input_device_index}: {e}")
                 return False
 
         except Exception as e:
@@ -443,9 +429,7 @@ class STTWebSocketClient:
         self.command_thread.start()
 
     def command_processor(self):
-        # print(f"Starting command processor")
         self.debug_print(f"Starting command processor")
-        #while self.is_running and not self.stop_event.is_set():
         while not self.stop_event.is_set():
             try:
                 command = self.commands.get(timeout=0.1)
@@ -455,14 +439,12 @@ class STTWebSocketClient:
                     self.get_parameter(command['parameter'])
                 elif command['type'] == 'call_method':
                     self.call_method(command['method'], command.get('args'), command.get('kwargs'))
-            except queue.Empty:  # Use queue.Empty instead of Queue.Empty
-                continue  # Queue was empty, just loop again
+            except queue.Empty:
+                continue
             except Exception as e:
                 self.debug_print(f"Error in command processor: {e}")
-            # finally:
-        #print(f"Leaving command processor")
-        self.debug_print(f"Leaving command processor")
 
+        self.debug_print(f"Leaving command processor")
 
     def add_command(self, command):
         self.commands.put(command)
@@ -502,7 +484,6 @@ def main():
             if args.set_param:
                 for param, value in args.set_param:
                     try:
-                        # Attempt to parse the value to the appropriate type
                         if '.' in value:
                             value = float(value)
                         else:
@@ -552,3 +533,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

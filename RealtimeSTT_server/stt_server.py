@@ -68,7 +68,7 @@ The server will broadcast real-time transcription updates to all connected clien
 
 extended_logging = True
 send_recorded_chunk = False
-log_incoming_chunks = False
+log_incoming_chunks = True
 stt_optimizations = False
 
 
@@ -259,23 +259,23 @@ def on_transcription_start(loop):
     })
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
-def on_realtime_transcription_update(text, loop):
-    # Send real-time transcription updates to the client
-    text = preprocess_text(text)
-    message = json.dumps({
-        'type': 'realtime_update',
-        'text': text
-    })
-    asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+# def on_realtime_transcription_update(text, loop):
+#     # Send real-time transcription updates to the client
+#     text = preprocess_text(text)
+#     message = json.dumps({
+#         'type': 'realtime_update',
+#         'text': text
+#     })
+#     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
-def on_recorded_chunk(chunk, loop):
-    if send_recorded_chunk:
-        bytes_b64 = base64.b64encode(chunk.tobytes()).decode('utf-8')
-        message = json.dumps({
-            'type': 'recorded_chunk',
-            'bytes': bytes_b64
-        })
-        asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
+# def on_recorded_chunk(chunk, loop):
+#     if send_recorded_chunk:
+#         bytes_b64 = base64.b64encode(chunk.tobytes()).decode('utf-8')
+#         message = json.dumps({
+#             'type': 'recorded_chunk',
+#             'bytes': bytes_b64
+#         })
+#         asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 # Define the server's arguments
 def parse_arguments():
@@ -346,7 +346,7 @@ def parse_arguments():
     parser.add_argument('--data_port', type=int, default=8012,
                         help='The port number used for the data WebSocket connection. Data connections are used to send audio data and receive transcription updates in real time. Default is port 8012.')
 
-    parser.add_argument('--wake_words', type=str, default="Jarvis",
+    parser.add_argument('--wake_words', type=str, default="",
                         help='Specify the wake word(s) that will trigger the server to start listening. For example, setting this to "Jarvis" will make the system start transcribing when it detects the wake word "Jarvis". Default is "Jarvis".')
 
     parser.add_argument('--wake_words_sensitivity', type=float, default=0.5,
@@ -358,7 +358,7 @@ def parse_arguments():
     parser.add_argument('--wake_word_activation_delay', type=float, default=20,
                         help='The delay in seconds before the wake word detection is activated after the system starts listening. This prevents false positives during the start of a session. Default is 0.5 seconds.')
 
-    parser.add_argument('--wakeword_backend', type=str, default='pvporcupine',
+    parser.add_argument('--wakeword_backend', type=str, default='none',
                         help='The backend used for wake word detection. You can specify different backends such as "default" or any custom implementations depending on your setup. Default is "pvporcupine".')
 
     parser.add_argument('--openwakeword_model_paths', type=str, nargs='*',
@@ -619,7 +619,7 @@ async def main_async():
         'on_wakeword_detection_start': make_callback(loop, on_wakeword_detection_start),
         'on_wakeword_detection_end': make_callback(loop, on_wakeword_detection_end),
         'on_transcription_start': make_callback(loop, on_transcription_start),
-        'on_recorded_chunk': make_callback(loop, on_recorded_chunk),
+        # 'on_recorded_chunk': make_callback(loop, on_recorded_chunk),
         'no_log_file': True,  # Disable logging to file
         'use_extended_logging': args.use_extended_logging,
     }
