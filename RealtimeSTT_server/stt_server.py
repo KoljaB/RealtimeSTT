@@ -65,18 +65,26 @@ The server supports two WebSocket connections:
 The server will broadcast real-time transcription updates to all connected clients on the data WebSocket.
 """
 
-
-extended_logging = True
-send_recorded_chunk = False
-log_incoming_chunks = True
-stt_optimizations = False
-
-
 from .install_packages import check_and_install_packages
 from datetime import datetime
+import logging
 import asyncio
-import base64
+import pyaudio
 import sys
+
+
+debug_logging = False
+extended_logging = False
+send_recorded_chunk = False
+log_incoming_chunks = False
+stt_optimizations = False
+writechunks = False#
+wav_file = None
+loglevel = logging.WARNING
+
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+
 
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -117,17 +125,25 @@ class bcolors:
 
 print(f"{bcolors.BOLD}{bcolors.OKCYAN}Starting server, please wait...{bcolors.ENDC}")
 
-import threading
-import json
-import websockets
+# Initialize colorama
+from colorama import init, Fore, Style
+init()
+
 from RealtimeSTT import AudioToTextRecorder
-import numpy as np
 from scipy.signal import resample
+import numpy as np
+import websockets
+import threading
+import logging
+import wave
+import json
+import time
 
 global_args = None
 recorder = None
 recorder_config = {}
 recorder_ready = threading.Event()
+recorder_thread = None
 stop_recorder = False
 prev_text = ""
 
@@ -173,6 +189,12 @@ def preprocess_text(text):
         text = text[0].upper() + text[1:]
     
     return text
+
+def debug_print(message):
+    if debug_logging:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        thread_name = threading.current_thread().name
+        print(f"{Fore.CYAN}[DEBUG][{timestamp}][{thread_name}] {message}{Style.RESET_ALL}", file=sys.stderr)
 
 def text_detected(text, loop):
     global prev_text
@@ -279,6 +301,8 @@ def on_transcription_start(loop):
 
 # Define the server's arguments
 def parse_arguments():
+    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks
+
     import argparse
     parser = argparse.ArgumentParser(description='Start the Speech-to-Text (STT) server with various configuration options.')
 
@@ -376,8 +400,26 @@ def parse_arguments():
     parser.add_argument('--use_extended_logging', action='store_true',
                         help='Writes extensive log messages for the recording worker, that processes the audio chunks.')
 
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging for detailed server operations')
+
+    parser.add_argument('--logchunks', action='store_true', help='Enable logging of incoming audio chunks (periods)')
+
+    parser.add_argument("--writechunks", metavar="FILE", help="Save received audio chunks to a WAV file")
+
     # Parse arguments
     args = parser.parse_args()
+
+    debug_logging = args.debug
+    extended_logging = args.use_extended_logging
+    writechunks = args.writechunks
+    log_incoming_chunks = args.logchunks
+
+    if debug_logging:
+        loglevel = logging.DEBUG
+        logging.basicConfig(level=loglevel, format='[%(asctime)s] %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    else:
+        loglevel = logging.WARNING
+
 
     # Replace escaped newlines with actual newlines in initial_prompt
     if args.initial_prompt:
@@ -437,11 +479,13 @@ def decode_and_resample(
     return resampled_audio.astype(np.int16).tobytes()
 
 async def control_handler(websocket, path):
+    debug_print(f"New control connection from {websocket.remote_address}")
     print(f"{bcolors.OKGREEN}Control client connected{bcolors.ENDC}")
     global recorder
     control_connections.add(websocket)
     try:
         async for message in websocket:
+            debug_print(f"Received control message: {message[:200]}...")
             if not recorder_ready.is_set():
                 print(f"{bcolors.WARNING}Recorder not ready{bcolors.ENDC}")
                 continue
@@ -530,21 +574,38 @@ async def control_handler(websocket, path):
         control_connections.remove(websocket)
 
 async def data_handler(websocket, path):
+    global writechunks, wav_file
     print(f"{bcolors.OKGREEN}Data client connected{bcolors.ENDC}")
     data_connections.add(websocket)
     try:
         while True:
             message = await websocket.recv()
             if isinstance(message, bytes):
-                if log_incoming_chunks:
+                if debug_logging:
+                    debug_print(f"Received audio chunk (size: {len(message)} bytes)")
+                elif log_incoming_chunks:
                     print(".", end='', flush=True)
                 # Handle binary message (audio data)
                 metadata_length = int.from_bytes(message[:4], byteorder='little')
                 metadata_json = message[4:4+metadata_length].decode('utf-8')
                 metadata = json.loads(metadata_json)
                 sample_rate = metadata['sampleRate']
+
+                debug_print(f"Processing audio chunk with sample rate {sample_rate}")
                 chunk = message[4+metadata_length:]
+
+                if writechunks:
+                    if not wav_file:
+                        wav_file = wave.open(writechunks, 'wb')
+                        wav_file.setnchannels(CHANNELS)
+                        wav_file.setsampwidth(pyaudio.get_sample_size(FORMAT))
+                        wav_file.setframerate(sample_rate)
+
+                    wav_file.writeframes(chunk)
+
                 resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
+
+                debug_print(f"Resampled chunk size: {len(resampled_chunk)} bytes")
                 recorder.feed_audio(resampled_chunk)
             else:
                 print(f"{bcolors.WARNING}Received non-binary message on data connection{bcolors.ENDC}")
@@ -622,47 +683,55 @@ async def main_async():
         # 'on_recorded_chunk': make_callback(loop, on_recorded_chunk),
         'no_log_file': True,  # Disable logging to file
         'use_extended_logging': args.use_extended_logging,
+        'level': loglevel,
     }
 
-    control_server = await websockets.serve(control_handler, "localhost", args.control_port)
-    data_server = await websockets.serve(data_handler, "localhost", args.data_port)
-    print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://localhost:{args.control_port}{bcolors.ENDC}")
-    print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data_port}{bcolors.ENDC}")
-
-    # Task to broadcast audio messages
-    broadcast_task = asyncio.create_task(broadcast_audio_messages())
-
-    recorder_thread = threading.Thread(target=_recorder_thread, args=(loop,))
-    recorder_thread.start()
-    recorder_ready.wait()
-
-    print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
-
     try:
-        await asyncio.gather(control_server.wait_closed(), data_server.wait_closed(), broadcast_task)
-    except KeyboardInterrupt:
-        print(f"{bcolors.WARNING}{bcolors.BOLD}Shutting down gracefully...{bcolors.ENDC}")
-    finally:
-        # Shut down the recorder
-        if recorder:
-            stop_recorder = True
-            recorder.abort()
-            recorder.stop()
-            recorder.shutdown()
-            print(f"{bcolors.OKGREEN}Recorder shut down{bcolors.ENDC}")
+        # Attempt to start control and data servers
+        control_server = await websockets.serve(control_handler, "localhost", args.control_port)
+        data_server = await websockets.serve(data_handler, "localhost", args.data_port)
+        print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://localhost:{args.control_port}{bcolors.ENDC}")
+        print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data_port}{bcolors.ENDC}")
 
+        # Start the broadcast and recorder threads
+        broadcast_task = asyncio.create_task(broadcast_audio_messages())
+
+        recorder_thread = threading.Thread(target=_recorder_thread, args=(loop,))
+        recorder_thread.start()
+        recorder_ready.wait()
+
+        print(f"{bcolors.OKGREEN}Server started. Press Ctrl+C to stop the server.{bcolors.ENDC}")
+
+        # Run server tasks
+        await asyncio.gather(control_server.wait_closed(), data_server.wait_closed(), broadcast_task)
+    except OSError as e:
+        print(f"{bcolors.FAIL}Error: Could not start server on specified ports. It’s possible another instance of the server is already running, or the ports are being used by another application.{bcolors.ENDC}")
+    except KeyboardInterrupt:
+        print(f"{bcolors.WARNING}Server interrupted by user, shutting down...{bcolors.ENDC}")
+    finally:
+        # Shutdown procedures for recorder and server threads
+        await shutdown_procedure()
+        print(f"{bcolors.OKGREEN}Server shutdown complete.{bcolors.ENDC}")
+
+async def shutdown_procedure():
+    global stop_recorder, recorder_thread
+    if recorder:
+        stop_recorder = True
+        recorder.abort()
+        recorder.stop()
+        recorder.shutdown()
+        print(f"{bcolors.OKGREEN}Recorder shut down{bcolors.ENDC}")
+
+        if recorder_thread:
             recorder_thread.join()
             print(f"{bcolors.OKGREEN}Recorder thread finished{bcolors.ENDC}")
-        
-        # Cancel all active tasks in the event loop
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        for task in tasks:
-            task.cancel()
-        
-        # Run pending tasks and handle cancellation
-        await asyncio.gather(*tasks, return_exceptions=True)
 
-        print(f"{bcolors.OKGREEN}All tasks cancelled, closing event loop now.{bcolors.ENDC}")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    print(f"{bcolors.OKGREEN}All tasks cancelled, closing event loop now.{bcolors.ENDC}")
 
 def main():
     try:

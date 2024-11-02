@@ -1,3 +1,21 @@
+"""
+This is a command-line client for the Speech-to-Text (STT) server.
+It records audio from the default input device and sends it to the server for speech recognition.
+It can also process commands to set parameters, get parameter values, or call methods on the server.
+
+Usage:
+    stt [--control-url CONTROL_URL] [--data-url DATA_URL] [--debug] [--norealtime] [--set-param PARAM VALUE] [--call-method METHOD [ARGS ...]] [--get-param PARAM]
+
+Options:
+    --control-url CONTROL_URL       STT Control WebSocket URL
+    --data-url DATA_URL             STT Data WebSocket URL
+    --debug                         Enable debug mode
+    --norealtime                    Disable real-time output
+    --set-param PARAM VALUE         Set a recorder parameter. Can be used multiple times.
+    --call-method METHOD [ARGS ...] Call a recorder method with optional arguments.
+    --get-param PARAM               Get the value of a recorder parameter. Can be used multiple times.
+"""
+
 from urllib.parse import urlparse
 from scipy import signal
 from queue import Queue
@@ -7,13 +25,13 @@ import threading
 import websocket
 import argparse
 import pyaudio
-import logging
 import struct
 import socket
 import shutil
 import queue 
 import json
 import time
+import wave
 import sys
 import os
 
@@ -35,7 +53,7 @@ init()
 websocket.enableTrace(False)
 
 class STTWebSocketClient:
-    def __init__(self, control_url, data_url, debug=False, file_output=None, norealtime=False):
+    def __init__(self, control_url, data_url, debug=False, file_output=None, norealtime=False, writechunks=None):
         self.control_url = control_url
         self.data_url = data_url
         self.control_ws = None
@@ -52,6 +70,16 @@ class STTWebSocketClient:
         self.message_queue = Queue()
         self.commands = Queue()
         self.stop_event = threading.Event()
+        self.chunks_sent = 0
+        self.last_chunk_time = time.time()
+        self.writechunks = writechunks  # Add this to store the file name for writing audio chunks
+
+        self.debug_print("Initializing STT WebSocket Client")
+        self.debug_print(f"Control URL: {control_url}")
+        self.debug_print(f"Data URL: {data_url}")
+        self.debug_print(f"File Output: {file_output}")
+        self.debug_print(f"No Realtime: {norealtime}")
+        self.debug_print(f"Write Chunks: {writechunks}")
 
         # Audio attributes
         self.audio_interface = None
@@ -64,9 +92,12 @@ class STTWebSocketClient:
         self.data_ws_thread = None
         self.recording_thread = None
 
+
     def debug_print(self, message):
         if self.debug:
-            print(message, file=sys.stderr)
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            thread_name = threading.current_thread().name
+            print(f"{Fore.CYAN}[DEBUG][{timestamp}][{thread_name}] {message}{Style.RESET_ALL}", file=sys.stderr)
 
     def connect(self):
         if not self.ensure_server_running():
@@ -74,7 +105,10 @@ class STTWebSocketClient:
             return False
 
         try:
+            self.debug_print("Attempting to establish WebSocket connections...")
+
             # Connect to control WebSocket
+            self.debug_print(f"Connecting to control WebSocket at {self.control_url}")
             self.control_ws = websocket.WebSocketApp(self.control_url,
                                                      on_message=self.on_control_message,
                                                      on_error=self.on_error,
@@ -82,10 +116,12 @@ class STTWebSocketClient:
                                                      on_open=self.on_control_open)
 
             self.control_ws_thread = threading.Thread(target=self.control_ws.run_forever)
-            self.control_ws_thread.daemon = False  # Set to False to ensure proper shutdown
+            self.control_ws_thread.daemon = False
+            self.debug_print("Starting control WebSocket thread")
             self.control_ws_thread.start()
 
             # Connect to data WebSocket
+            self.debug_print(f"Connecting to data WebSocket at {self.data_url}")
             self.data_ws_app = websocket.WebSocketApp(self.data_url,
                                                       on_message=self.on_data_message,
                                                       on_error=self.on_error,
@@ -93,10 +129,11 @@ class STTWebSocketClient:
                                                       on_open=self.on_data_open)
 
             self.data_ws_thread = threading.Thread(target=self.data_ws_app.run_forever)
-            self.data_ws_thread.daemon = False  # Set to False to ensure proper shutdown
+            self.data_ws_thread.daemon = False
+            self.debug_print("Starting data WebSocket thread")
             self.data_ws_thread.start()
 
-            # Wait for the connections to be established
+            self.debug_print("Waiting for connections to be established...")
             if not self.connection_established.wait(timeout=10):
                 self.debug_print("Timeout while connecting to the server.")
                 return False
@@ -104,24 +141,30 @@ class STTWebSocketClient:
             self.debug_print("WebSocket connections established successfully.")
             return True
         except Exception as e:
-            self.debug_print(f"Error while connecting to the server: {e}")
+            self.debug_print(f"Error while connecting to the server: {str(e)}")
             return False
 
+
     def on_control_open(self, ws):
-        self.debug_print("Control WebSocket connection opened.")
+        self.debug_print("Control WebSocket connection opened successfully")
         self.connection_established.set()
         self.start_command_processor()
 
     def on_data_open(self, ws):
-        self.debug_print("Data WebSocket connection opened.")
-        self.data_ws_connected = ws  # Store the connected websocket object for sending data
+        self.debug_print("Data WebSocket connection opened successfully")
+        self.data_ws_connected = ws
         self.start_recording()
 
     def on_error(self, ws, error):
-        self.debug_print(f"WebSocket error: {error}")
+        self.debug_print(f"WebSocket error occurred: {str(error)}")
+        self.debug_print(f"WebSocket object: {ws}")
+        self.debug_print(f"Error type: {type(error)}")
 
     def on_close(self, ws, close_status_code, close_msg):
-        self.debug_print(f"WebSocket connection closed: {close_status_code} - {close_msg}")
+        self.debug_print(f"WebSocket connection closed")
+        self.debug_print(f"Close status code: {close_status_code}")
+        self.debug_print(f"Close message: {close_msg}")
+        self.debug_print(f"WebSocket object: {ws}")
         self.is_running = False
         self.stop_event.set()
 
@@ -129,8 +172,11 @@ class STTWebSocketClient:
         parsed_url = urlparse(self.control_url)
         host = parsed_url.hostname
         port = parsed_url.port or 80
+        self.debug_print(f"Checking if server is running at {host}:{port}")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex((host, port)) == 0
+            result = s.connect_ex((host, port)) == 0
+            self.debug_print(f"Server status check result: {'running' if result else 'not running'}")
+            return result
 
     def ask_to_start_server(self):
         response = input("Would you like to start the STT server now? (y/n): ").strip().lower()
@@ -213,37 +259,47 @@ class STTWebSocketClient:
 
     def on_control_message(self, ws, message):
         try:
+            self.debug_print(f"Received control message: {message}")
             data = json.loads(message)
             if 'status' in data:
+                self.debug_print(f"Message status: {data['status']}")
                 if data['status'] == 'success':
                     if 'parameter' in data and 'value' in data:
+                        self.debug_print(f"Parameter update: {data['parameter']} = {data['value']}")
                         print(f"Parameter {data['parameter']} = {data['value']}")
                 elif data['status'] == 'error':
+                    self.debug_print(f"Server error received: {data.get('message', '')}")
                     print(f"Server Error: {data.get('message', '')}")
             else:
                 self.debug_print(f"Unknown control message format: {data}")
         except json.JSONDecodeError:
-            self.debug_print(f"Received non-JSON control message: {message}")
+            self.debug_print(f"Failed to decode JSON control message: {message}")
         except Exception as e:
-            self.debug_print(f"Error processing control message: {e}")
+            self.debug_print(f"Error processing control message: {str(e)}")
 
     def on_data_message(self, ws, message):
         try:
+            self.debug_print(f"Received data message: {message}")
             data = json.loads(message)
             message_type = data.get('type')
+            self.debug_print(f"Message type: {message_type}")
+
             if message_type == 'realtime':
                 if data['text'] != self.last_text:
+                    self.debug_print(f"New realtime text received: {data['text']}")
                     self.last_text = data['text']
                     if not self.norealtime:
                         self.update_progress_bar(self.last_text)
             elif message_type == 'fullSentence':
+                self.debug_print(f"Full sentence received: {data['text']}")
                 if self.file_output:
+                    self.debug_print("Writing to file output")
                     sys.stderr.write('\r\033[K')
                     sys.stderr.write(data['text'])
                     sys.stderr.write('\n')
                     sys.stderr.flush()
                     print(data['text'], file=self.file_output)
-                    self.file_output.flush()  # Ensure it's written immediately
+                    self.file_output.flush()
                 else:
                     self.finish_progress_bar()
                     print(f"{data['text']}")
@@ -258,14 +314,13 @@ class STTWebSocketClient:
                 'wakeword_detection_end',
                 'transcription_start'}:
                 pass  # Known message types, no action needed
-
             else:
-                self.debug_print(f"Unknown data message format: {data}")
+                self.debug_print(f"Other message type received: {message_type}")
 
         except json.JSONDecodeError:
-            self.debug_print(f"Received non-JSON data message: {message}")
+            self.debug_print(f"Failed to decode JSON data message: {message}")
         except Exception as e:
-            self.debug_print(f"Error processing data message: {e}")
+            self.debug_print(f"Error processing data message: {str(e)}")
 
     def show_initial_indicator(self):
         if self.norealtime:
@@ -331,40 +386,67 @@ class STTWebSocketClient:
     def record_and_send_audio(self):
         try:
             if not self.setup_audio():
+                self.debug_print("Failed to set up audio recording")
                 raise Exception("Failed to set up audio recording.")
 
-            self.debug_print("Recording and sending audio...")
+            # Initialize WAV file writer if writechunks is provided
+            if self.writechunks:
+                self.wav_file = wave.open(self.writechunks, 'wb')
+                self.wav_file.setnchannels(CHANNELS)
+                self.wav_file.setsampwidth(pyaudio.get_sample_size(FORMAT))
+                self.wav_file.setframerate(self.device_sample_rate)  # Use self.device_sample_rate
+
+            self.debug_print("Starting audio recording and transmission")
             self.show_initial_indicator()
 
             while self.is_running:
                 try:
                     audio_data = self.stream.read(CHUNK)
+                    self.chunks_sent += 1
+                    current_time = time.time()
+                    elapsed = current_time - self.last_chunk_time
+
+                    # Write to WAV file if enabled
+                    if self.writechunks:
+                        self.wav_file.writeframes(audio_data)
+
+                    if self.chunks_sent % 100 == 0:  # Log every 100 chunks
+                        self.debug_print(f"Sent {self.chunks_sent} chunks. Last chunk took {elapsed:.3f}s")
+
                     metadata = {"sampleRate": self.device_sample_rate}
                     metadata_json = json.dumps(metadata)
                     metadata_length = len(metadata_json)
                     message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
+
+                    self.debug_print(f"Sending audio chunk {self.chunks_sent}: {len(audio_data)} bytes, metadata: {metadata_json}")
                     self.data_ws_connected.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+                    self.last_chunk_time = current_time
+
                 except Exception as e:
-                    self.debug_print(f"Error sending audio data: {e}")
-                    break  # Exit the recording loop
+                    self.debug_print(f"Error sending audio data: {str(e)}")
+                    break
 
         except Exception as e:
-            self.debug_print(f"Error in record_and_send_audio: {e}")
+            self.debug_print(f"Error in record_and_send_audio: {str(e)}")
         finally:
             self.cleanup_audio()
 
     def setup_audio(self):
         try:
+            self.debug_print("Initializing PyAudio interface")
             self.audio_interface = pyaudio.PyAudio()
             self.input_device_index = None
+
             try:
                 default_device = self.audio_interface.get_default_input_device_info()
                 self.input_device_index = default_device['index']
+                self.debug_print(f"Default input device found: {default_device}")
             except OSError as e:
-                self.debug_print(f"No default input device found: {e}")
+                self.debug_print(f"No default input device found: {str(e)}")
                 return False
 
-            self.device_sample_rate = 16000  # Try 16000 Hz first
+            self.device_sample_rate = 16000
+            self.debug_print(f"Attempting to open audio stream with sample rate {self.device_sample_rate} Hz")
 
             try:
                 self.stream = self.audio_interface.open(
@@ -375,29 +457,36 @@ class STTWebSocketClient:
                     frames_per_buffer=CHUNK,
                     input_device_index=self.input_device_index,
                 )
-                self.debug_print(f"Audio recording initialized successfully at {self.device_sample_rate} Hz, device index {self.input_device_index}")
+                self.debug_print(f"Audio stream initialized successfully")
+                self.debug_print(f"Audio parameters: rate={self.device_sample_rate}, channels={CHANNELS}, format={FORMAT}, chunk={CHUNK}")
                 return True
             except Exception as e:
-                self.debug_print(f"Failed to initialize audio stream at {self.device_sample_rate} Hz, device index {self.input_device_index}: {e}")
+                self.debug_print(f"Failed to initialize audio stream: {str(e)}")
                 return False
 
         except Exception as e:
-            self.debug_print(f"Error initializing audio recording: {e}")
+            self.debug_print(f"Error in setup_audio: {str(e)}")
             if self.audio_interface:
                 self.audio_interface.terminate()
             return False
 
     def cleanup_audio(self):
+        self.debug_print("Cleaning up audio resources")
         try:
             if self.stream:
+                self.debug_print("Stopping and closing audio stream")
                 self.stream.stop_stream()
                 self.stream.close()
                 self.stream = None
             if self.audio_interface:
+                self.debug_print("Terminating PyAudio interface")
                 self.audio_interface.terminate()
                 self.audio_interface = None
+            if self.writechunks and self.wav_file:
+                self.debug_print("Closing WAV file")
+                self.wav_file.close()
         except Exception as e:
-            self.debug_print(f"Error cleaning up audio resources: {e}")
+            self.debug_print(f"Error during audio cleanup: {str(e)}")
 
     def set_parameter(self, parameter, value):
         command = {
@@ -428,23 +517,28 @@ class STTWebSocketClient:
         self.command_thread.daemon = False  # Ensure it is not a daemon thread
         self.command_thread.start()
 
+
     def command_processor(self):
-        self.debug_print(f"Starting command processor")
+        self.debug_print("Starting command processor thread")
         while not self.stop_event.is_set():
             try:
                 command = self.commands.get(timeout=0.1)
+                self.debug_print(f"Processing command: {command}")
                 if command['type'] == 'set_parameter':
+                    self.debug_print(f"Setting parameter: {command['parameter']} = {command['value']}")
                     self.set_parameter(command['parameter'], command['value'])
                 elif command['type'] == 'get_parameter':
+                    self.debug_print(f"Getting parameter: {command['parameter']}")
                     self.get_parameter(command['parameter'])
                 elif command['type'] == 'call_method':
+                    self.debug_print(f"Calling method: {command['method']} with args: {command.get('args')} and kwargs: {command.get('kwargs')}")
                     self.call_method(command['method'], command.get('args'), command.get('kwargs'))
             except queue.Empty:
                 continue
             except Exception as e:
-                self.debug_print(f"Error in command processor: {e}")
+                self.debug_print(f"Error in command processor: {str(e)}")
 
-        self.debug_print(f"Leaving command processor")
+        self.debug_print("Command processor thread stopping")
 
     def add_command(self, command):
         self.commands.put(command)
@@ -455,6 +549,7 @@ def main():
     parser.add_argument("--data-url", default=DEFAULT_DATA_URL, help="STT Data WebSocket URL")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("-nort", "--norealtime", action="store_true", help="Disable real-time output")
+    parser.add_argument("--writechunks", metavar="FILE", help="Save recorded audio chunks to a WAV file")
     parser.add_argument("--set-param", nargs=2, metavar=('PARAM', 'VALUE'), action='append',
                         help="Set a recorder parameter. Can be used multiple times.")
     parser.add_argument("--call-method", nargs='+', metavar='METHOD', action='append',
@@ -469,7 +564,7 @@ def main():
     else:
         file_output = None
 
-    client = STTWebSocketClient(args.control_url, args.data_url, args.debug, file_output, args.norealtime)
+    client = STTWebSocketClient(args.control_url, args.data_url, args.debug, file_output, args.norealtime, args.writechunks)
 
     def signal_handler(sig, frame):
         client.stop()

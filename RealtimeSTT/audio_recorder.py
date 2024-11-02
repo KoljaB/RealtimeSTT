@@ -63,6 +63,7 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 INIT_MODEL_TRANSCRIPTION = "tiny"
 INIT_MODEL_TRANSCRIPTION_REALTIME = "tiny"
 INIT_REALTIME_PROCESSING_PAUSE = 0.2
+INIT_REALTIME_INITIAL_PAUSE = 0.2
 INIT_SILERO_SENSITIVITY = 0.4
 INIT_WEBRTC_SENSITIVITY = 3
 INIT_POST_SPEECH_SILENCE_DURATION = 0.6
@@ -179,6 +180,12 @@ class TranscriptionWorker:
             polling_thread.join()  # Wait for the polling thread to finish
 
 
+class bcolors:
+    OKGREEN = '\033[92m'  # Green for active speech detection
+    WARNING = '\033[93m'  # Yellow for silence detection
+    ENDC = '\033[0m'      # Reset to default color
+
+
 class AudioToTextRecorder:
     """
     A class responsible for capturing audio from the microphone, detecting
@@ -207,6 +214,7 @@ class AudioToTextRecorder:
                  use_main_model_for_realtime=False,
                  realtime_model_type=INIT_MODEL_TRANSCRIPTION_REALTIME,
                  realtime_processing_pause=INIT_REALTIME_PROCESSING_PAUSE,
+                 init_realtime_after_seconds=INIT_REALTIME_INITIAL_PAUSE,
                  on_realtime_transcription_update=None,
                  on_realtime_transcription_stabilized=None,
 
@@ -326,6 +334,9 @@ class AudioToTextRecorder:
             interval in seconds after a chunk of audio gets transcribed. Lower
             values will result in more "real-time" (frequent) transcription
             updates but may increase computational load.
+        - init_realtime_after_seconds (float, default=0.2): Specifies the 
+            initial waiting time after the recording was initiated before
+            yielding the first realtime transcription
         - on_realtime_transcription_update = A callback function that is
             triggered whenever there's an update in the real-time
             transcription. The function is called with the newly transcribed
@@ -499,6 +510,7 @@ class AudioToTextRecorder:
         self.main_model_type = model
         self.realtime_model_type = realtime_model_type
         self.realtime_processing_pause = realtime_processing_pause
+        self.init_realtime_after_seconds = init_realtime_after_seconds
         self.on_realtime_transcription_update = (
             on_realtime_transcription_update
         )
@@ -1619,8 +1631,8 @@ class AudioToTextRecorder:
             # Continuously monitor audio for voice activity
             while self.is_running:
 
-                if self.use_extended_logging:
-                    logging.debug('Debug: Entering inner try block')
+                # if self.use_extended_logging:
+                #     logging.debug('Debug: Entering inner try block')
                 if last_inner_try_time:
                     last_processing_time = time.time() - last_inner_try_time
                     if last_processing_time > 0.1:
@@ -1628,20 +1640,20 @@ class AudioToTextRecorder:
                             logging.warning('### WARNING: PROCESSING TOOK TOO LONG')
                 last_inner_try_time = time.time()
                 try:
-                    if self.use_extended_logging:
-                        logging.debug('Debug: Trying to get data from audio queue')
+                    # if self.use_extended_logging:
+                    #     logging.debug('Debug: Trying to get data from audio queue')
                     try:
                         data = self.audio_queue.get(timeout=0.01)
                         self.last_words_buffer.append(data)
                     except queue.Empty:
-                        if self.use_extended_logging:
-                            logging.debug('Debug: Queue is empty, checking if still running')
+                        # if self.use_extended_logging:
+                        #     logging.debug('Debug: Queue is empty, checking if still running')
                         if not self.is_running:
                             if self.use_extended_logging:
                                 logging.debug('Debug: Not running, breaking loop')
                             break
-                        if self.use_extended_logging:
-                            logging.debug('Debug: Continuing to next iteration')
+                        # if self.use_extended_logging:
+                        #     logging.debug('Debug: Continuing to next iteration')
                         continue
 
                     if self.use_extended_logging:
@@ -2072,7 +2084,7 @@ class AudioToTextRecorder:
                     # double check recording state
                     # because it could have changed mid-transcription
                     if self.is_recording and time.time() - \
-                            self.recording_start_time > 0.5:
+                            self.recording_start_time > self.init_realtime_after_seconds:
 
                         # logging.debug('Starting realtime transcription')
                         self.realtime_transcription_text = realtime_text
@@ -2179,7 +2191,11 @@ class AudioToTextRecorder:
             SAMPLE_RATE).item()
         is_silero_speech_active = vad_prob > (1 - self.silero_sensitivity)
         if is_silero_speech_active:
-            self.is_silero_speech_active = True
+            if not self.is_silero_speech_active and self.use_extended_logging:
+                logging.info(f"{bcolors.OKGREEN}Silero VAD detected speech{bcolors.ENDC}")
+        elif self.is_silero_speech_active and self.use_extended_logging:
+            logging.info(f"{bcolors.WARNING}Silero VAD detected silence{bcolors.ENDC}")
+        self.is_silero_speech_active = is_silero_speech_active
         self.silero_working = False
         return is_silero_speech_active
 
@@ -2191,6 +2207,8 @@ class AudioToTextRecorder:
             data (bytes): raw bytes of audio data (1024 raw bytes with
             16000 sample rate and 16 bits per sample)
         """
+        speech_str = f"{bcolors.OKGREEN}WebRTC VAD detected speech{bcolors.ENDC}"
+        silence_str = f"{bcolors.WARNING}WebRTC VAD detected silence{bcolors.ENDC}"
         if self.sample_rate != 16000:
             pcm_data = np.frombuffer(chunk, dtype=np.int16)
             data_16000 = signal.resample_poly(
@@ -2212,6 +2230,9 @@ class AudioToTextRecorder:
                     if self.debug_mode:
                         logging.info(f"Speech detected in frame {i + 1}"
                               f" of {num_frames}")
+                    if not self.is_webrtc_speech_active and self.use_extended_logging:
+                        logging.info(speech_str)
+                    self.is_webrtc_speech_active = True
                     return True
         if all_frames_must_be_true:
             if self.debug_mode and speech_frames == num_frames:
@@ -2219,10 +2240,19 @@ class AudioToTextRecorder:
                       f"{num_frames} frames")
             elif self.debug_mode:
                 logging.info(f"Speech not detected in all {num_frames} frames")
-            return speech_frames == num_frames
+            speech_detected = speech_frames == num_frames
+            if speech_detected and not self.is_webrtc_speech_active and self.use_extended_logging:
+                logging.info(speech_str)
+            elif not speech_detected and self.is_webrtc_speech_active and self.use_extended_logging:
+                logging.info(silence_str)
+            self.is_webrtc_speech_active = speech_detected
+            return speech_detected
         else:
             if self.debug_mode:
                 logging.info(f"Speech not detected in any of {num_frames} frames")
+            if self.is_webrtc_speech_active and self.use_extended_logging:
+                logging.info(silence_str)
+            self.is_webrtc_speech_active = False
             return False
 
     def _check_voice_activity(self, data):
@@ -2232,7 +2262,7 @@ class AudioToTextRecorder:
         Args:
             data: The audio data to be checked for voice activity.
         """
-        self.is_webrtc_speech_active = self._is_webrtc_speech(data)
+        self._is_webrtc_speech(data)
 
         # First quick performing check for voice activity using WebRTC
         if self.is_webrtc_speech_active:
