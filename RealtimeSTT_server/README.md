@@ -372,7 +372,7 @@ The server uses two WebSocket connections:
 Set the Silero sensitivity to `0.1`:
 
 ```bash
-stt --set-param silero_sensitivity 0.1
+stt -s silero_sensitivity 0.1
 ```
 
 ### Retrieving Parameters
@@ -380,7 +380,7 @@ stt --set-param silero_sensitivity 0.1
 Get the current Silero sensitivity value:
 
 ```bash
-stt --get-param silero_sensitivity
+stt -g silero_sensitivity
 ```
 
 ### Calling Server Methods
@@ -388,7 +388,7 @@ stt --get-param silero_sensitivity
 Call the `set_microphone` method on the recorder:
 
 ```bash
-stt --call-method set_microphone False
+stt -m set_microphone False
 ```
 
 ### Running in Debug Mode
@@ -396,7 +396,7 @@ stt --call-method set_microphone False
 Enable debug mode for detailed logging:
 
 ```bash
-stt --debug
+stt -D
 ```
 
 ## Contributing
