@@ -54,50 +54,219 @@ The server will initialize and begin listening for WebSocket connections on the 
 
 You can configure the server using the following command-line arguments:
 
-- `--model` (str, default: `'medium.en'`): Path to the STT model or model size. Options include `tiny`, `tiny.en`, `base`, `base.en`, `small`, `small.en`, `medium`, `medium.en`, `large-v1`, `large-v2`, or any Hugging Face CTranslate2 STT model like `deepdml/faster-whisper-large-v3-turbo-ct2`.
+### Available Parameters:
 
-- `--realtime_model_type` (str, default: `'tiny.en'`): Model size for real-time transcription. Same options as `--model`.
+#### `-m`, `--model`
 
-- `--language` (str, default: `'en'`): Language code for the STT model. Leave empty for auto-detection.
+- **Type**: `str`
+- **Default**: `'large-v2'`
+- **Description**: Path to the Speech-to-Text (STT) model or specify a model size. Options include: `tiny`, `tiny.en`, `base`, `base.en`, `small`, `small.en`, `medium`, `medium.en`, `large-v1`, `large-v2`, or any HuggingFace CTranslate2 STT model such as `deepdml/faster-whisper-large-v3-turbo-ct2`.
 
-- `--input_device_index` (int, default: `1`): Index of the audio input device to use.
+#### `-r`, `--rt-model`, `--realtime_model_type`
 
-- `--silero_sensitivity` (float, default: `0.05`): Sensitivity for Silero VAD. Lower values are less sensitive.
+- **Type**: `str`
+- **Default**: `'tiny.en'`
+- **Description**: Model size for real-time transcription. Options are the same as for `--model`. This is used only if real-time transcription is enabled (`--enable_realtime_transcription`).
 
-- `--webrtc_sensitivity` (float, default: `3`): Sensitivity for WebRTC VAD. Higher values are less sensitive.
+#### `-l`, `--lang`, `--language`
 
-- `--min_length_of_recording` (float, default: `1.1`): Minimum duration (in seconds) for a valid recording.
+- **Type**: `str`
+- **Default**: `'en'`
+- **Description**: Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is `'en'`. [List of supported language codes](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110).
 
-- `--min_gap_between_recordings` (float, default: `0`): Minimum time (in seconds) between consecutive recordings.
+#### `-i`, `--input-device`, `--input_device_index`
 
-- `--enable_realtime_transcription` (flag, default: `True`): Enable real-time transcription of audio.
+- **Type**: `int`
+- **Default**: `1`
+- **Description**: Index of the audio input device to use. Use this option to specify a particular microphone or audio input device based on your system.
 
-- `--realtime_processing_pause` (float, default: `0.02`): Time interval (in seconds) between processing audio chunks for real-time transcription.
+#### `-c`, `--control`, `--control_port`
 
-- `--silero_deactivity_detection` (flag, default: `True`): Use Silero model for end-of-speech detection.
+- **Type**: `int`
+- **Default**: `8011`
+- **Description**: The port number used for the control WebSocket connection. Control connections are used to send and receive commands to the server.
 
-- `--early_transcription_on_silence` (float, default: `0.2`): Start transcription after specified seconds of silence.
+#### `-d`, `--data`, `--data_port`
 
-- `--beam_size` (int, default: `5`): Beam size for the main transcription model.
+- **Type**: `int`
+- **Default**: `8012`
+- **Description**: The port number used for the data WebSocket connection. Data connections are used to send audio data and receive transcription updates in real time.
 
-- `--beam_size_realtime` (int, default: `3`): Beam size for the real-time transcription model.
+#### `-w`, `--wake_words`
 
-- `--initial_prompt` (str): Initial prompt for the transcription model to guide its output format and style.
+- **Type**: `str`
+- **Default**: `""` (empty string)
+- **Description**: Specify the wake word(s) that will trigger the server to start listening. For example, setting this to `"Jarvis"` will make the system start transcribing when it detects the wake word `"Jarvis"`.
 
-- `--end_of_sentence_detection_pause` (float, default: `0.45`): Duration of pause (in seconds) to consider as the end of a sentence.
+#### `-D`, `--debug`
 
-- `--unknown_sentence_detection_pause` (float, default: `0.7`): Duration of pause (in seconds) to consider as an unknown or incomplete sentence.
+- **Action**: `store_true`
+- **Description**: Enable debug logging for detailed server operations.
 
-- `--mid_sentence_detection_pause` (float, default: `2.0`): Duration of pause (in seconds) to consider as a mid-sentence break.
+#### `-W`, `--write`
 
-- `--control_port` (int, default: `8011`): Port for the control WebSocket connection.
+- **Metavar**: `FILE`
+- **Description**: Save received audio to a WAV file.
 
-- `--data_port` (int, default: `8012`): Port for the data WebSocket connection.
+#### `--silero_sensitivity`
+
+- **Type**: `float`
+- **Default**: `0.05`
+- **Description**: Sensitivity level for Silero Voice Activity Detection (VAD), with a range from `0` to `1`. Lower values make the model less sensitive, useful for noisy environments.
+
+#### `--silero_use_onnx`
+
+- **Action**: `store_true`
+- **Default**: `False`
+- **Description**: Enable the ONNX version of the Silero model for faster performance with lower resource usage.
+
+#### `--webrtc_sensitivity`
+
+- **Type**: `int`
+- **Default**: `3`
+- **Description**: Sensitivity level for WebRTC Voice Activity Detection (VAD), with a range from `0` to `3`. Higher values make the model less sensitive, useful for cleaner environments.
+
+#### `--min_length_of_recording`
+
+- **Type**: `float`
+- **Default**: `1.1`
+- **Description**: Minimum duration of valid recordings in seconds. This prevents very short recordings from being processed, which could be caused by noise or accidental sounds.
+
+#### `--min_gap_between_recordings`
+
+- **Type**: `float`
+- **Default**: `0`
+- **Description**: Minimum time (in seconds) between consecutive recordings. Setting this helps avoid overlapping recordings when there's a brief silence between them.
+
+#### `--enable_realtime_transcription`
+
+- **Action**: `store_true`
+- **Default**: `True`
+- **Description**: Enable continuous real-time transcription of audio as it is received. When enabled, transcriptions are sent in near real-time.
+
+#### `--realtime_processing_pause`
+
+- **Type**: `float`
+- **Default**: `0.02`
+- **Description**: Time interval (in seconds) between processing audio chunks for real-time transcription. Lower values increase responsiveness but may put more load on the CPU.
+
+#### `--silero_deactivity_detection`
+
+- **Action**: `store_true`
+- **Default**: `True`
+- **Description**: Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources.
+
+#### `--early_transcription_on_silence`
+
+- **Type**: `float`
+- **Default**: `0.2`
+- **Description**: Start transcription after the specified seconds of silence. This is useful when you want to trigger transcription mid-speech when there is a brief pause. Should be lower than `post_speech_silence_duration`. Set to `0` to disable.
+
+#### `--beam_size`
+
+- **Type**: `int`
+- **Default**: `5`
+- **Description**: Beam size for the main transcription model. Larger values may improve transcription accuracy but increase the processing time.
+
+#### `--beam_size_realtime`
+
+- **Type**: `int`
+- **Default**: `3`
+- **Description**: Beam size for the real-time transcription model. A smaller beam size allows for faster real-time processing but may reduce accuracy.
+
+#### `--initial_prompt`
+
+- **Type**: `str`
+- **Default**:
+
+  ```
+  End incomplete sentences with ellipses. Examples: 
+  Complete: The sky is blue. 
+  Incomplete: When the sky... 
+  Complete: She walked home. 
+  Incomplete: Because he...
+  ```
+
+- **Description**: Initial prompt that guides the transcription model to produce transcriptions in a particular style or format. The default provides instructions for handling sentence completions and ellipsis usage.
+
+#### `--end_of_sentence_detection_pause`
+
+- **Type**: `float`
+- **Default**: `0.45`
+- **Description**: The duration of silence (in seconds) that the model should interpret as the end of a sentence. This helps the system detect when to finalize the transcription of a sentence.
+
+#### `--unknown_sentence_detection_pause`
+
+- **Type**: `float`
+- **Default**: `0.7`
+- **Description**: The duration of pause (in seconds) that the model should interpret as an incomplete or unknown sentence. This is useful for identifying when a sentence is trailing off or unfinished.
+
+#### `--mid_sentence_detection_pause`
+
+- **Type**: `float`
+- **Default**: `2.0`
+- **Description**: The duration of pause (in seconds) that the model should interpret as a mid-sentence break. Longer pauses can indicate a pause in speech but not necessarily the end of a sentence.
+
+#### `--wake_words_sensitivity`
+
+- **Type**: `float`
+- **Default**: `0.5`
+- **Description**: Sensitivity level for wake word detection, with a range from `0` (most sensitive) to `1` (least sensitive). Adjust this value based on your environment to ensure reliable wake word detection.
+
+#### `--wake_word_timeout`
+
+- **Type**: `float`
+- **Default**: `5.0`
+- **Description**: Maximum time in seconds that the system will wait for a wake word before timing out. After this timeout, the system stops listening for wake words until reactivated.
+
+#### `--wake_word_activation_delay`
+
+- **Type**: `float`
+- **Default**: `20`
+- **Description**: The delay in seconds before the wake word detection is activated after the system starts listening. This prevents false positives during the start of a session.
+
+#### `--wakeword_backend`
+
+- **Type**: `str`
+- **Default**: `'none'`
+- **Description**: The backend used for wake word detection. You can specify different backends such as `"default"` or any custom implementations depending on your setup.
+
+#### `--openwakeword_model_paths`
+
+- **Type**: `str` (accepts multiple values)
+- **Description**: A list of file paths to OpenWakeWord models. This is useful if you are using OpenWakeWord for wake word detection and need to specify custom models.
+
+#### `--openwakeword_inference_framework`
+
+- **Type**: `str`
+- **Default**: `'tensorflow'`
+- **Description**: The inference framework to use for OpenWakeWord models. Supported frameworks could include `"tensorflow"`, `"pytorch"`, etc.
+
+#### `--wake_word_buffer_duration`
+
+- **Type**: `float`
+- **Default**: `1.0`
+- **Description**: Duration of the buffer in seconds for wake word detection. This sets how long the system will store the audio before and after detecting the wake word.
+
+#### `--use_main_model_for_realtime`
+
+- **Action**: `store_true`
+- **Description**: Enable this option if you want to use the main model for real-time transcription, instead of the smaller, faster real-time model. Using the main model may provide better accuracy but at the cost of higher processing time.
+
+#### `--use_extended_logging`
+
+- **Action**: `store_true`
+- **Description**: Writes extensive log messages for the recording worker that processes the audio chunks.
+
+#### `--logchunks`
+
+- **Action**: `store_true`
+- **Description**: Enable logging of incoming audio chunks (periods).
 
 **Example:**
 
 ```bash
-stt-server --model small.en --language en --control_port 9001 --data_port 9002
+stt-server -m small.en -l en -c 9001 -d 9002
 ```
 
 ## Client Usage
@@ -112,26 +281,66 @@ stt [OPTIONS]
 
 The client connects to the STT server's control and data WebSocket URLs to facilitate real-time speech transcription and control.
 
-### Client Parameters
+### Available Parameters for STT Client:
 
-- `--control-url` (default: `ws://localhost:8011`): The WebSocket URL for server control commands.
+#### `-c`, `--control`, `--control_url`
 
-- `--data-url` (default: `ws://localhost:8012`): The WebSocket URL for sending audio data and receiving transcription updates.
+- **Type**: `str`
+- **Default**: `DEFAULT_CONTROL_URL`
+- **Description**: Specifies the STT control WebSocket URL used for sending and receiving commands to/from the STT server.
 
-- `--debug`: Enable debug mode, which prints detailed logs to `stderr`.
+#### `-d`, `--data`, `--data_url`
 
-- `--nort` or `--norealtime`: Disable real-time output of transcription results.
+- **Type**: `str`
+- **Default**: `DEFAULT_DATA_URL`
+- **Description**: Specifies the STT data WebSocket URL used for transmitting audio data and receiving transcription updates.
 
-- `--set-param PARAM VALUE`: Set a recorder parameter (e.g., `silero_sensitivity`, `beam_size`). This option can be used multiple times.
+#### `-D`, `--debug`
 
-- `--get-param PARAM`: Retrieve the value of a specific recorder parameter. Can be used multiple times.
+- **Action**: `store_true`
+- **Description**: Enables debug mode, providing detailed output for server-client interactions.
 
-- `--call-method METHOD [ARGS]`: Call a method on the recorder with optional arguments. Can be used multiple times.
+#### `-n`, `--norealtime`
+
+- **Action**: `store_true`
+- **Description**: Disables real-time output, preventing transcription updates from being shown live as they are processed.
+
+#### `-W`, `--write`
+
+- **Metavar**: `FILE`
+- **Description**: Saves recorded audio to a specified WAV file for later playback or analysis.
+
+#### `-s`, `--set`
+
+- **Type**: `list`
+- **Metavar**: `('PARAM', 'VALUE')`
+- **Action**: `append`
+- **Description**: Sets a parameter for the recorder. Can be used multiple times to set different parameters. Each occurrence must be followed by the parameter name and value.
+
+#### `-m`, `--method`
+
+- **Type**: `list`
+- **Metavar**: `METHOD`
+- **Action**: `append`
+- **Description**: Calls a specified method on the recorder with optional arguments. Multiple methods can be invoked by repeating this parameter.
+
+#### `-g`, `--get`
+
+- **Type**: `list`
+- **Metavar**: `PARAM`
+- **Action**: `append`
+- **Description**: Retrieves the value of a specified recorder parameter. Can be used multiple times to get multiple parameter values.
+
+#### `-l`, `--loop`
+
+- **Action**: `store_true`
+- **Description**: Runs the client in a loop, allowing it to continuously transcribe speech without exiting after each session.
 
 **Example:**
 
 ```bash
-stt --set-param silero_sensitivity 0.1 --get-param silero_sensitivity
+stt -s silero_sensitivity 0.1 
+stt -g silero_sensitivity
 ```
 
 ## WebSocket Interface
