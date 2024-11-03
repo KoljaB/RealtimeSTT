@@ -9,7 +9,7 @@ with open('requirements.txt') as f:
 
 setuptools.setup(
     name="RealtimeSTT",
-    version="0.3.6",
+    version="0.3.7",
     author="Kolja Beigel",
     author_email="kolja.beigel@web.de",
     description="A fast Voice Activity Detection and Transcription System",
