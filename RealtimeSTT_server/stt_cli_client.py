@@ -17,9 +17,7 @@ Options:
 """
 
 from urllib.parse import urlparse
-from scipy import signal
 from queue import Queue
-import numpy as np
 import subprocess
 import threading
 import websocket
@@ -157,14 +155,16 @@ class STTWebSocketClient:
 
     def on_error(self, ws, error):
         self.debug_print(f"WebSocket error occurred: {str(error)}")
-        self.debug_print(f"WebSocket object: {ws}")
         self.debug_print(f"Error type: {type(error)}")
 
     def on_close(self, ws, close_status_code, close_msg):
-        self.debug_print(f"WebSocket connection closed")
-        self.debug_print(f"Close status code: {close_status_code}")
-        self.debug_print(f"Close message: {close_msg}")
-        self.debug_print(f"WebSocket object: {ws}")
+        if ws == self.data_ws_connected:
+            self.debug_print(f"Data connection closed (code {close_status_code}, msg: {close_msg})")
+        elif ws == self.control_ws:
+            self.debug_print(f"Control connection closed (code {close_status_code}, msg: {close_msg})")
+        else:
+            self.debug_print(f"Unknown connection closed (code {close_status_code}, msg: {close_msg})")
+
         self.is_running = False
         self.stop_event.set()
 
@@ -303,7 +303,8 @@ class STTWebSocketClient:
                 else:
                     self.finish_progress_bar()
                     print(f"{data['text']}")
-                self.stop()
+                self.is_running = False
+                self.stop_event.set()
             elif message_type in {
                 'vad_detect_start',
                 'vad_detect_stop',
@@ -364,11 +365,12 @@ class STTWebSocketClient:
             self.data_ws_connected.close()
 
         # Join threads to ensure they finish before exiting
-        if self.control_ws_thread:
+        current_thread = threading.current_thread()
+        if self.control_ws_thread and self.control_ws_thread != current_thread:
             self.control_ws_thread.join()
-        if self.data_ws_thread:
+        if self.data_ws_thread and self.data_ws_thread != current_thread:
             self.data_ws_thread.join()
-        if self.recording_thread:
+        if self.recording_thread and self.recording_thread != current_thread:
             self.recording_thread.join()
 
         # Clean up audio resources
@@ -399,7 +401,7 @@ class STTWebSocketClient:
             self.debug_print("Starting audio recording and transmission")
             self.show_initial_indicator()
 
-            while self.is_running:
+            while self.is_running and not self.stop_event.is_set():
                 try:
                     audio_data = self.stream.read(CHUNK)
                     self.chunks_sent += 1
@@ -418,8 +420,10 @@ class STTWebSocketClient:
                     metadata_length = len(metadata_json)
                     message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
 
-                    self.debug_print(f"Sending audio chunk {self.chunks_sent}: {len(audio_data)} bytes, metadata: {metadata_json}")
-                    self.data_ws_connected.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+                    if self.is_running and not self.stop_event.is_set():
+                        self.debug_print(f"Sending audio chunk {self.chunks_sent}: {len(audio_data)} bytes, metadata: {metadata_json}")
+                        self.data_ws_connected.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+
                     self.last_chunk_time = current_time
 
                 except Exception as e:
