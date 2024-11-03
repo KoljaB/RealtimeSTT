@@ -7,13 +7,15 @@ Usage:
     stt [--control-url CONTROL_URL] [--data-url DATA_URL] [--debug] [--norealtime] [--set-param PARAM VALUE] [--call-method METHOD [ARGS ...]] [--get-param PARAM]
 
 Options:
-    --control-url CONTROL_URL       STT Control WebSocket URL
-    --data-url DATA_URL             STT Data WebSocket URL
-    --debug                         Enable debug mode
-    --norealtime                    Disable real-time output
-    --set-param PARAM VALUE         Set a recorder parameter. Can be used multiple times.
-    --call-method METHOD [ARGS ...] Call a recorder method with optional arguments.
-    --get-param PARAM               Get the value of a recorder parameter. Can be used multiple times.
+    - `-c, --control, --control_url`: STT Control WebSocket URL; default `DEFAULT_CONTROL_URL`.
+    - `-d, --data, --data_url`: STT Data WebSocket URL; default `DEFAULT_DATA_URL`.
+    - `-D, --debug`: Enable debug mode.
+    - `-n, --norealtime`: Disable real-time output.
+    - `-W, --write`: Save recorded audio to a WAV file.
+    - `-s, --set`: Set a recorder parameter with format `PARAM VALUE`; can be used multiple times.
+    - `-m, --method`: Call a recorder method with optional arguments; can be used multiple times.
+    - `-g, --get`: Get a recorder parameter's value; can be used multiple times.
+    - `-l, --loop`: Continuously transcribe speech without exiting.
 """
 
 from urllib.parse import urlparse
@@ -51,12 +53,12 @@ init()
 websocket.enableTrace(False)
 
 class STTWebSocketClient:
-    def __init__(self, control_url, data_url, debug=False, file_output=None, norealtime=False, writechunks=None):
+    def __init__(self, control_url, data_url, debug=False, file_output=None, norealtime=False, writechunks=None, continuous=False):
         self.control_url = control_url
         self.data_url = data_url
         self.control_ws = None
         self.data_ws_app = None
-        self.data_ws_connected = None  # WebSocket object that will be used for sending
+        self.data_ws_connected = None
         self.is_running = True
         self.debug = debug
         self.file_output = file_output
@@ -70,7 +72,8 @@ class STTWebSocketClient:
         self.stop_event = threading.Event()
         self.chunks_sent = 0
         self.last_chunk_time = time.time()
-        self.writechunks = writechunks  # Add this to store the file name for writing audio chunks
+        self.writechunks = writechunks
+        self.continuous = continuous
 
         self.debug_print("Initializing STT WebSocket Client")
         self.debug_print(f"Control URL: {control_url}")
@@ -78,6 +81,7 @@ class STTWebSocketClient:
         self.debug_print(f"File Output: {file_output}")
         self.debug_print(f"No Realtime: {norealtime}")
         self.debug_print(f"Write Chunks: {writechunks}")
+        self.debug_print(f"Continuous Mode: {continuous}")
 
         # Audio attributes
         self.audio_interface = None
@@ -141,7 +145,6 @@ class STTWebSocketClient:
         except Exception as e:
             self.debug_print(f"Error while connecting to the server: {str(e)}")
             return False
-
 
     def on_control_open(self, ws):
         self.debug_print("Control WebSocket connection opened successfully")
@@ -290,6 +293,7 @@ class STTWebSocketClient:
                     self.last_text = data['text']
                     if not self.norealtime:
                         self.update_progress_bar(self.last_text)
+
             elif message_type == 'fullSentence':
                 self.debug_print(f"Full sentence received: {data['text']}")
                 if self.file_output:
@@ -303,8 +307,11 @@ class STTWebSocketClient:
                 else:
                     self.finish_progress_bar()
                     print(f"{data['text']}")
-                self.is_running = False
-                self.stop_event.set()
+
+                if not self.continuous:                    
+                    self.is_running = False
+                    self.stop_event.set()
+
             elif message_type in {
                 'vad_detect_start',
                 'vad_detect_stop',
@@ -549,17 +556,26 @@ class STTWebSocketClient:
 
 def main():
     parser = argparse.ArgumentParser(description="STT Client")
-    parser.add_argument("--control-url", default=DEFAULT_CONTROL_URL, help="STT Control WebSocket URL")
-    parser.add_argument("--data-url", default=DEFAULT_DATA_URL, help="STT Data WebSocket URL")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-    parser.add_argument("-nort", "--norealtime", action="store_true", help="Disable real-time output")
-    parser.add_argument("--writechunks", metavar="FILE", help="Save recorded audio chunks to a WAV file")
-    parser.add_argument("--set-param", nargs=2, metavar=('PARAM', 'VALUE'), action='append',
-                        help="Set a recorder parameter. Can be used multiple times.")
-    parser.add_argument("--call-method", nargs='+', metavar='METHOD', action='append',
-                        help="Call a recorder method with optional arguments.")
-    parser.add_argument("--get-param", nargs=1, metavar='PARAM', action='append',
-                        help="Get the value of a recorder parameter. Can be used multiple times.")
+
+    parser.add_argument("-c", "--control", "--control_url", default=DEFAULT_CONTROL_URL,
+                        help="STT Control WebSocket URL")
+    parser.add_argument("-d", "--data", "--data_url", default=DEFAULT_DATA_URL,
+                        help="STT Data WebSocket URL")
+    parser.add_argument("-D", "--debug", action="store_true",
+                        help="Enable debug mode")
+    parser.add_argument("-n", "--norealtime", action="store_true",
+                        help="Disable real-time output")
+    parser.add_argument("-W", "--write", metavar="FILE",
+                        help="Save recorded audio to a WAV file")
+    parser.add_argument("-s", "--set", nargs=2, metavar=('PARAM', 'VALUE'), action='append',
+                        help="Set a recorder parameter (can be used multiple times)")
+    parser.add_argument("-m", "--method", nargs='+', metavar='METHOD', action='append',
+                        help="Call a recorder method with optional arguments")
+    parser.add_argument("-g", "--get", nargs=1, metavar='PARAM', action='append',
+                        help="Get a recorder parameter's value (can be used multiple times)")
+    parser.add_argument("-l", "--loop", action="store_true",
+                        help="Continuously transcribe speech without exiting")
+    
     args = parser.parse_args()
 
     # Check if output is being redirected
@@ -568,7 +584,16 @@ def main():
     else:
         file_output = None
 
-    client = STTWebSocketClient(args.control_url, args.data_url, args.debug, file_output, args.norealtime, args.writechunks)
+
+    client = STTWebSocketClient(
+        args.control,
+        args.data,
+        args.debug,
+        file_output,
+        args.norealtime,  # Adjusted logic for real-time output
+        args.write,
+        continuous=args.loop
+    )
 
     def signal_handler(sig, frame):
         client.stop()
@@ -580,8 +605,8 @@ def main():
     try:
         if client.connect():
             # Process command-line parameters
-            if args.set_param:
-                for param, value in args.set_param:
+            if args.set:
+                for param, value in args.set:
                     try:
                         if '.' in value:
                             value = float(value)
@@ -596,16 +621,16 @@ def main():
                         'value': value
                     })
 
-            if args.get_param:
-                for param_list in args.get_param:
+            if args.get:
+                for param_list in args.get:
                     param = param_list[0]
                     client.add_command({
                         'type': 'get_parameter',
                         'parameter': param
                     })
 
-            if args.call_method:
-                for method_call in args.call_method:
+            if args.method:
+                for method_call in args.method:
                     method = method_call[0]
                     args_list = method_call[1:] if len(method_call) > 1 else []
                     client.add_command({
@@ -615,7 +640,7 @@ def main():
                     })
 
             # If command-line parameters were used (like --get-param), wait for them to be processed
-            if args.set_param or args.get_param or args.call_method:
+            if args.set or args.get or args.method:
                 while not client.commands.empty():
                     time.sleep(0.1)
 
@@ -632,4 +657,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -17,45 +17,40 @@ stt-server [OPTIONS]
 ```
 
 ### Available Parameters:
-- `--model` (str, default: 'medium.en'): Path to the STT model or model size. Options: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, or any huggingface CTranslate2 STT model like `deepdml/faster-whisper-large-v3-turbo-ct2`.
-  
-- `--realtime_model_type` (str, default: 'tiny.en'): Model size for real-time transcription. Same options as `--model`.
-
-- `--language` (str, default: 'en'): Language code for the STT model. Leave empty for auto-detection.
-
-- `--input_device_index` (int, default: 1): Index of the audio input device to use.
-
-- `--silero_sensitivity` (float, default: 0.05): Sensitivity for Silero Voice Activity Detection (VAD). Lower values are less sensitive.
-
-- `--webrtc_sensitivity` (int, default: 3): Sensitivity for WebRTC VAD. Higher values are less sensitive.
-
-- `--min_length_of_recording` (float, default: 1.1): Minimum duration (in seconds) for a valid recording. Prevents short recordings.
-
-- `--min_gap_between_recordings` (float, default: 0): Minimum time (in seconds) between consecutive recordings.
-
-- `--enable_realtime_transcription` (flag, default: True): Enable real-time transcription of audio.
-
-- `--realtime_processing_pause` (float, default: 0.02): Time interval (in seconds) between processing audio chunks for real-time transcription. Lower values increase responsiveness.
-
-- `--silero_deactivity_detection` (flag, default: True): Use Silero model for end-of-speech detection.
-
-- `--early_transcription_on_silence` (float, default: 0.2): Start transcription after specified seconds of silence.
-
-- `--beam_size` (int, default: 5): Beam size for the main transcription model.
-
-- `--beam_size_realtime` (int, default: 3): Beam size for the real-time transcription model.
-
-- `--initial_prompt` (str, default: '...'): Initial prompt for the transcription model to guide its output format and style.
-
-- `--end_of_sentence_detection_pause` (float, default: 0.45): Duration of pause (in seconds) to consider as the end of a sentence.
-
-- `--unknown_sentence_detection_pause` (float, default: 0.7): Duration of pause (in seconds) to consider as an unknown or incomplete sentence.
-
-- `--mid_sentence_detection_pause` (float, default: 2.0): Duration of pause (in seconds) to consider as a mid-sentence break.
-
-- `--control_port` (int, default: 8011): Port for the control WebSocket connection.
-
-- `--data_port` (int, default: 8012): Port for the data WebSocket connection.
+    - `-m, --model`: Model path or size; default 'large-v2'.
+    - `-r, --rt-model, --realtime_model_type`: Real-time model size; default 'tiny.en'.
+    - `-l, --lang, --language`: Language code for transcription; default 'en'.
+    - `-i, --input-device, --input_device_index`: Audio input device index; default 1.
+    - `-c, --control, --control_port`: WebSocket control port; default 8011.
+    - `-d, --data, --data_port`: WebSocket data port; default 8012.
+    - `-w, --wake_words`: Wake word(s) to trigger listening; default "".
+    - `-D, --debug`: Enable debug logging.
+    - `-W, --write`: Save audio to WAV file.
+    - `--silero_sensitivity`: Silero VAD sensitivity (0-1); default 0.05.
+    - `--silero_use_onnx`: Use Silero ONNX model; default False.
+    - `--webrtc_sensitivity`: WebRTC VAD sensitivity (0-3); default 3.
+    - `--min_length_of_recording`: Minimum recording duration in seconds; default 1.1.
+    - `--min_gap_between_recordings`: Min time between recordings in seconds; default 0.
+    - `--enable_realtime_transcription`: Enable real-time transcription; default True.
+    - `--realtime_processing_pause`: Pause between audio chunk processing; default 0.02.
+    - `--silero_deactivity_detection`: Use Silero for end-of-speech detection; default True.
+    - `--early_transcription_on_silence`: Start transcription after silence in seconds; default 0.2.
+    - `--beam_size`: Beam size for main model; default 5.
+    - `--beam_size_realtime`: Beam size for real-time model; default 3.
+    - `--initial_prompt`: Initial transcription guidance prompt.
+    - `--end_of_sentence_detection_pause`: Silence duration for sentence end detection; default 0.45.
+    - `--unknown_sentence_detection_pause`: Pause duration for incomplete sentence detection; default 0.7.
+    - `--mid_sentence_detection_pause`: Pause for mid-sentence break; default 2.0.
+    - `--wake_words_sensitivity`: Wake word detection sensitivity (0-1); default 0.5.
+    - `--wake_word_timeout`: Wake word timeout in seconds; default 5.0.
+    - `--wake_word_activation_delay`: Delay before wake word activation; default 20.
+    - `--wakeword_backend`: Backend for wake word detection; default 'none'.
+    - `--openwakeword_model_paths`: Paths to OpenWakeWord models.
+    - `--openwakeword_inference_framework`: OpenWakeWord inference framework; default 'tensorflow'.
+    - `--wake_word_buffer_duration`: Wake word buffer duration in seconds; default 1.0.
+    - `--use_main_model_for_realtime`: Use main model for real-time transcription.
+    - `--use_extended_logging`: Enable extensive log messages.
+    - `--logchunks`: Log incoming audio chunks.
 
 ### WebSocket Interface:
 The server supports two WebSocket connections:
@@ -306,17 +301,31 @@ def parse_arguments():
     import argparse
     parser = argparse.ArgumentParser(description='Start the Speech-to-Text (STT) server with various configuration options.')
 
-    parser.add_argument('--model', type=str, default='large-v2',
+    parser.add_argument('-m', '--model', type=str, default='large-v2',
                         help='Path to the STT model or model size. Options include: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, or any huggingface CTranslate2 STT model such as deepdml/faster-whisper-large-v3-turbo-ct2. Default is large-v2.')
 
-    parser.add_argument('--realtime_model_type', type=str, default='tiny.en',
-                        help='Model size for real-time transcription. The options are the same as --model. This is used only if real-time transcription is enabled. Default is tiny.en.')
+    parser.add_argument('-r', '--rt-model', '--realtime_model_type', type=str, default='tiny.en',
+                        help='Model size for real-time transcription. Options same as --model.  This is used only if real-time transcription is enabled (enable_realtime_transcription). Default is tiny.en.')
+    
+    parser.add_argument('-l', '--lang', '--language', type=str, default='en',
+                help='Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is en. List of supported language codes: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110')
 
-    parser.add_argument('--language', type=str, default='en',
-                        help='Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is en.')
+    parser.add_argument('-i', '--input-device', '--input_device_index', type=int, default=1,
+                    help='Index of the audio input device to use. Use this option to specify a particular microphone or audio input device based on your system. Default is 1.')
 
-    parser.add_argument('--input_device_index', type=int, default=1,
-                        help='Index of the audio input device to use. Use this option to specify a particular microphone or audio input device based on your system. Default is 1.')
+    parser.add_argument('-c', '--control', '--control_port', type=int, default=8011,
+                        help='The port number used for the control WebSocket connection. Control connections are used to send and receive commands to the server. Default is port 8011.')
+
+    parser.add_argument('-d', '--data', '--data_port', type=int, default=8012,
+                        help='The port number used for the data WebSocket connection. Data connections are used to send audio data and receive transcription updates in real time. Default is port 8012.')
+
+    parser.add_argument('-w', '--wake_words', type=str, default="",
+                        help='Specify the wake word(s) that will trigger the server to start listening. For example, setting this to "Jarvis" will make the system start transcribing when it detects the wake word "Jarvis". Default is "Jarvis".')
+
+    parser.add_argument('-D', '--debug', action='store_true', help='Enable debug logging for detailed server operations')
+
+    parser.add_argument("-W", "--write", metavar="FILE",
+                        help="Save received audio to a WAV file")
 
     parser.add_argument('--silero_sensitivity', type=float, default=0.05,
                         help='Sensitivity level for Silero Voice Activity Detection (VAD), with a range from 0 to 1. Lower values make the model less sensitive, useful for noisy environments. Default is 0.05.')
@@ -364,15 +373,6 @@ def parse_arguments():
     parser.add_argument('--mid_sentence_detection_pause', type=float, default=2.0,
                         help='The duration of pause (in seconds) that the model should interpret as a mid-sentence break. Longer pauses can indicate a pause in speech but not necessarily the end of a sentence. Default is 2.0 seconds.')
 
-    parser.add_argument('--control_port', type=int, default=8011,
-                        help='The port number used for the control WebSocket connection. Control connections are used to send and receive commands to the server. Default is port 8011.')
-
-    parser.add_argument('--data_port', type=int, default=8012,
-                        help='The port number used for the data WebSocket connection. Data connections are used to send audio data and receive transcription updates in real time. Default is port 8012.')
-
-    parser.add_argument('--wake_words', type=str, default="",
-                        help='Specify the wake word(s) that will trigger the server to start listening. For example, setting this to "Jarvis" will make the system start transcribing when it detects the wake word "Jarvis". Default is "Jarvis".')
-
     parser.add_argument('--wake_words_sensitivity', type=float, default=0.5,
                         help='Sensitivity level for wake word detection, with a range from 0 (most sensitive) to 1 (least sensitive). Adjust this value based on your environment to ensure reliable wake word detection. Default is 0.5.')
 
@@ -400,18 +400,14 @@ def parse_arguments():
     parser.add_argument('--use_extended_logging', action='store_true',
                         help='Writes extensive log messages for the recording worker, that processes the audio chunks.')
 
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging for detailed server operations')
-
     parser.add_argument('--logchunks', action='store_true', help='Enable logging of incoming audio chunks (periods)')
-
-    parser.add_argument("--writechunks", metavar="FILE", help="Save received audio chunks to a WAV file")
 
     # Parse arguments
     args = parser.parse_args()
 
     debug_logging = args.debug
     extended_logging = args.use_extended_logging
-    writechunks = args.writechunks
+    writechunks = args.write
     log_incoming_chunks = args.logchunks
 
     if debug_logging:
@@ -644,9 +640,9 @@ async def main_async():
 
     recorder_config = {
         'model': args.model,
-        'realtime_model_type': args.realtime_model_type,
-        'language': args.language,
-        'input_device_index': args.input_device_index,
+        'realtime_model_type': args.rt_model,
+        'language': args.lang,
+        'input_device_index': args.input_device,
         'silero_sensitivity': args.silero_sensitivity,
         'silero_use_onnx': args.silero_use_onnx,
         'webrtc_sensitivity': args.webrtc_sensitivity,
@@ -688,10 +684,10 @@ async def main_async():
 
     try:
         # Attempt to start control and data servers
-        control_server = await websockets.serve(control_handler, "localhost", args.control_port)
-        data_server = await websockets.serve(data_handler, "localhost", args.data_port)
-        print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://localhost:{args.control_port}{bcolors.ENDC}")
-        print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data_port}{bcolors.ENDC}")
+        control_server = await websockets.serve(control_handler, "localhost", args.control)
+        data_server = await websockets.serve(data_handler, "localhost", args.data)
+        print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://localhost:{args.control}{bcolors.ENDC}")
+        print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data}{bcolors.ENDC}")
 
         # Start the broadcast and recorder threads
         broadcast_task = asyncio.create_task(broadcast_audio_messages())
