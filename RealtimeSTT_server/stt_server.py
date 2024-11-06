@@ -26,6 +26,7 @@ stt-server [OPTIONS]
     - `-w, --wake_words`: Wake word(s) to trigger listening; default "".
     - `-D, --debug`: Enable debug logging.
     - `-W, --write`: Save audio to WAV file.
+    - `-s, --silence_timing`: Enable dynamic silence duration for sentence detection; default True. 
     - `--silero_sensitivity`: Silero VAD sensitivity (0-1); default 0.05.
     - `--silero_use_onnx`: Use Silero ONNX model; default False.
     - `--webrtc_sensitivity`: WebRTC VAD sensitivity (0-3); default 3.
@@ -61,6 +62,8 @@ The server will broadcast real-time transcription updates to all connected clien
 """
 
 from .install_packages import check_and_install_packages
+from difflib import SequenceMatcher
+from collections import deque
 from datetime import datetime
 import logging
 import asyncio
@@ -72,9 +75,17 @@ debug_logging = False
 extended_logging = False
 send_recorded_chunk = False
 log_incoming_chunks = False
-stt_optimizations = False
+silence_timing = False
 writechunks = False#
 wav_file = None
+
+hard_break_even_on_background_noise = 3.0
+hard_break_even_on_background_noise_min_texts = 3
+hard_break_even_on_background_noise_min_similarity = 0.99
+hard_break_even_on_background_noise_min_chars = 15
+
+
+text_time_deque = deque()
 loglevel = logging.WARNING
 
 FORMAT = pyaudio.paInt16
@@ -176,6 +187,12 @@ def preprocess_text(text):
     if text.startswith("..."):
         text = text[3:]
 
+    if text.endswith("...'."):
+        text = text[:-1]
+
+    if text.endswith("...'"):
+        text = text[:-1]
+
     # Remove any leading whitespaces again after ellipses removal
     text = text.lstrip()
 
@@ -196,14 +213,50 @@ def text_detected(text, loop):
 
     text = preprocess_text(text)
 
-    if stt_optimizations:
-        sentence_end_marks = ['.', '!', '?', '。'] 
-        if text.endswith("..."):
+    if silence_timing:
+        def ends_with_ellipsis(text: str):
+            if text.endswith("..."):
+                return True
+            if len(text) > 1 and text[:-1].endswith("..."):
+                return True
+            return False
+
+        def sentence_end(text: str):
+            sentence_end_marks = ['.', '!', '?', '。']
+            if text and text[-1] in sentence_end_marks:
+                return True
+            return False
+
+
+        if ends_with_ellipsis(text):
             recorder.post_speech_silence_duration = global_args.mid_sentence_detection_pause
-        elif text and text[-1] in sentence_end_marks and prev_text and prev_text[-1] in sentence_end_marks:
+        elif sentence_end(text) and sentence_end(prev_text) and not ends_with_ellipsis(prev_text):
             recorder.post_speech_silence_duration = global_args.end_of_sentence_detection_pause
         else:
             recorder.post_speech_silence_duration = global_args.unknown_sentence_detection_pause
+
+
+        # Append the new text with its timestamp
+        current_time = time.time()
+        text_time_deque.append((current_time, text))
+
+        # Remove texts older than hard_break_even_on_background_noise seconds
+        while text_time_deque and text_time_deque[0][0] < current_time - hard_break_even_on_background_noise:
+            text_time_deque.popleft()
+
+        # Check if at least hard_break_even_on_background_noise_min_texts texts have arrived within the last hard_break_even_on_background_noise seconds
+        if len(text_time_deque) >= hard_break_even_on_background_noise_min_texts:
+            texts = [t[1] for t in text_time_deque]
+            first_text = texts[0]
+            last_text = texts[-1]
+
+            # Compute the similarity ratio between the first and last texts
+            similarity = SequenceMatcher(None, first_text, last_text).ratio()
+
+            if similarity > hard_break_even_on_background_noise_min_similarity and len(first_text) > hard_break_even_on_background_noise_min_chars:
+                recorder.stop()
+                recorder.clear_audio_queue()
+                prev_text = ""
 
     prev_text = text
 
@@ -296,7 +349,7 @@ def on_transcription_start(loop):
 
 # Define the server's arguments
 def parse_arguments():
-    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks
+    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks, dynamic_silence_timing
 
     import argparse
     parser = argparse.ArgumentParser(description='Start the Speech-to-Text (STT) server with various configuration options.')
@@ -326,6 +379,9 @@ def parse_arguments():
 
     parser.add_argument("-W", "--write", metavar="FILE",
                         help="Save received audio to a WAV file")
+
+    parser.add_argument('-s', '--silence_timing', action='store_true', default=True,
+                    help='Enable dynamic adjustment of silence duration for sentence detection. Adjusts post-speech silence duration based on detected sentence structure and punctuation. Default is False.')
 
     parser.add_argument('--silero_sensitivity', type=float, default=0.05,
                         help='Sensitivity level for Silero Voice Activity Detection (VAD), with a range from 0 to 1. Lower values make the model less sensitive, useful for noisy environments. Default is 0.05.')
@@ -360,9 +416,14 @@ def parse_arguments():
     parser.add_argument('--beam_size_realtime', type=int, default=3,
                         help='Beam size for the real-time transcription model. A smaller beam size allows for faster real-time processing but may reduce accuracy. Default is 3.')
 
+    # parser.add_argument('--initial_prompt', type=str,
+    #                     default='End incomplete sentences with ellipses.\nExamples:\nComplete: The sky is blue.\nIncomplete: When the sky...\nComplete: She walked home.\nIncomplete: Because he...',
+    #                     help='Initial prompt that guides the transcription model to produce transcriptions in a particular style or format. The default provides instructions for handling sentence completions and ellipsis usage.')
+    
     parser.add_argument('--initial_prompt', type=str,
-                        default='End incomplete sentences with ellipses. Examples: Complete: The sky is blue. Incomplete: When the sky... Complete: She walked home. Incomplete: Because he...',
+                        default="Incomplete thoughts should end with '...'. Examples of complete thoughts: 'The sky is blue.' 'She walked home.' Examples of incomplete thoughts: 'When the sky...' 'Because he...'",
                         help='Initial prompt that guides the transcription model to produce transcriptions in a particular style or format. The default provides instructions for handling sentence completions and ellipsis usage.')
+    
 
     parser.add_argument('--end_of_sentence_detection_pause', type=float, default=0.45,
                         help='The duration of silence (in seconds) that the model should interpret as the end of a sentence. This helps the system detect when to finalize the transcription of a sentence. Default is 0.45 seconds.')
@@ -409,6 +470,7 @@ def parse_arguments():
     extended_logging = args.use_extended_logging
     writechunks = args.write
     log_incoming_chunks = args.logchunks
+    dynamic_silence_timing = args.silence_timing
 
     if debug_logging:
         loglevel = logging.DEBUG
@@ -424,7 +486,7 @@ def parse_arguments():
     return args
 
 def _recorder_thread(loop):
-    global recorder, prev_text, stop_recorder
+    global recorder, stop_recorder
     print(f"{bcolors.OKGREEN}Initializing RealtimeSTT server with parameters:{bcolors.ENDC}")
     for key, value in recorder_config.items():
         print(f"    {bcolors.OKBLUE}{key}{bcolors.ENDC}: {value}")
@@ -433,6 +495,8 @@ def _recorder_thread(loop):
     recorder_ready.set()
     
     def process_text(full_sentence):
+        global prev_text
+        prev_text = ""
         full_sentence = preprocess_text(full_sentence)
         message = json.dumps({
             'type': 'fullSentence',
