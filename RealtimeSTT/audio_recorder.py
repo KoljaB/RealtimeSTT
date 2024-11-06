@@ -2282,6 +2282,10 @@ class AudioToTextRecorder:
         """
         self.audio_buffer.clear()
         try:
+            self.text_storage = []
+            self.realtime_stabilized_text = ""
+            self.realtime_stabilized_safetext = ""
+            self.frames = []
             while True:
                 self.audio_queue.get_nowait()
         except:
