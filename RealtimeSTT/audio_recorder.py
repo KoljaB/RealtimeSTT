@@ -1141,7 +1141,6 @@ class AudioToTextRecorder:
                                 time_since_last_buffer_message = time.time()
 
                             audio_queue.put(to_process)
-                            
 
                 except OSError as e:
                     if e.errno == pyaudio.paInputOverflowed:
