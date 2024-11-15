@@ -1560,7 +1560,6 @@ class AudioToTextRecorder:
             print("\033[91mRealtimeSTT shutting down\033[0m")
             # logging.debug("RealtimeSTT shutting down")
 
-            # Force wait_audio() and text() to exit
             self.is_shut_down = True
             self.start_recording_event.set()
             self.stop_recording_event.set()
@@ -1571,10 +1570,10 @@ class AudioToTextRecorder:
 
             logging.debug('Finishing recording thread')
             if self.recording_thread:
+                self.audio_queue.put(bytes(1))
                 self.recording_thread.join()
 
             logging.debug('Terminating reader process')
-
             # Give it some time to finish the loop and cleanup.
             if self.use_microphone.value:
                 self.reader_process.join(timeout=10)
