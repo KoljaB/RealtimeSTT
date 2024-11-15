@@ -76,7 +76,7 @@ extended_logging = False
 send_recorded_chunk = False
 log_incoming_chunks = False
 silence_timing = False
-writechunks = False#
+writechunks = False
 wav_file = None
 
 hard_break_even_on_background_noise = 3.0
