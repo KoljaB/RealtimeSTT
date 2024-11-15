@@ -815,6 +815,8 @@ class AudioToTextRecorder:
                        0.3)
         )
         self.frames = []
+        self.new_frames = mp.Event()
+        self.new_frames.set()
 
         # Recording control flags
         self.is_recording = False
@@ -1267,11 +1269,11 @@ class AudioToTextRecorder:
             audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
             self.audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
             self.frames.clear()
+            self.new_frames.set()
 
             # Reset recording-related timestamps
             self.recording_stop_time = 0
             self.listen_start = 0
-
             self._set_state("inactive")
 
         except KeyboardInterrupt:
@@ -1453,6 +1455,7 @@ class AudioToTextRecorder:
         self.wakeword_detected = False
         self.wake_word_detect_time = 0
         self.frames = []
+        self.new_frames.set()
         self.is_recording = True
         self.recording_start_time = time.time()
         self.is_silero_speech_active = False
@@ -1816,7 +1819,8 @@ class AudioToTextRecorder:
                             # Add the buffered audio
                             # to the recording frames
                             self.frames.extend(list(self.audio_buffer))
-                            self.audio_buffer.clear()
+                            self.new_frames.set()
+                            self.audio_buffer.clear()                            
 
                             if self.use_extended_logging:
                                 logging.debug('Debug: Resetting Silero VAD model states')
@@ -1987,6 +1991,7 @@ class AudioToTextRecorder:
                     if self.use_extended_logging:
                         logging.debug('Debug: Appending data to frames')
                     self.frames.append(data)
+                    self.new_frames.set()
 
                 if self.use_extended_logging:
                     logging.debug('Debug: Checking if not recording or speech end silence start')
@@ -2029,6 +2034,8 @@ class AudioToTextRecorder:
 
                 # Check if the recording is active
                 if self.is_recording:
+                    self.new_frames.wait()
+                    self.new_frames.clear()
 
                     # Sleep for the duration of the transcription resolution
                     time.sleep(self.realtime_processing_pause)
