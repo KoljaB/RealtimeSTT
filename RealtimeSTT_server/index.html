@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browser STT Client</title>
+  <style>
+    body {
+      background-color: #f4f4f9;
+      color: #333;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    #container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      max-width: 700px;
+      padding: 20px;
+      box-sizing: border-box;
+      gap: 20px; /* Add more vertical space between items */
+      height: 90%; /* Fixed height to prevent layout shift */
+    }
+    #status {
+      color: #0056b3;
+      font-size: 20px;
+      text-align: center;
+    }
+    #transcriptionContainer {
+      height: 90px; /* Fixed height for approximately 3 lines of text */
+      overflow-y: auto;
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      background-color: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    #transcription {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #333;
+      word-wrap: break-word;
+    }
+    #fullTextContainer {
+      height: 150px; /* Fixed height to prevent layout shift */
+      overflow-y: auto;
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+      background-color: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    #fullText {
+      color: #4CAF50;
+      font-size: 18px;
+      font-weight: 600;
+      word-wrap: break-word;
+    }
+    .last-word {
+      color: #007bff;
+      font-weight: 600;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 5px;
+      margin: 5px;
+      transition: background-color 0.3s ease;
+      color: #fff;
+      background-color: #0056b3;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+    button:hover {
+      background-color: #007bff;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="status">Press "Start Recording"...</div>
+    <button id="startButton" onclick="startRecording()">Start Recording</button>
+    <button id="stopButton" onclick="stopRecording()" disabled>Stop Recording</button>
+    <div id="transcriptionContainer">
+      <div id="transcription" class="realtime"></div>
+    </div>
+    <div id="fullTextContainer">
+      <div id="fullText"></div>
+    </div>
+  </div>
+
+  <script>
+    const statusDiv = document.getElementById("status");
+    const transcriptionDiv = document.getElementById("transcription");
+    const fullTextDiv = document.getElementById("fullText");
+    const startButton = document.getElementById("startButton");
+    const stopButton = document.getElementById("stopButton");
+
+    const controlURL = "ws://127.0.0.1:8011";
+    const dataURL = "ws://127.0.0.1:8012";
+    let dataSocket;
+    let audioContext;
+    let mediaStream;
+    let mediaProcessor;
+
+    // Connect to the data WebSocket
+    function connectToDataSocket() {
+      dataSocket = new WebSocket(dataURL);
+
+      dataSocket.onopen = () => {
+        statusDiv.textContent = "Connected to STT server.";
+        console.log("Connected to data WebSocket.");
+      };
+
+      dataSocket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message.type === "realtime") {
+            // Show real-time transcription with the last word in bold, orange
+            let words = message.text.split(" ");
+            let lastWord = words.pop();
+            transcriptionDiv.innerHTML = `${words.join(" ")} <span class="last-word">${lastWord}</span>`;
+
+            // Auto-scroll to the bottom of the transcription container
+            const transcriptionContainer = document.getElementById("transcriptionContainer");
+            transcriptionContainer.scrollTop = transcriptionContainer.scrollHeight;
+          } else if (message.type === "fullSentence") {
+            // Accumulate the final transcription in green
+            fullTextDiv.innerHTML += message.text + " ";
+            transcriptionDiv.innerHTML = message.text;
+
+            // Scroll to the bottom of fullTextContainer when new text is added
+            const fullTextContainer = document.getElementById("fullTextContainer");
+            fullTextContainer.scrollTop = fullTextContainer.scrollHeight;
+          }
+        } catch (e) {
+          console.error("Error parsing message:", e);
+        }
+      };
+
+      dataSocket.onclose = () => {
+        statusDiv.textContent = "Disconnected from STT server.";
+      };
+
+      dataSocket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        statusDiv.textContent = "Error connecting to the STT server.";
+      };
+    }
+
+    // Start recording audio from the microphone
+    async function startRecording() {
+      try {
+        startButton.disabled = true;
+        stopButton.disabled = false;
+        statusDiv.textContent = "Recording...";
+        transcriptionDiv.textContent = "";
+        fullTextDiv.textContent = "";
+
+        audioContext = new AudioContext();
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const input = audioContext.createMediaStreamSource(mediaStream);
+
+        // Set up processor for audio chunks
+        mediaProcessor = audioContext.createScriptProcessor(1024, 1, 1);
+        mediaProcessor.onaudioprocess = (event) => {
+          const audioData = event.inputBuffer.getChannelData(0);
+          sendAudioChunk(audioData, audioContext.sampleRate);
+        };
+
+        input.connect(mediaProcessor);
+        mediaProcessor.connect(audioContext.destination);
+
+        connectToDataSocket();
+      } catch (error) {
+        console.error("Error accessing microphone:", error);
+        statusDiv.textContent = "Error accessing microphone.";
+        stopRecording();
+      }
+    }
+
+    // Stop recording audio and close resources
+    function stopRecording() {
+      if (mediaProcessor && audioContext) {
+        mediaProcessor.disconnect();
+        audioContext.close();
+      }
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+      }
+
+      if (dataSocket) {
+        dataSocket.close();
+      }
+
+      startButton.disabled = false;
+      stopButton.disabled = true;
+      statusDiv.textContent = "Stopped recording.";
+    }
+
+    // Send an audio chunk to the server
+    function sendAudioChunk(audioData, sampleRate) {
+      if (dataSocket && dataSocket.readyState === WebSocket.OPEN) {
+        const float32Array = new Float32Array(audioData);
+        const pcm16Data = new Int16Array(float32Array.length);
+
+        for (let i = 0; i < float32Array.length; i++) {
+          pcm16Data[i] = Math.max(-1, Math.min(1, float32Array[i])) * 0x7FFF;
+        }
+
+        const metadata = JSON.stringify({ sampleRate });
+        const metadataLength = new Uint32Array([metadata.length]);
+        const metadataBuffer = new TextEncoder().encode(metadata);
+
+        const message = new Uint8Array(
+          metadataLength.byteLength + metadataBuffer.byteLength + pcm16Data.byteLength
+        );
+        
+        message.set(new Uint8Array(metadataLength.buffer), 0);
+        message.set(metadataBuffer, metadataLength.byteLength);
+        message.set(new Uint8Array(pcm16Data.buffer), metadataLength.byteLength + metadataBuffer.byteLength);
+
+        dataSocket.send(message);
+      }
+    }
+  </script>
+</body>
+</html>
