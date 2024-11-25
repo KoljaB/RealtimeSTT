@@ -115,17 +115,17 @@ To upgrade your PyTorch installation to enable GPU support with CUDA, follow the
 To update PyTorch and Torchaudio to support CUDA 11.8, use the following commands:
 
 ```bash
-pip install torch==2.3.1+cu118 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.5.1+cu118 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
 ```
 
 #### For CUDA 12.X:
 To update PyTorch and Torchaudio to support CUDA 12.X, execute the following:
 
 ```bash
-pip install torch==2.3.1+cu121 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1+cu121 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 ```
 
-Replace `2.3.1` with the version of PyTorch that matches your system and requirements.
+Replace `2.5.1` with the version of PyTorch that matches your system and requirements.
 
 ### Steps That Might Be Necessary Before
 
