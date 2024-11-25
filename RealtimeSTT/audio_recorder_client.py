@@ -4,8 +4,9 @@ debug_mode = False
 from typing import Iterable, List, Optional, Union
 from urllib.parse import urlparse
 from datetime import datetime
+from websocket import WebSocketApp
+from websocket import ABNF
 import subprocess
-import websocket
 import threading
 import platform
 import logging
@@ -307,7 +308,7 @@ class AudioToTextRecorderClient:
         message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + chunk
 
         if self.is_running:
-            self.data_ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+            self.data_ws.send(message, opcode=ABNF.OPCODE_BINARY)
 
     def set_microphone(self, microphone_on=True):
         """
@@ -334,7 +335,7 @@ class AudioToTextRecorderClient:
 
         try:
             # Connect to control WebSocket
-            self.control_ws = websocket.WebSocketApp(self.control_url,
+            self.control_ws = WebSocketApp(self.control_url,
                                                      on_message=self.on_control_message,
                                                      on_error=self.on_error,
                                                      on_close=self.on_close,
@@ -345,7 +346,7 @@ class AudioToTextRecorderClient:
             self.control_ws_thread.start()
 
             # Connect to data WebSocket
-            self.data_ws = websocket.WebSocketApp(self.data_url,
+            self.data_ws = WebSocketApp(self.data_url,
                                                   on_message=self.on_data_message,
                                                   on_error=self.on_error,
                                                   on_close=self.on_close,
@@ -500,7 +501,7 @@ class AudioToTextRecorderClient:
                 raise Exception("Failed to set up audio recording.")
 
             # Initialize WAV file writer if output_wav_file is provided
-            if self.output_wav_file:
+            if self.output_wav_file and not self.wav_file:
                 self.wav_file = wave.open(self.output_wav_file, 'wb')
                 self.wav_file.setnchannels(1)
                 self.wav_file.setsampwidth(2)
@@ -536,7 +537,7 @@ class AudioToTextRecorderClient:
                         if self.is_running:
                             if log_outgoing_chunks:
                                 print(".", flush=True, end='')
-                            self.data_ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
+                            self.data_ws.send(message, opcode=ABNF.OPCODE_BINARY)
                 except KeyboardInterrupt:
                     if self.debug_mode:
                         print("KeyboardInterrupt in record_and_send_audio, exiting...")

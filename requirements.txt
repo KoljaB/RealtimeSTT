@@ -6,8 +6,7 @@ halo==0.0.31
 torch
 torchaudio
 scipy==1.14.1
-websocket==0.2.1
+openwakeword>=0.4.0
 websockets==v12.0
 websocket-client==1.8.0
-openwakeword>=0.4.0
 numpy<2.0.0
