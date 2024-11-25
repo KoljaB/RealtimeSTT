@@ -9,14 +9,17 @@ import websocket
 import threading
 import platform
 import logging
-import pyaudio
 import socket
 import struct
 import signal
+import wave
 import json
 import time
 import sys
 import os
+
+# Import the AudioInput class
+from .audio_input import AudioInput
 
 DEFAULT_CONTROL_URL = "ws://127.0.0.1:8011"
 DEFAULT_DATA_URL = "ws://127.0.0.1:8012"
@@ -36,11 +39,8 @@ INIT_WAKE_WORD_TIMEOUT = 5.0
 INIT_WAKE_WORD_BUFFER_DURATION = 0.1
 ALLOWED_LATENCY_LIMIT = 100
 
-CHUNK = 1024
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-SAMPLE_RATE = 16000
 BUFFER_SIZE = 512
+SAMPLE_RATE = 16000
 
 INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
@@ -143,6 +143,7 @@ class AudioToTextRecorderClient:
                  control_url: str = DEFAULT_CONTROL_URL,
                  data_url: str = DEFAULT_DATA_URL,
                  autostart_server: bool = True,
+                 output_wav_file: str = None,
                  ):
 
         # Set instance variables from constructor parameters
@@ -213,6 +214,7 @@ class AudioToTextRecorderClient:
         self.control_url = control_url
         self.data_url = data_url
         self.autostart_server = autostart_server
+        self.output_wav_file = output_wav_file
 
         # Instance variables
         self.muted = False
@@ -223,6 +225,9 @@ class AudioToTextRecorderClient:
         self.final_text_ready = threading.Event()
         self.realtime_text = ""
         self.final_text = ""
+        self._recording = False
+        self.server_already_running = False
+        self.wav_file = None
 
         self.request_counter = 0
         self.pending_requests = {}  # Map from request_id to threading.Event and value
@@ -238,6 +243,13 @@ class AudioToTextRecorderClient:
         if self.use_microphone:
             self.start_recording()
 
+
+        if self.server_already_running:
+            self.set_parameter("language", self.language)
+            # self.set_parameter("model", self.model)
+
+
+
     def text(self, on_transcription_finished=None):
         self.realtime_text = ""
         self.submitted_realtime_text = ""
@@ -251,17 +263,15 @@ class AudioToTextRecorderClient:
             wait_interval = 0.02  # Wait in small intervals, e.g., 100ms
             max_wait_time = 60  # Timeout after 60 seconds
 
-            while total_wait_time < max_wait_time:
+            while total_wait_time < max_wait_time and self.is_running and self._recording:
                 if self.final_text_ready.wait(timeout=wait_interval):
                     break  # Break if transcription is ready
-                
-                # if not self.realtime_text == self.submitted_realtime_text:
-                #     if self.on_realtime_transcription_update:
-                #         self.on_realtime_transcription_update(self.realtime_text)
-                #     self.submitted_realtime_text = self.realtime_text
 
-                total_wait_time += wait_interval
+                if not self.is_running or not self._recording:
+                    break
                 
+                total_wait_time += wait_interval
+
                 # Check if a manual interrupt has occurred
                 if total_wait_time >= max_wait_time:
                     if self.debug_mode:
@@ -273,6 +283,9 @@ class AudioToTextRecorderClient:
 
             self.recording_start.clear()
 
+            if not self.is_running or not self._recording:
+                return ""
+
             if on_transcription_finished:
                 threading.Thread(target=on_transcription_finished, args=(self.final_text,)).start()
 
@@ -280,7 +293,7 @@ class AudioToTextRecorderClient:
 
         except KeyboardInterrupt:
             if self.debug_mode:
-                print("KeyboardInterrupt in record_and_send_audio, exiting...")
+                print("KeyboardInterrupt in text(), exiting...")
             raise KeyboardInterrupt
 
         except Exception as e:
@@ -318,7 +331,7 @@ class AudioToTextRecorderClient:
         if not self.ensure_server_running():
             print("Cannot start STT server. Exiting.")
             return False
-        
+
         try:
             # Connect to control WebSocket
             self.control_ws = websocket.WebSocketApp(self.control_url,
@@ -438,7 +451,7 @@ class AudioToTextRecorderClient:
         if not self.is_server_running():
             if self.debug_mode:
                 print("STT server is not running.", file=sys.stderr)
-            if self.autostart_server or self.ask_to_start_server():
+            if self.autostart_server:
                 self.start_server()
                 if self.debug_mode:
                     print("Waiting for STT server to start...", file=sys.stderr)
@@ -454,7 +467,16 @@ class AudioToTextRecorderClient:
             else:
                 print("STT server is required. Please start it manually.", file=sys.stderr)
                 return False
+        
+        else:
+            self.server_already_running = True
+
         return True
+    
+    def list_devices(self):
+        """List all available audio input devices."""
+        audio = AudioInput(debug_mode=self.debug_mode)
+        audio.list_devices()
 
     def start_recording(self):
         self.recording_thread = threading.Thread(target=self.record_and_send_audio)
@@ -462,44 +484,28 @@ class AudioToTextRecorderClient:
         self.recording_thread.start()
 
     def setup_audio(self):
-        try:
-            self.audio_interface = pyaudio.PyAudio()
-            self.input_device_index = None
-            try:
-                default_device = self.audio_interface.get_default_input_device_info()
-                self.input_device_index = default_device['index']
-            except OSError as e:
-                print(f"No default input device found: {e}")
-                return False
-
-            self.device_sample_rate = 16000  # Try 16000 Hz first
-
-            try:
-                self.stream = self.audio_interface.open(
-                    format=FORMAT,
-                    channels=CHANNELS,
-                    rate=self.device_sample_rate,
-                    input=True,
-                    frames_per_buffer=CHUNK,
-                    input_device_index=self.input_device_index,
-                )
-                if self.debug_mode:
-                    print(f"Audio recording initialized successfully at {self.device_sample_rate} Hz")
-                return True
-            except Exception as e:
-                print(f"Failed to initialize audio stream at {self.device_sample_rate} Hz: {e}")
-                return False
-
-        except Exception as e:
-            print(f"Error initializing audio recording: {e}")
-            if self.audio_interface:
-                self.audio_interface.terminate()
-            return False
+        """Initialize audio input"""
+        self.audio_input = AudioInput(
+            input_device_index=self.input_device_index,
+            debug_mode=self.debug_mode
+        )
+        return self.audio_input.setup()
 
     def record_and_send_audio(self):
+        """Record and stream audio data"""
+        self._recording = True
+
         try:
             if not self.setup_audio():
                 raise Exception("Failed to set up audio recording.")
+
+            # Initialize WAV file writer if output_wav_file is provided
+            if self.output_wav_file:
+                self.wav_file = wave.open(self.output_wav_file, 'wb')
+                self.wav_file.setnchannels(1)
+                self.wav_file.setsampwidth(2)
+                self.wav_file.setframerate(self.audio_input.device_sample_rate)  # Use self.device_sample_rate
+
 
             if self.debug_mode:
                 print("Recording and sending audio...")
@@ -510,7 +516,10 @@ class AudioToTextRecorderClient:
                     continue
 
                 try:
-                    audio_data = self.stream.read(CHUNK)
+                    audio_data = self.audio_input.read_chunk()
+
+                    if self.wav_file:
+                        self.wav_file.writeframes(audio_data)
 
                     if self.on_recorded_chunk:
                         self.on_recorded_chunk(audio_data)
@@ -519,7 +528,7 @@ class AudioToTextRecorderClient:
                         continue
 
                     if self.recording_start.is_set():
-                        metadata = {"sampleRate": self.device_sample_rate}
+                        metadata = {"sampleRate": self.audio_input.device_sample_rate}
                         metadata_json = json.dumps(metadata)
                         metadata_length = len(metadata_json)
                         message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
@@ -528,30 +537,26 @@ class AudioToTextRecorderClient:
                             if log_outgoing_chunks:
                                 print(".", flush=True, end='')
                             self.data_ws.send(message, opcode=websocket.ABNF.OPCODE_BINARY)
-                except KeyboardInterrupt:  # handle manual interruption (Ctrl+C)
+                except KeyboardInterrupt:
                     if self.debug_mode:
                         print("KeyboardInterrupt in record_and_send_audio, exiting...")
                     break
                 except Exception as e:
                     print(f"Error sending audio data: {e}")
-                    break  # Exit the recording loop
+                    break
 
         except Exception as e:
-            print(f"Error in record_and_send_audio: {e}")
+            print(f"Error in record_and_send_audio: {e}", file=sys.stderr)
         finally:
             self.cleanup_audio()
+            self.final_text_ready.set() # fake final text to stop the text() method
+            self.is_running = False
+            self._recording = False
 
     def cleanup_audio(self):
-        try:
-            if self.stream:
-                self.stream.stop_stream()
-                self.stream.close()
-                self.stream = None
-            if self.audio_interface:
-                self.audio_interface.terminate()
-                self.audio_interface = None
-        except Exception as e:
-            print(f"Error cleaning up audio resources: {e}")
+        """Clean up audio resources"""
+        if hasattr(self, 'audio_input'):
+            self.audio_input.cleanup()
 
     def on_control_message(self, ws, message):
         try:
@@ -585,7 +590,7 @@ class AudioToTextRecorderClient:
                     self.realtime_text = data['text']
 
                     timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
-                    print(f"Realtime text [{timestamp}]: {bcolors.OKCYAN}{self.realtime_text}{bcolors.ENDC}")
+                    # print(f"Realtime text [{timestamp}]: {bcolors.OKCYAN}{self.realtime_text}{bcolors.ENDC}")
 
                     if self.on_realtime_transcription_update:
                         # Call the callback in a new thread to avoid blocking
@@ -704,14 +709,14 @@ class AudioToTextRecorderClient:
         self.control_ws.send(json.dumps(command))
 
     def shutdown(self):
+        """Shutdown all resources"""
         self.is_running = False
-        #self.stop_event.set()
         if self.control_ws:
             self.control_ws.close()
         if self.data_ws:
             self.data_ws.close()
 
-        # Join threads to ensure they finish before exiting
+        # Join threads
         if self.control_ws_thread:
             self.control_ws_thread.join()
         if self.data_ws_thread:
@@ -719,12 +724,8 @@ class AudioToTextRecorderClient:
         if self.recording_thread:
             self.recording_thread.join()
 
-        # Clean up audio resources
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        if self.audio_interface:
-            self.audio_interface.terminate()
+        # Clean up audio
+        self.cleanup_audio()
 
     def __enter__(self):
         """

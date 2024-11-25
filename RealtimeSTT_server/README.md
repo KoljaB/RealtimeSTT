@@ -283,64 +283,129 @@ The client connects to the STT server's control and data WebSocket URLs to facil
 
 ### Available Parameters for STT Client:
 
-#### `-c`, `--control`, `--control_url`
+#### `-i`, `--input-device`
+- **Type**: `int`
+- **Metavar**: `INDEX`
+- **Description**: Audio input device index. Use `-L` to list available devices.
 
-- **Type**: `str`
-- **Default**: `DEFAULT_CONTROL_URL`
-- **Description**: Specifies the STT control WebSocket URL used for sending and receiving commands to/from the STT server.
+#### `-l`, `--language`
+- **Type**: `str` 
+- **Default**: `'en'`
+- **Metavar**: `LANG`
+- **Description**: Language code to be used for transcription.
 
-#### `-d`, `--data`, `--data_url`
-
-- **Type**: `str`
-- **Default**: `DEFAULT_DATA_URL`
-- **Description**: Specifies the STT data WebSocket URL used for transmitting audio data and receiving transcription updates.
+#### `-sed`, `--speech-end-detection`
+- **Action**: `store_true`
+- **Description**: Enable intelligent speech end detection for better sentence boundaries.
 
 #### `-D`, `--debug`
-
 - **Action**: `store_true`
-- **Description**: Enables debug mode, providing detailed output for server-client interactions.
+- **Description**: Enable debug mode for detailed logging.
 
 #### `-n`, `--norealtime`
-
 - **Action**: `store_true`
-- **Description**: Disables real-time output, preventing transcription updates from being shown live as they are processed.
+- **Description**: Disable real-time transcription output.
 
 #### `-W`, `--write`
-
 - **Metavar**: `FILE`
-- **Description**: Saves recorded audio to a specified WAV file for later playback or analysis.
+- **Description**: Save recorded audio to a WAV file.
 
 #### `-s`, `--set`
-
 - **Type**: `list`
 - **Metavar**: `('PARAM', 'VALUE')`
 - **Action**: `append`
-- **Description**: Sets a parameter for the recorder. Can be used multiple times to set different parameters. Each occurrence must be followed by the parameter name and value.
+- **Description**: Set a recorder parameter. Can be used multiple times with different parameters.
 
 #### `-m`, `--method`
-
 - **Type**: `list`
 - **Metavar**: `METHOD`
 - **Action**: `append`
-- **Description**: Calls a specified method on the recorder with optional arguments. Multiple methods can be invoked by repeating this parameter.
+- **Description**: Call a recorder method with optional arguments.
 
 #### `-g`, `--get`
-
 - **Type**: `list`
 - **Metavar**: `PARAM`
 - **Action**: `append`
-- **Description**: Retrieves the value of a specified recorder parameter. Can be used multiple times to get multiple parameter values.
+- **Description**: Get the value of a recorder parameter.
 
-#### `-l`, `--loop`
-
+#### `-c`, `--continous`
 - **Action**: `store_true`
-- **Description**: Runs the client in a loop, allowing it to continuously transcribe speech without exiting after each session.
+- **Description**: Run in continuous mode, transcribing speech without exiting.
 
-**Example:**
+#### `-L`, `--list`
+- **Action**: `store_true`
+- **Description**: List all available audio input devices and exit.
+
+#### `--control`, `--control_url`
+- **Type**: `str`
+- **Default**: `ws://127.0.0.1:8011`
+- **Description**: WebSocket URL for STT control connection.
+
+#### `--data`, `--data_url`
+- **Type**: `str`
+- **Default**: `ws://127.0.0.1:8012`
+- **Description**: WebSocket URL for STT data connection.
+
+
+### Parameters only available when speech-end-detection is active:
+
+#### `--post-silence`
+- **Type**: `float`
+- **Default**: `1.0`
+- **Description**: Post speech silence duration in seconds.
+
+#### `--unknown-pause` 
+- **Type**: `float`
+- **Default**: `1.3`
+- **Description**: Unknown sentence detection pause duration in seconds.
+
+#### `--mid-pause`
+- **Type**: `float` 
+- **Default**: `3.0`
+- **Description**: Mid-sentence detection pause duration in seconds.
+
+#### `--end-pause`
+- **Type**: `float`
+- **Default**: `0.7` 
+- **Description**: End of sentence detection pause duration in seconds.
+
+#### `--hard-break`
+- **Type**: `float`
+- **Default**: `3.0`
+- **Description**: Hard break threshold in seconds when background noise is present.
+
+#### `--min-texts`
+- **Type**: `int`
+- **Default**: `3`
+- **Description**: Minimum number of texts required for hard break detection.
+
+#### `--min-similarity`
+- **Type**: `float`
+- **Default**: `0.99`
+- **Description**: Minimum text similarity threshold for hard break detection.
+
+#### `--min-chars`
+- **Type**: `int`
+- **Default**: `15`
+- **Description**: Minimum number of characters required for hard break detection.
+
+**Examples:**
 
 ```bash
-stt -s silero_sensitivity 0.1 
-stt -g silero_sensitivity
+# List available audio devices
+stt -L
+
+# Use specific input device and language
+stt -i 1 -l en
+
+# Enable intelligent speech end detection and continuous mode
+stt -sed -c
+
+# Set parameter and save audio
+stt -s silero_sensitivity 0.1 -W recording.wav
+
+# Use custom WebSocket URLs
+stt --control ws://localhost:9001 --data ws://localhost:9002
 ```
 
 ## WebSocket Interface

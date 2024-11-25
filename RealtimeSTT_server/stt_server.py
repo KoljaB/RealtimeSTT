@@ -164,6 +164,7 @@ allowed_methods = [
     'text',
 ]
 allowed_parameters = [
+    'language',
     'silero_sensitivity',
     'wake_word_activation_delay',
     'post_speech_silence_duration',
@@ -357,7 +358,7 @@ def parse_arguments():
     parser.add_argument('-m', '--model', type=str, default='large-v2',
                         help='Path to the STT model or model size. Options include: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, or any huggingface CTranslate2 STT model such as deepdml/faster-whisper-large-v3-turbo-ct2. Default is large-v2.')
 
-    parser.add_argument('-r', '--rt-model', '--realtime_model_type', type=str, default='tiny.en',
+    parser.add_argument('-r', '--rt-model', '--realtime_model_type', type=str, default='tiny',
                         help='Model size for real-time transcription. Options same as --model.  This is used only if real-time transcription is enabled (enable_realtime_transcription). Default is tiny.en.')
     
     parser.add_argument('-l', '--lang', '--language', type=str, default='en',
@@ -416,14 +417,9 @@ def parse_arguments():
     parser.add_argument('--beam_size_realtime', type=int, default=3,
                         help='Beam size for the real-time transcription model. A smaller beam size allows for faster real-time processing but may reduce accuracy. Default is 3.')
 
-    # parser.add_argument('--initial_prompt', type=str,
-    #                     default='End incomplete sentences with ellipses.\nExamples:\nComplete: The sky is blue.\nIncomplete: When the sky...\nComplete: She walked home.\nIncomplete: Because he...',
-    #                     help='Initial prompt that guides the transcription model to produce transcriptions in a particular style or format. The default provides instructions for handling sentence completions and ellipsis usage.')
-    
     parser.add_argument('--initial_prompt', type=str,
                         default="Incomplete thoughts should end with '...'. Examples of complete thoughts: 'The sky is blue.' 'She walked home.' Examples of incomplete thoughts: 'When the sky...' 'Because he...'",
                         help='Initial prompt that guides the transcription model to produce transcriptions in a particular style or format. The default provides instructions for handling sentence completions and ellipsis usage.')
-    
 
     parser.add_argument('--end_of_sentence_detection_pause', type=float, default=0.45,
                         help='The duration of silence (in seconds) that the model should interpret as the end of a sentence. This helps the system detect when to finalize the transcription of a sentence. Default is 0.45 seconds.')
