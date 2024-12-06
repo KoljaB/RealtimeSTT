@@ -6,7 +6,22 @@ WRITE_TO_KEYBOARD_INTERVAL = 0.002
 
 if __name__ == '__main__':
 
-    from install_packages import check_and_install_packages
+    import argparse
+    parser = argparse.ArgumentParser(description='Start the realtime Speech-to-Text (STT) test with various configuration options.')
+
+    parser.add_argument('-m', '--model', type=str, # no default='large-v2',
+                        help='Path to the STT model or model size. Options include: tiny, tiny.en, base, base.en, small, small.en, medium, medium.en, large-v1, large-v2, or any huggingface CTranslate2 STT model such as deepdml/faster-whisper-large-v3-turbo-ct2. Default is large-v2.')
+
+    parser.add_argument('-r', '--rt-model', '--realtime_model_type', type=str, # no default='tiny',
+                        help='Model size for real-time transcription. Options same as --model.  This is used only if real-time transcription is enabled (enable_realtime_transcription). Default is tiny.en.')
+    
+    parser.add_argument('-l', '--lang', '--language', type=str, # no default='en',
+                help='Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is en. List of supported language codes: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110')
+    
+    parser.add_argument('-d', '--root', type=str, # no default=None,
+                help='Root directory where the Whisper models are downloaded to.')
+
+    from tests.install_packages import check_and_install_packages
     check_and_install_packages([
         {
             'import_name': 'rich',
@@ -137,6 +152,7 @@ if __name__ == '__main__':
     recorder_config = {
         'spinner': False,
         'model': 'large-v2', # or large-v2 or deepdml/faster-whisper-large-v3-turbo-ct2 or ...
+        'download_root': None, # default download root location. Ex. ~/.cache/huggingface/hub/ in Linux
         # 'input_device_index': 1,
         'realtime_model_type': 'tiny.en', # or small.en or distil-small.en or ...
         'language': 'en',
@@ -163,6 +179,20 @@ if __name__ == '__main__':
             "Incomplete: Because he...\n"
         )
     }
+
+    args = parser.parse_args()
+    if args.model is not None:
+        recorder_config['model'] = args.model
+        print(f"Argument 'model' set to {recorder_config['model']}")
+    if args.rt_model is not None:
+        recorder_config['realtime_model_type'] = args.rt_model
+        print(f"Argument 'realtime_model_type' set to {recorder_config['realtime_model_type']}")
+    if args.lang is not None:
+        recorder_config['language'] = args.lang
+        print(f"Argument 'language' set to {recorder_config['language']}")
+    if args.root is not None:
+        recorder_config['download_root'] = args.root
+        print(f"Argument 'download_root' set to {recorder_config['download_root']}")
 
     if EXTENDED_LOGGING:
         recorder_config['level'] = logging.DEBUG

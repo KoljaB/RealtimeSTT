@@ -87,11 +87,12 @@ if platform.system() != 'Darwin':
 
 
 class TranscriptionWorker:
-    def __init__(self, conn, stdout_pipe, model_path, compute_type, gpu_device_index, device,
+    def __init__(self, conn, stdout_pipe, model_path, download_root, compute_type, gpu_device_index, device,
                  ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens):
         self.conn = conn
         self.stdout_pipe = stdout_pipe
         self.model_path = model_path
+        self.download_root = download_root
         self.compute_type = compute_type
         self.gpu_device_index = gpu_device_index
         self.device = device
@@ -134,6 +135,7 @@ class TranscriptionWorker:
                 device=self.device,
                 compute_type=self.compute_type,
                 device_index=self.gpu_device_index,
+                download_root=self.download_root,
             )
         except Exception as e:
             logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
@@ -195,6 +197,7 @@ class AudioToTextRecorder:
 
     def __init__(self,
                  model: str = INIT_MODEL_TRANSCRIPTION,
+                 download_root: str = None, 
                  language: str = "",
                  compute_type: str = "default",
                  input_device_index: int = None,
@@ -280,6 +283,8 @@ class AudioToTextRecorder:
                 'large-v2'.
                 If a specific size is provided, the model is downloaded
                 from the Hugging Face Hub.
+        - download_root (str, default=None): Specifies the root path were the Whisper models 
+          are downloaded to. When empty, the default is used. 
         - language (str, default=""): Language code for speech-to-text engine.
             If not specified, the model will attempt to detect the language
             automatically.
@@ -508,6 +513,7 @@ class AudioToTextRecorder:
         self.enable_realtime_transcription = enable_realtime_transcription
         self.use_main_model_for_realtime = use_main_model_for_realtime
         self.main_model_type = model
+        self.download_root = download_root
         self.realtime_model_type = realtime_model_type
         self.realtime_processing_pause = realtime_processing_pause
         self.init_realtime_after_seconds = init_realtime_after_seconds
@@ -630,7 +636,8 @@ class AudioToTextRecorder:
             args=(
                 child_transcription_pipe,
                 child_stdout_pipe,
-                model,
+                self.main_model_type,
+                self.download_root,
                 self.compute_type,
                 self.gpu_device_index,
                 self.device,
@@ -669,11 +676,13 @@ class AudioToTextRecorder:
                 logging.info("Initializing faster_whisper realtime "
                              f"transcription model {self.realtime_model_type}"
                              )
+                print(self.download_root)
                 self.realtime_model_type = faster_whisper.WhisperModel(
                     model_size_or_path=self.realtime_model_type,
                     device=self.device,
                     compute_type=self.compute_type,
-                    device_index=self.gpu_device_index
+                    device_index=self.gpu_device_index,
+                    download_root=self.download_root,
                 )
 
             except Exception as e:
