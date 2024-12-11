@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.3.81
+Latest Version: v0.3.9
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -450,6 +450,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 
 - **level** (int, default=logging.WARNING): Logging level.
 
+- **batch_size** (int, default=16): Batch size for the main transcription. Set to 0 to deactivate.
+
 - **init_logging** (bool, default=True): Whether to initialize the logging framework. Set to False to manage this yourself.
 
 - **handle_buffer_overflow** (bool, default=True): If set, the system will log a warning when an input overflow occurs during recording and remove the data from the buffer.
@@ -488,6 +490,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **on_realtime_transcription_update**: A callback function that is triggered whenever there's an update in the real-time transcription. The function is called with the newly transcribed text as its argument.
 
 - **on_realtime_transcription_stabilized**: A callback function that is triggered whenever there's an update in the real-time transcription and returns a higher quality, stabilized text as its argument.
+
+- **realtime_batch_size**: (int, default=16): Batch size for the real-time transcription model. Set to 0 to deactivate.
 
 - **beam_size_realtime** (int, default=3): The beam size to use for real-time transcription beam search decoding.
 

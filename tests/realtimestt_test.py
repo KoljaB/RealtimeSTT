@@ -21,7 +21,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--root', type=str, # no default=None,
                 help='Root directory where the Whisper models are downloaded to.')
 
-    from tests.install_packages import check_and_install_packages
+    from install_packages import check_and_install_packages
     check_and_install_packages([
         {
             'import_name': 'rich',
@@ -169,6 +169,8 @@ if __name__ == '__main__':
         'early_transcription_on_silence': 0,
         'beam_size': 5,
         'beam_size_realtime': 3,
+        # 'batch_size': 0,
+        # 'realtime_batch_size': 0,        
         'no_log_file': True,
         'initial_prompt': (
             "End incomplete sentences with ellipses.\n"
