@@ -1,5 +1,5 @@
 PyAudio==0.2.14
-faster-whisper==1.0.3
+faster-whisper==1.1.0
 pvporcupine==1.9.5
 webrtcvad-wheels==2.0.14
 halo==0.0.31
@@ -7,6 +7,6 @@ torch
 torchaudio
 scipy==1.14.1
 openwakeword>=0.4.0
-websockets==v12.0
+websockets==14.1
 websocket-client==1.8.0
 numpy<2.0.0
