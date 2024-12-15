@@ -295,8 +295,8 @@ class AudioToTextRecorder:
                  on_recorded_chunk=None,
                  debug_mode=False,
                  handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW,
-                 beam_size: int = 5, #<---indicaquanti rami di ricerca deve mantenere aperti ad gni step(https://en.wikipedia.org/wiki/Beam_search) (1=+veloce-precisaNelContesto ...5=-veloce+precisaNelContesto )  (1-esegue ricerca in profondita un ramo, 5 -esegue ricerca in profondita 5rami contemp.)
-                 beam_size_realtime: int = 3, #<---indicaquanti rami di ricerca deve mantenere aperti ad gni step(https://en.wikipedia.org/wiki/Beam_search) (1=+veloce-precisaNelContesto ...5=-veloce+precisaNelContesto )  (1-esegue ricerca in profondita un ramo, 5 -esegue ricerca in profondita 5rami contemp.)
+                 beam_size: int = 5, #<---how many searching path to use.(https://en.wikipedia.org/wiki/Beam_search) (1=faster,lessContextPrecision ...5=lower,more context precision)  (1-deep search in 1 branch, 5 -deep search in 5 branchs simultan.)
+                 beam_size_realtime: int = 3, #<---how many searching path to use.(https://en.wikipedia.org/wiki/Beam_search) (1=faster,lessContextPrecision ...5=lower,more context precision)  (1-deep search in 1 branch, 5 -deep search in 5 branchs simultan.)
                  buffer_size: int = BUFFER_SIZE,
                  sample_rate: int = SAMPLE_RATE,
                  initial_prompt: Optional[Union[str, Iterable[int]]] = None,
@@ -697,7 +697,7 @@ class AudioToTextRecorder:
                 self.initial_prompt,
                 self.suppress_tokens,
                 self.batch_size,
-				self.task,
+		self.task,
                 self.without_timestamps,
                 self.word_timestamps ,
             )
@@ -2074,7 +2074,7 @@ class AudioToTextRecorder:
           and a callback
         function is invoked with this text if specified.
         """
-        ###TR## better inside circle
+        ### better inside the loop
         # try:
 
         logging.debug('Starting realtime worker')
