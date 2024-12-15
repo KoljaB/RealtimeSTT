@@ -57,6 +57,8 @@ import copy
 import os
 import re
 import gc
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 # Set OpenMP runtime duplicate library handling to OK (Use only for development!)
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
@@ -86,10 +88,10 @@ INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
 
-
 class TranscriptionWorker:
     def __init__(self, conn, stdout_pipe, model_path, download_root, compute_type, gpu_device_index, device,
-                 ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens, batch_size):
+                 ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens, batch_size,
+                 task,	word_timestamps, without_timestamps):
         self.conn = conn
         self.stdout_pipe = stdout_pipe
         self.model_path = model_path
@@ -104,7 +106,10 @@ class TranscriptionWorker:
         self.initial_prompt = initial_prompt
         self.suppress_tokens = suppress_tokens
         self.batch_size = batch_size
-        self.queue = queue.Queue()
+        self.queue = queue.Queue()        
+        self.task = task
+        self.without_timestamps = without_timestamps		
+        self.word_timestamps = word_timestamps
 
     def custom_print(self, *args, **kwargs):
         message = ' '.join(map(str, args))
@@ -131,16 +136,18 @@ class TranscriptionWorker:
 
         logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
 
+
         try:
             model = faster_whisper.WhisperModel(
                 model_size_or_path=self.model_path,
-                device=self.device,
+                device=self.device,###'cuda' if torch.cuda.is_available() else 'cpu',
                 compute_type=self.compute_type,
                 device_index=self.gpu_device_index,
                 download_root=self.download_root,
             )
             if self.batch_size > 0:
                 model = BatchedInferencePipeline(model=model)
+
         except Exception as e:
             logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
             raise
@@ -164,7 +171,10 @@ class TranscriptionWorker:
                                 beam_size=self.beam_size,
                                 initial_prompt=self.initial_prompt,
                                 suppress_tokens=self.suppress_tokens,
-                                batch_size=self.batch_size
+                                batch_size=self.batch_size,
+                                task=self.task,
+	                            without_timestamps=self.without_timestamps,
+	                            word_timestamps=self.word_timestamps                              
                             )
                         else:
                             segments, info = model.transcribe(
@@ -172,9 +182,18 @@ class TranscriptionWorker:
                                 language=language if language else None,
                                 beam_size=self.beam_size,
                                 initial_prompt=self.initial_prompt,
-                                suppress_tokens=self.suppress_tokens
+                                suppress_tokens=self.suppress_tokens,
+                                task=self.task,
+	                            without_timestamps=self.without_timestamps,
+	                            word_timestamps=self.word_timestamps
                             )
 
+                        # # Print transcription and translation segments
+                        #print("Detected language '%s' with probability %f" % (info.language, info.language_probability))
+                        # for segment in segments:
+                        #     print("\n[%.2fs - %.2fs] %s" % (segment.start, segment.end, segment.text))
+                        # time.sleep(10)                            
+                        #segments = segments[0]
                         transcription = " ".join(seg.text for seg in segments).strip()
                         logging.debug(f"Final text detected with main model: {transcription}")
                         self.conn.send(('success', (transcription, info)))
@@ -259,7 +278,7 @@ class AudioToTextRecorder:
                  on_vad_detect_stop=None,
 
                  # Wake word parameters
-                 wakeword_backend: str = "pvporcupine",
+                 wakeword_backend: str = "pvporcupine",   #"oww", "pvporcupine"
                  openwakeword_model_paths: str = None,
                  openwakeword_inference_framework: str = "onnx",
                  wake_words: str = "",
@@ -276,8 +295,8 @@ class AudioToTextRecorder:
                  on_recorded_chunk=None,
                  debug_mode=False,
                  handle_buffer_overflow: bool = INIT_HANDLE_BUFFER_OVERFLOW,
-                 beam_size: int = 5,
-                 beam_size_realtime: int = 3,
+                 beam_size: int = 5, #<---indicaquanti rami di ricerca deve mantenere aperti ad gni step(https://en.wikipedia.org/wiki/Beam_search) (1=+veloce-precisaNelContesto ...5=-veloce+precisaNelContesto )  (1-esegue ricerca in profondita un ramo, 5 -esegue ricerca in profondita 5rami contemp.)
+                 beam_size_realtime: int = 3, #<---indicaquanti rami di ricerca deve mantenere aperti ad gni step(https://en.wikipedia.org/wiki/Beam_search) (1=+veloce-precisaNelContesto ...5=-veloce+precisaNelContesto )  (1-esegue ricerca in profondita un ramo, 5 -esegue ricerca in profondita 5rami contemp.)
                  buffer_size: int = BUFFER_SIZE,
                  sample_rate: int = SAMPLE_RATE,
                  initial_prompt: Optional[Union[str, Iterable[int]]] = None,
@@ -287,7 +306,11 @@ class AudioToTextRecorder:
                  allowed_latency_limit: int = ALLOWED_LATENCY_LIMIT,
                  no_log_file: bool = False,
                  use_extended_logging: bool = False,
+                 task: str = "transcribe",
+                 without_timestamps: int = False,
+                 word_timestamps: int = True,
                  ):
+        print(  "AudioToTextRecorder___INIT___batched_model" )
         """
         Initializes an audio recorder and  transcription
         and wake word detection.
@@ -494,7 +517,9 @@ class AudioToTextRecorder:
         - use_extended_logging (bool, default=False): Writes extensive
             log messages for the recording worker, that processes the audio
             chunks.
-
+        - task "translate" or "transcribe"
+        - without_timestamps: int = False,
+        - word_timestamps: int = True,
         Raises:
             Exception: Errors related to initializing transcription
             model, wake word detection, or audio recording.
@@ -595,7 +620,9 @@ class AudioToTextRecorder:
         self.print_transcription_time = print_transcription_time
         self.early_transcription_on_silence = early_transcription_on_silence
         self.use_extended_logging = use_extended_logging
-
+        self.task = task
+        self.without_timestamps = without_timestamps
+        self.word_timestamps = word_timestamps
         # Initialize the logging configuration with the specified level
         log_format = 'RealTimeSTT: %(name)s - %(levelname)s - %(message)s'
 
@@ -669,7 +696,10 @@ class AudioToTextRecorder:
                 self.beam_size,
                 self.initial_prompt,
                 self.suppress_tokens,
-                self.batch_size
+                self.batch_size,
+				self.task,
+                self.without_timestamps,
+                self.word_timestamps ,
             )
         )
 
@@ -824,7 +854,6 @@ class AudioToTextRecorder:
                 verbose=False,
                 onnx=silero_use_onnx
             )
-
         except Exception as e:
             logging.exception(f"Error initializing Silero VAD "
                               f"voice activity detection engine: {e}"
@@ -2045,18 +2074,18 @@ class AudioToTextRecorder:
           and a callback
         function is invoked with this text if specified.
         """
+        ###TR## better inside circle
+        # try:
 
-        try:
+        logging.debug('Starting realtime worker')
 
-            logging.debug('Starting realtime worker')
+        # Return immediately if real-time transcription is not enabled
+        if not self.enable_realtime_transcription:
+            return
 
-            # Return immediately if real-time transcription is not enabled
-            if not self.enable_realtime_transcription:
-                return
-
-            # Continue running as long as the main process is active
-            while self.is_running:
-
+        # Continue running as long as the main process is active
+        while self.is_running:
+            try:
                 # Check if the recording is active
                 if self.is_recording:
 
@@ -2106,7 +2135,10 @@ class AudioToTextRecorder:
                                 beam_size=self.beam_size_realtime,
                                 initial_prompt=self.initial_prompt,
                                 suppress_tokens=self.suppress_tokens,
-                                batch_size=self.realtime_batch_size
+                                batch_size=self.realtime_batch_size,
+								task=self.task,
+								without_timestamps=self.without_timestamps,
+								word_timestamps=self.word_timestamps                                
                             )
                         else:
                             segments, info = self.realtime_model_type.transcribe(
@@ -2114,7 +2146,10 @@ class AudioToTextRecorder:
                                 language=self.language if self.language else None,
                                 beam_size=self.beam_size_realtime,
                                 initial_prompt=self.initial_prompt,
-                                suppress_tokens=self.suppress_tokens
+                                suppress_tokens=self.suppress_tokens,
+								task=self.task,
+								without_timestamps=self.without_timestamps,
+								word_timestamps=self.word_timestamps
                             )
 
                         self.detected_realtime_language = info.language if info.language_probability > 0 else None
@@ -2207,10 +2242,14 @@ class AudioToTextRecorder:
                 # If not recording, sleep briefly before checking again
                 else:
                     time.sleep(TIME_SLEEP)
+            except Exception as e:
+                logging.error("")
 
-        except Exception as e:
-            logging.error(f"Unhandled exeption in _realtime_worker: {e}")
-            raise
+        # except Exception as e:
+        #     logging.error(f"Unhandled exeption in _realtime_worker: {e}")
+        #     raise
+
+       
 
     def _is_silero_speech(self, chunk):
         """
@@ -2555,3 +2594,4 @@ class AudioToTextRecorder:
               exception, if any.
         """
         self.shutdown()
+
