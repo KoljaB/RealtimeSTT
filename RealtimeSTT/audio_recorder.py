@@ -173,8 +173,8 @@ class TranscriptionWorker:
                                 suppress_tokens=self.suppress_tokens,
                                 batch_size=self.batch_size,
                                 task=self.task,
-	                            without_timestamps=self.without_timestamps,
-	                            word_timestamps=self.word_timestamps                              
+	                        without_timestamps=self.without_timestamps,
+	                        word_timestamps=self.word_timestamps                              
                             )
                         else:
                             segments, info = model.transcribe(
@@ -184,8 +184,8 @@ class TranscriptionWorker:
                                 initial_prompt=self.initial_prompt,
                                 suppress_tokens=self.suppress_tokens,
                                 task=self.task,
-	                            without_timestamps=self.without_timestamps,
-	                            word_timestamps=self.word_timestamps
+	                        without_timestamps=self.without_timestamps,
+	                        word_timestamps=self.word_timestamps
                             )
 
                         # # Print transcription and translation segments
