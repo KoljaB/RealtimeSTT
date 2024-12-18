@@ -27,6 +27,8 @@ stt-server [OPTIONS]
     - `-D, --debug`: Enable debug logging.
     - `-W, --write`: Save audio to WAV file.
     - `-s, --silence_timing`: Enable dynamic silence duration for sentence detection; default True. 
+    - `-b, --batch, --batch_size`: Batch size for inference; default 16.
+    - `--root, --download_root`: Specifies the root path were the Whisper models are downloaded to.
     - `--silero_sensitivity`: Silero VAD sensitivity (0-1); default 0.05.
     - `--silero_use_onnx`: Use Silero ONNX model; default False.
     - `--webrtc_sensitivity`: WebRTC VAD sensitivity (0-3); default 3.
@@ -38,7 +40,10 @@ stt-server [OPTIONS]
     - `--early_transcription_on_silence`: Start transcription after silence in seconds; default 0.2.
     - `--beam_size`: Beam size for main model; default 5.
     - `--beam_size_realtime`: Beam size for real-time model; default 3.
-    - `--initial_prompt`: Initial transcription guidance prompt.
+    - `--init_realtime_after_seconds`: Initial waiting time for realtime transcription; default 0.2.
+    - `--realtime_batch_size`: Batch size for the real-time transcription model; default 16.
+    - `--initial_prompt`: Initial main transcription guidance prompt.
+    - `--initial_prompt_realtime`: Initial realtime transcription guidance prompt.
     - `--end_of_sentence_detection_pause`: Silence duration for sentence end detection; default 0.45.
     - `--unknown_sentence_detection_pause`: Pause duration for incomplete sentence detection; default 0.7.
     - `--mid_sentence_detection_pause`: Pause for mid-sentence break; default 2.0.
@@ -52,6 +57,14 @@ stt-server [OPTIONS]
     - `--use_main_model_for_realtime`: Use main model for real-time transcription.
     - `--use_extended_logging`: Enable extensive log messages.
     - `--logchunks`: Log incoming audio chunks.
+    - `--compute_type`: Type of computation to use.
+    - `--input_device_index`: Index of the audio input device.
+    - `--gpu_device_index`: Index of the GPU device.
+    - `--device`: Device to use for computation.
+    - `--handle_buffer_overflow`: Handle buffer overflow during transcription.
+    - `--suppress_tokens`: Suppress tokens during transcription.
+    - `--allowed_latency_limit`: Allowed latency limit for real-time transcription.
+
 
 ### WebSocket Interface:
 The server supports two WebSocket connections:
@@ -364,7 +377,7 @@ def parse_arguments():
     parser.add_argument('-l', '--lang', '--language', type=str, default='en',
                 help='Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is en. List of supported language codes: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110')
 
-    parser.add_argument('-i', '--input-device', '--input_device_index', type=int, default=1,
+    parser.add_argument('-i', '--input-device', '--input-device-index', type=int, default=1,
                     help='Index of the audio input device to use. Use this option to specify a particular microphone or audio input device based on your system. Default is 1.')
 
     parser.add_argument('-c', '--control', '--control_port', type=int, default=8011,
@@ -378,11 +391,22 @@ def parse_arguments():
 
     parser.add_argument('-D', '--debug', action='store_true', help='Enable debug logging for detailed server operations')
 
-    parser.add_argument("-W", "--write", metavar="FILE",
-                        help="Save received audio to a WAV file")
+    parser.add_argument('-W', '--write', metavar='FILE', help='Save received audio to a WAV file')
+    
+    parser.add_argument('-b', '--batch', '--batch_size', type=int, default=16, help='Batch size for inference. This parameter controls the number of audio chunks processed in parallel during transcription. Default is 16.')
+
+    parser.add_argument('--root', '--download_root', type=str,default=None, help='Specifies the root path where the Whisper models are downloaded to. Default is None.')
 
     parser.add_argument('-s', '--silence_timing', action='store_true', default=True,
                     help='Enable dynamic adjustment of silence duration for sentence detection. Adjusts post-speech silence duration based on detected sentence structure and punctuation. Default is False.')
+
+    parser.add_argument('--init_realtime_after_seconds', type=float, default=0.2,
+                        help='The initial waiting time in seconds before real-time transcription starts. This delay helps prevent false positives at the beginning of a session. Default is 0.2 seconds.')  
+    
+    parser.add_argument('--realtime_batch_size', type=int, default=16,
+                        help='Batch size for the real-time transcription model. This parameter controls the number of audio chunks processed in parallel during real-time transcription. Default is 16.')
+    
+    parser.add_argument('--initial_prompt_realtime', type=str, default="", help='Initial prompt that guides the real-time transcription model to produce transcriptions in a particular style or format.')
 
     parser.add_argument('--silero_sensitivity', type=float, default=0.05,
                         help='Sensitivity level for Silero Voice Activity Detection (VAD), with a range from 0 to 1. Lower values make the model less sensitive, useful for noisy environments. Default is 0.05.')
@@ -457,6 +481,23 @@ def parse_arguments():
     parser.add_argument('--use_extended_logging', action='store_true',
                         help='Writes extensive log messages for the recording worker, that processes the audio chunks.')
 
+    parser.add_argument('--compute_type', type=str, default='default',
+                        help='Type of computation to use. See https://opennmt.net/CTranslate2/quantization.html')
+
+    parser.add_argument('--gpu_device_index', type=int, default=0,
+                        help='Index of the GPU device to use. Default is None.')
+    
+    parser.add_argument('--device', type=str, default='cuda',
+                        help='Device for model to use. Can either be "cuda" or "cpu". Default is cuda.')
+    
+    parser.add_argument('--handle_buffer_overflow', action='store_true',
+                        help='Handle buffer overflow during transcription. Default is False.')
+
+    parser.add_argument('--suppress_tokens', type=int, default=[-1], nargs='*', help='Suppress tokens during transcription. Default is [-1].')
+
+    parser.add_argument('--allowed_latency_limit', type=int, default=100,
+                        help='Maximal amount of chunks that can be unprocessed in queue before discarding chunks.. Default is 100.')
+
     parser.add_argument('--logchunks', action='store_true', help='Enable logging of incoming audio chunks (periods)')
 
     # Parse arguments
@@ -478,6 +519,9 @@ def parse_arguments():
     # Replace escaped newlines with actual newlines in initial_prompt
     if args.initial_prompt:
         args.initial_prompt = args.initial_prompt.replace("\\n", "\n")
+
+    if args.initial_prompt_realtime:
+        args.initial_prompt_realtime = args.initial_prompt_realtime.replace("\\n", "\n")
 
     return args
 
@@ -534,7 +578,7 @@ def decode_and_resample(
 
     return resampled_audio.astype(np.int16).tobytes()
 
-async def control_handler(websocket, path):
+async def control_handler(websocket):
     debug_print(f"New control connection from {websocket.remote_address}")
     print(f"{bcolors.OKGREEN}Control client connected{bcolors.ENDC}")
     global recorder
@@ -629,7 +673,7 @@ async def control_handler(websocket, path):
     finally:
         control_connections.remove(websocket)
 
-async def data_handler(websocket, path):
+async def data_handler(websocket):
     global writechunks, wav_file
     print(f"{bcolors.OKGREEN}Data client connected{bcolors.ENDC}")
     data_connections.add(websocket)
@@ -700,8 +744,13 @@ async def main_async():
 
     recorder_config = {
         'model': args.model,
+        'download_root': args.root,
         'realtime_model_type': args.rt_model,
         'language': args.lang,
+        'batch_size': args.batch,
+        'init_realtime_after_seconds': args.init_realtime_after_seconds,
+        'realtime_batch_size': args.realtime_batch_size,
+        'initial_prompt_realtime': args.initial_prompt_realtime,
         'input_device_index': args.input_device,
         'silero_sensitivity': args.silero_sensitivity,
         'silero_use_onnx': args.silero_use_onnx,
@@ -740,6 +789,12 @@ async def main_async():
         'no_log_file': True,  # Disable logging to file
         'use_extended_logging': args.use_extended_logging,
         'level': loglevel,
+        'compute_type': args.compute_type,
+        'gpu_device_index': args.gpu_device_index,
+        'device': args.device,
+        'handle_buffer_overflow': args.handle_buffer_overflow,
+        'suppress_tokens': args.suppress_tokens,
+        'allowed_latency_limit': args.allowed_latency_limit,
     }
 
     try:

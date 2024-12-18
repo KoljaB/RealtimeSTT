@@ -50,6 +50,8 @@ if __name__ == '__main__':
 
     tokenizer = DistilBertTokenizerFast.from_pretrained(model_dir)
     classification_model = DistilBertForSequenceClassification.from_pretrained(model_dir)
+    # tokenizer = DistilBertTokenizerFast.from_pretrained(model_dir, force_download=True)
+    # classification_model = DistilBertForSequenceClassification.from_pretrained(model_dir, force_download=True)
     classification_model.to(device)
     classification_model.eval()
 
@@ -85,7 +87,7 @@ if __name__ == '__main__':
     anchor_points = [
         (0.0, 1.0),
         (1.0, 0)
-    ]    
+    ]
     # anchor_points = [
     #     (0.0, 0.4),
     #     (0.5, 0.3),
@@ -144,10 +146,9 @@ if __name__ == '__main__':
     text_time_deque = deque()
 
     # Default values
-    #rapid_sentence_end_detection = 0.2
     end_of_sentence_detection_pause = 0.3
     unknown_sentence_detection_pause = 0.8
-    mid_sentence_detection_pause = 2.0
+    mid_sentence_detection_pause = 1.7
     hard_break_even_on_background_noise = 3.0
     hard_break_even_on_background_noise_min_texts = 3
     hard_break_even_on_background_noise_min_chars = 15
@@ -172,12 +173,13 @@ if __name__ == '__main__':
     def additional_pause_based_on_words(text):
         word_count = len(text.split())
         pauses = {
-            1: 0.6,
-            2: 0.5,
-            3: 0.4,
-            4: 0.3,
-            5: 0.2,
-            6: 0.1,
+            0: 0.35,
+            1: 0.3,
+            2: 0.25,
+            3: 0.2,
+            4: 0.15,
+            5: 0.1,
+            6: 0.05,
         }
         return pauses.get(word_count, 0.0)
 
@@ -185,13 +187,31 @@ if __name__ == '__main__':
         global recorder, full_sentences, prev_text, displayed_text, rich_text_stored, text_time_deque, abrupt_stop, rapid_sentence_end_detection
 
         while True:
+            text = None  # Initialize text to ensure it's defined
+
             try:
+                # Attempt to retrieve the first item, blocking with timeout
                 text = text_queue.get(timeout=1)
             except queue.Empty:
-                continue
+                continue  # No item retrieved, continue the loop
 
             if text is None:
-                # Exit
+                # Exit signal received
+                break
+
+            # Drain the queue to get the latest text
+            try:
+                while True:
+                    latest_text = text_queue.get_nowait()
+                    if latest_text is None:
+                        text = None
+                        break
+                    text = latest_text
+            except queue.Empty:
+                pass  # No more items to retrieve
+
+            if text is None:
+                # Exit signal received after draining
                 break
 
             text = preprocess_text(text)
@@ -274,7 +294,7 @@ if __name__ == '__main__':
 
     def process_text(text):
         global recorder, full_sentences, prev_text, abrupt_stop
-        #if IS_DEBUG: print(f"SENTENCE: post_speech_silence_duration: {recorder.post_speech_silence_duration}")
+        if IS_DEBUG: print(f"SENTENCE: post_speech_silence_duration: {recorder.post_speech_silence_duration}")
         recorder.post_speech_silence_duration = unknown_sentence_detection_pause
         text = preprocess_text(text)
         text = text.rstrip()
@@ -312,7 +332,7 @@ if __name__ == '__main__':
         'beam_size': 5,
         'beam_size_realtime': 3,
         'no_log_file': True,
-        'initial_prompt': (
+        'initial_prompt_realtime': (
             "End incomplete sentences with ellipses.\n"
             "Examples:\n"
             "Complete: The sky is blue.\n"

@@ -28,6 +28,7 @@ DEFAULT_DATA_URL = "ws://127.0.0.1:8012"
 INIT_MODEL_TRANSCRIPTION = "tiny"
 INIT_MODEL_TRANSCRIPTION_REALTIME = "tiny"
 INIT_REALTIME_PROCESSING_PAUSE = 0.2
+INIT_REALTIME_INITIAL_PAUSE = 0.2
 INIT_SILERO_SENSITIVITY = 0.4
 INIT_WEBRTC_SENSITIVITY = 3
 INIT_POST_SPEECH_SILENCE_DURATION = 0.6
@@ -68,6 +69,7 @@ class AudioToTextRecorderClient:
 
     def __init__(self,
                  model: str = INIT_MODEL_TRANSCRIPTION,
+                 download_root: str = None, 
                  language: str = "",
                  compute_type: str = "default",
                  input_device_index: int = None,
@@ -81,14 +83,17 @@ class AudioToTextRecorderClient:
                  use_microphone=True,
                  spinner=True,
                  level=logging.WARNING,
+                 batch_size: int = 16,
 
                  # Realtime transcription parameters
                  enable_realtime_transcription=False,
                  use_main_model_for_realtime=False,
                  realtime_model_type=INIT_MODEL_TRANSCRIPTION_REALTIME,
                  realtime_processing_pause=INIT_REALTIME_PROCESSING_PAUSE,
+                 init_realtime_after_seconds=INIT_REALTIME_INITIAL_PAUSE,
                  on_realtime_transcription_update=None,
                  on_realtime_transcription_stabilized=None,
+                 realtime_batch_size: int = 16,
 
                  # Voice activation parameters
                  silero_sensitivity: float = INIT_SILERO_SENSITIVITY,
@@ -133,6 +138,7 @@ class AudioToTextRecorderClient:
                  buffer_size: int = BUFFER_SIZE,
                  sample_rate: int = SAMPLE_RATE,
                  initial_prompt: Optional[Union[str, Iterable[int]]] = None,
+                 initial_prompt_realtime: Optional[Union[str, Iterable[int]]] = None,
                  suppress_tokens: Optional[List[int]] = [-1],
                  print_transcription_time: bool = False,
                  early_transcription_on_silence: int = 0,
@@ -162,10 +168,14 @@ class AudioToTextRecorderClient:
         self.use_microphone = use_microphone
         self.spinner = spinner
         self.level = level
+        self.batch_size = batch_size
+        self.init_realtime_after_seconds = init_realtime_after_seconds
+        self.realtime_batch_size = realtime_batch_size
 
         # Real-time transcription parameters
         self.enable_realtime_transcription = enable_realtime_transcription
         self.use_main_model_for_realtime = use_main_model_for_realtime
+        self.download_root = download_root
         self.realtime_model_type = realtime_model_type
         self.realtime_processing_pause = realtime_processing_pause
         self.on_realtime_transcription_update = on_realtime_transcription_update
@@ -204,6 +214,7 @@ class AudioToTextRecorderClient:
         self.buffer_size = buffer_size
         self.sample_rate = sample_rate
         self.initial_prompt = initial_prompt
+        self.initial_prompt_realtime = initial_prompt_realtime
         self.suppress_tokens = suppress_tokens
         self.print_transcription_time = print_transcription_time
         self.early_transcription_on_silence = early_transcription_on_silence
@@ -376,6 +387,43 @@ class AudioToTextRecorderClient:
             args += ['--model', self.model]
         if self.realtime_model_type:
             args += ['--realtime_model_type', self.realtime_model_type]
+        if self.download_root:
+            args += ['--root', self.download_root]
+        if self.batch_size is not None:
+            args += ['--batch', str(self.batch_size)]
+        if self.realtime_batch_size is not None:
+            args += ['--realtime_batch_size', str(self.realtime_batch_size)]
+        if self.init_realtime_after_seconds is not None:
+            args += ['--init_realtime_after_seconds', str(self.init_realtime_after_seconds)]
+        if self.initial_prompt_realtime:
+            sanitized_prompt = self.initial_prompt_realtime.replace("\n", "\\n")
+            args += ['--initial_prompt_realtime', sanitized_prompt]
+
+        # if self.compute_type:
+        #     args += ['--compute_type', self.compute_type]
+        # if self.input_device_index is not None:
+        #     args += ['--input_device_index', str(self.input_device_index)]
+        # if self.gpu_device_index is not None:
+        #     args += ['--gpu_device_index', str(self.gpu_device_index)]
+        # if self.device:
+        #     args += ['--device', self.device]
+        # if self.spinner:
+        #     args.append('--spinner')  # flag, no need for True/False
+        # if self.enable_realtime_transcription:
+        #     args.append('--enable_realtime_transcription')  # flag, no need for True/False
+        # if self.handle_buffer_overflow:
+        #     args.append('--handle_buffer_overflow')  # flag, no need for True/False
+        # if self.suppress_tokens:
+        #     args += ['--suppress_tokens', str(self.suppress_tokens)]
+        # if self.print_transcription_time:
+        #     args.append('--print_transcription_time')  # flag, no need for True/False
+        # if self.allowed_latency_limit is not None:
+        #     args += ['--allowed_latency_limit', str(self.allowed_latency_limit)]
+        # if self.no_log_file:
+        #     args.append('--no_log_file')  # flag, no need for True
+        # if self.debug_mode:
+        #     args.append('--debug')  # flag, no need for True/False
+            
         if self.language:
             args += ['--language', self.language]
         if self.silero_sensitivity is not None:

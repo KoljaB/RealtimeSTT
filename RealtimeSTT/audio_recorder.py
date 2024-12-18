@@ -139,8 +139,13 @@ class TranscriptionWorker:
                 device_index=self.gpu_device_index,
                 download_root=self.download_root,
             )
+            # Create a short dummy audio array, for example 1 second of silence at 16 kHz
             if self.batch_size > 0:
                 model = BatchedInferencePipeline(model=model)
+
+            # Run a warm-up transcription
+            dummy_audio = np.zeros(16000, dtype=np.float32)
+            model.transcribe(dummy_audio, language="en", beam_size=1)
         except Exception as e:
             logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
             raise
@@ -281,6 +286,7 @@ class AudioToTextRecorder:
                  buffer_size: int = BUFFER_SIZE,
                  sample_rate: int = SAMPLE_RATE,
                  initial_prompt: Optional[Union[str, Iterable[int]]] = None,
+                 initial_prompt_realtime: Optional[Union[str, Iterable[int]]] = None,
                  suppress_tokens: Optional[List[int]] = [-1],
                  print_transcription_time: bool = False,
                  early_transcription_on_silence: int = 0,
@@ -294,12 +300,12 @@ class AudioToTextRecorder:
 
         Args:
         - model (str, default="tiny"): Specifies the size of the transcription
-          model to use or the path to a converted model directory.
-                Valid options are 'tiny', 'tiny.en', 'base', 'base.en',
-                'small', 'small.en', 'medium', 'medium.en', 'large-v1',
-                'large-v2'.
-                If a specific size is provided, the model is downloaded
-                from the Hugging Face Hub.
+            model to use or the path to a converted model directory.
+            Valid options are 'tiny', 'tiny.en', 'base', 'base.en',
+            'small', 'small.en', 'medium', 'medium.en', 'large-v1',
+            'large-v2'.
+            If a specific size is provided, the model is downloaded
+            from the Hugging Face Hub.
         - download_root (str, default=None): Specifies the root path were the Whisper models 
           are downloaded to. When empty, the default is used. 
         - language (str, default=""): Language code for speech-to-text engine.
@@ -472,7 +478,9 @@ class AudioToTextRecorder:
             recording. Changing this will very probably functionality (as the
             WebRTC VAD model is very sensitive towards the sample rate).
         - initial_prompt (str or iterable of int, default=None): Initial
-            prompt to be fed to the transcription models.
+            prompt to be fed to the main transcription model.
+        - initial_prompt_realtime (str or iterable of int, default=None):
+            Initial prompt to be fed to the real-time transcription model.
         - suppress_tokens (list of int, default=[-1]): Tokens to be suppressed
             from the transcription output.
         - print_transcription_time (bool, default=False): Logs processing time
@@ -533,6 +541,8 @@ class AudioToTextRecorder:
         self.enable_realtime_transcription = enable_realtime_transcription
         self.use_main_model_for_realtime = use_main_model_for_realtime
         self.main_model_type = model
+        if not download_root:
+            download_root = None
         self.download_root = download_root
         self.realtime_model_type = realtime_model_type
         self.realtime_processing_pause = realtime_processing_pause
@@ -583,6 +593,7 @@ class AudioToTextRecorder:
         self.last_transcription_bytes = None
         self.last_transcription_bytes_b64 = None
         self.initial_prompt = initial_prompt
+        self.initial_prompt_realtime = initial_prompt_realtime
         self.suppress_tokens = suppress_tokens
         self.use_wake_words = wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}
         self.detected_language = None
@@ -697,7 +708,11 @@ class AudioToTextRecorder:
         if self.enable_realtime_transcription and not self.use_main_model_for_realtime:
             try:
                 logging.info("Initializing faster_whisper realtime "
-                             f"transcription model {self.realtime_model_type}"
+                             f"transcription model {self.realtime_model_type}, "
+                             f"default device: {self.device}, "
+                             f"compute type: {self.compute_type}, "
+                             f"device index: {self.gpu_device_index}, "
+                             f"download root: {self.download_root}"
                              )
                 self.realtime_model_type = faster_whisper.WhisperModel(
                     model_size_or_path=self.realtime_model_type,
@@ -708,7 +723,8 @@ class AudioToTextRecorder:
                 )
                 if self.realtime_batch_size > 0:
                     self.realtime_model_type = BatchedInferencePipeline(model=self.realtime_model_type)
-
+                dummy_audio = np.zeros(16000, dtype=np.float32)
+                self.realtime_model_type.transcribe(dummy_audio, language="en", beam_size=1)
             except Exception as e:
                 logging.exception("Error initializing faster_whisper "
                                   f"realtime transcription model: {e}"
@@ -2104,7 +2120,7 @@ class AudioToTextRecorder:
                                 audio_array,
                                 language=self.language if self.language else None,
                                 beam_size=self.beam_size_realtime,
-                                initial_prompt=self.initial_prompt,
+                                initial_prompt=self.initial_prompt_realtime,
                                 suppress_tokens=self.suppress_tokens,
                                 batch_size=self.realtime_batch_size
                             )
@@ -2113,7 +2129,7 @@ class AudioToTextRecorder:
                                 audio_array,
                                 language=self.language if self.language else None,
                                 beam_size=self.beam_size_realtime,
-                                initial_prompt=self.initial_prompt,
+                                initial_prompt=self.initial_prompt_realtime,
                                 suppress_tokens=self.suppress_tokens
                             )
 
