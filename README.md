@@ -40,7 +40,6 @@ See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
 ```python
 from RealtimeSTT import AudioToTextRecorder
-import pyautogui
 
 def process_text(text):
     print(text)
