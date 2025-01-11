@@ -89,7 +89,7 @@ if platform.system() != 'Darwin':
 
 class TranscriptionWorker:
     def __init__(self, conn, stdout_pipe, model_path, download_root, compute_type, gpu_device_index, device,
-                 ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens, batch_size):
+                 ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens, batch_size, language):
         self.conn = conn
         self.stdout_pipe = stdout_pipe
         self.model_path = model_path
@@ -105,6 +105,7 @@ class TranscriptionWorker:
         self.suppress_tokens = suppress_tokens
         self.batch_size = batch_size
         self.queue = queue.Queue()
+        self.language = language
 
     def custom_print(self, *args, **kwargs):
         message = ' '.join(map(str, args))
@@ -145,7 +146,7 @@ class TranscriptionWorker:
 
             # Run a warm-up transcription
             dummy_audio = np.zeros(16000, dtype=np.float32)
-            model.transcribe(dummy_audio, language="en", beam_size=1)
+            model.transcribe(dummy_audio, language=self.language, beam_size=1)
         except Exception as e:
             logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
             raise
@@ -217,8 +218,8 @@ class AudioToTextRecorder:
 
     def __init__(self,
                  model: str = INIT_MODEL_TRANSCRIPTION,
-                 download_root: str = None, 
-                 language: str = "",
+                 download_root: str = None,
+                 language: str = None,
                  compute_type: str = "default",
                  input_device_index: int = None,
                  gpu_device_index: Union[int, List[int]] = 0,
@@ -308,7 +309,7 @@ class AudioToTextRecorder:
             from the Hugging Face Hub.
         - download_root (str, default=None): Specifies the root path were the Whisper models 
           are downloaded to. When empty, the default is used. 
-        - language (str, default=""): Language code for speech-to-text engine.
+        - language (str, default=None): Language code for speech-to-text engine.
             If not specified, the model will attempt to detect the language
             automatically.
         - compute_type (str, default="default"): Specifies the type of
@@ -680,7 +681,8 @@ class AudioToTextRecorder:
                 self.beam_size,
                 self.initial_prompt,
                 self.suppress_tokens,
-                self.batch_size
+                self.batch_size,
+                self.language
             )
         )
 
@@ -724,7 +726,7 @@ class AudioToTextRecorder:
                 if self.realtime_batch_size > 0:
                     self.realtime_model_type = BatchedInferencePipeline(model=self.realtime_model_type)
                 dummy_audio = np.zeros(16000, dtype=np.float32)
-                self.realtime_model_type.transcribe(dummy_audio, language="en", beam_size=1)
+                self.realtime_model_type.transcribe(dummy_audio, language=self.language, beam_size=1)
             except Exception as e:
                 logging.exception("Error initializing faster_whisper "
                                   f"realtime transcription model: {e}"
