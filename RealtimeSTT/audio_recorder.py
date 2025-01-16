@@ -1265,6 +1265,7 @@ class AudioToTextRecorder:
         self.interrupt_stop_event.set()
         self.was_interrupted.wait()
         self.was_interrupted.clear()
+        self.stop()
 
     def wait_audio(self):
         """
