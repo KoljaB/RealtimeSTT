@@ -1,22 +1,35 @@
 from colorama import init, Fore, Style
+from scipy.signal import butter, filtfilt, resample_poly
 import pyaudio
 import logging
-import time
 
+DESIRED_RATE = 16000
+CHUNK_SIZE = 1024
+AUDIO_FORMAT = pyaudio.paInt16
+CHANNELS = 1
 
 class AudioInput:
-    def __init__(self, input_device_index=None, debug_mode=False):
+    def __init__(
+            self,
+            input_device_index: int = None,
+            debug_mode: bool = False,
+            target_samplerate: int = DESIRED_RATE,
+            chunk_size: int = CHUNK_SIZE,
+            audio_format: int = AUDIO_FORMAT,
+            channels: int = CHANNELS,
+            resample_to_target: bool = True,
+        ):
+
         self.input_device_index = input_device_index
         self.debug_mode = debug_mode
         self.audio_interface = None
         self.stream = None
         self.device_sample_rate = None
-
-        # PyAudio constants
-        self.CHUNK = 1024
-        self.FORMAT = pyaudio.paInt16  
-        self.CHANNELS = 1
-        self.DESIRED_RATE = 16000
+        self.target_samplerate = target_samplerate
+        self.chunk_size = chunk_size
+        self.audio_format = audio_format
+        self.channels = channels
+        self.resample_to_target = resample_to_target
 
     def get_supported_sample_rates(self, device_index):
         """Test which standard sample rates are supported by the specified device."""
@@ -31,8 +44,8 @@ class AudioInput:
                 if self.audio_interface.is_format_supported(
                     rate,
                     input_device=device_index,  # Changed to input_device
-                    input_channels=max_channels,  # Changed to input_channels 
-                    input_format=self.FORMAT,  # Changed to input_format
+                    input_channels=max_channels,  # Changed to input_channels
+                    input_format=self.audio_format,  # Changed to input_format
                 ):
                     supported_rates.append(rate)
             except:
@@ -108,18 +121,18 @@ class AudioInput:
             if self.debug_mode:
                 print(f"Actual selected device index: {actual_device_index}")
             self.input_device_index = actual_device_index
-            self.device_sample_rate = self._get_best_sample_rate(actual_device_index, self.DESIRED_RATE)
+            self.device_sample_rate = self._get_best_sample_rate(actual_device_index, self.target_samplerate)
 
             if self.debug_mode:
                 print(f"Setting up audio on device {self.input_device_index} with sample rate {self.device_sample_rate}")
 
             try:
                 self.stream = self.audio_interface.open(
-                    format=self.FORMAT,
-                    channels=self.CHANNELS,
+                    format=self.audio_format,
+                    channels=self.channels,
                     rate=self.device_sample_rate,
                     input=True,
-                    frames_per_buffer=self.CHUNK,
+                    frames_per_buffer=self.chunk_size,
                     input_device_index=self.input_device_index,
                 )
                 if self.debug_mode:
@@ -134,6 +147,60 @@ class AudioInput:
             if self.audio_interface:
                 self.audio_interface.terminate()
             return False
+
+    def lowpass_filter(self, signal, cutoff_freq, sample_rate):
+        """
+        Apply a low-pass Butterworth filter to prevent aliasing in the signal.
+
+        Args:
+            signal (np.ndarray): Input audio signal to filter
+            cutoff_freq (float): Cutoff frequency in Hz
+            sample_rate (float): Sampling rate of the input signal in Hz
+
+        Returns:
+            np.ndarray: Filtered audio signal
+
+        Notes:
+            - Uses a 5th order Butterworth filter
+            - Applies zero-phase filtering using filtfilt
+        """
+        # Calculate the Nyquist frequency (half the sample rate)
+        nyquist_rate = sample_rate / 2.0
+
+        # Normalize cutoff frequency to Nyquist rate (required by butter())
+        normal_cutoff = cutoff_freq / nyquist_rate
+
+        # Design the Butterworth filter
+        b, a = butter(5, normal_cutoff, btype='low', analog=False)
+
+        # Apply zero-phase filtering (forward and backward)
+        filtered_signal = filtfilt(b, a, signal)
+        return filtered_signal
+
+    def resample_audio(self, pcm_data, target_sample_rate, original_sample_rate):
+        """
+        Filter and resample audio data to a target sample rate.
+
+        Args:
+            pcm_data (np.ndarray): Input audio data
+            target_sample_rate (int): Desired output sample rate in Hz
+            original_sample_rate (int): Original sample rate of input in Hz
+
+        Returns:
+            np.ndarray: Resampled audio data
+
+        Notes:
+            - Applies anti-aliasing filter before resampling
+            - Uses polyphase filtering for high-quality resampling
+        """
+        if target_sample_rate < original_sample_rate:
+            # Downsampling with low-pass filter
+            pcm_filtered = self.lowpass_filter(pcm_data, target_sample_rate / 2, original_sample_rate)
+            resampled = resample_poly(pcm_filtered, target_sample_rate, original_sample_rate)
+        else:
+            # Upsampling without low-pass filter
+            resampled = resample_poly(pcm_data, target_sample_rate, original_sample_rate)
+        return resampled
 
     def read_chunk(self):
         """Read a chunk of audio data"""

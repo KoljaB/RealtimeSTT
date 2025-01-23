@@ -1,6 +1,6 @@
 #IS_DEBUG = True
 IS_DEBUG = False
-USE_STEREO_MIX = False
+USE_STEREO_MIX = True
 LOOPBACK_DEVICE_NAME = "stereomix"
 LOOPBACK_DEVICE_HOST_API = 0
 
@@ -27,28 +27,26 @@ EXTENDED_LOGGING = False
 sentence_end_marks = ['.', '!', '?', '。']
 
 
-detection_speed = 0.5 # set detection speed between 0.1 and 2.0
+detection_speed = 2.0 # set detection speed between 0.1 and 2.0
 
 
 
 if detection_speed < 0.1:
     detection_speed = 0.1
-if detection_speed > 2.0:
-    detection_speed = 2.0
+if detection_speed > 2.5:
+    detection_speed = 2.5
 
 last_detection_pause = 0
 last_prob_complete = 0
 last_suggested_pause = 0
 last_pause = 0
-end_of_sentence_detection_pause = 0.3
-maybe_end_of_sentence_detection_pause = 0.5
-unknown_sentence_detection_pause = 0.8
-ellipsis_pause = 1.7
-punctuation_pause = 0.5
-exclamation_pause = 0.4
-question_pause = 0.3
+unknown_sentence_detection_pause = 1.8
+ellipsis_pause = 4.5
+punctuation_pause = 0.4
+exclamation_pause = 0.3
+question_pause = 0.2
 
-hard_break_even_on_background_noise = 3.0
+hard_break_even_on_background_noise = 6
 hard_break_even_on_background_noise_min_texts = 3
 hard_break_even_on_background_noise_min_chars = 15
 hard_break_even_on_background_noise_min_similarity = 0.99
