@@ -8,6 +8,8 @@ CHUNK_SIZE = 1024
 AUDIO_FORMAT = pyaudio.paInt16
 CHANNELS = 1
 
+logger = logging.getLogger("realtimestt")
+
 class AudioInput:
     def __init__(
             self,
@@ -74,7 +76,7 @@ class AudioInput:
             return int(device_info.get('defaultSampleRate', 44100))
 
         except Exception as e:
-            logging.warning(f"Error determining sample rate: {e}")
+            logger.warning(f"Error determining sample rate: {e}")
             return 44100  # Safe fallback
 
     def list_devices(self):
