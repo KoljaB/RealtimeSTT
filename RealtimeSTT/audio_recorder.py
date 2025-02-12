@@ -1268,7 +1268,7 @@ class AudioToTextRecorder:
         self.start_recording_on_voice_activity = False
         self.stop_recording_on_voice_deactivity = False
         self.interrupt_stop_event.set()
-        if self.state == "inactive": # if inactive, was_interrupted will never be set
+        if self.state != "inactive": # if inactive, was_interrupted will never be set
             self.was_interrupted.wait()
         self.was_interrupted.clear()
         if self.is_recording: # if recording, make sure to stop the recorder
