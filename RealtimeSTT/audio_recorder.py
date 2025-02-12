@@ -1270,6 +1270,7 @@ class AudioToTextRecorder:
         self.interrupt_stop_event.set()
         if self.state != "inactive": # if inactive, was_interrupted will never be set
             self.was_interrupted.wait()
+            self._set_state("transcribing")
         self.was_interrupted.clear()
         if self.is_recording: # if recording, make sure to stop the recorder
             self.stop()
@@ -1422,6 +1423,7 @@ class AudioToTextRecorder:
                     if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
                         if self.interrupt_stop_event.is_set(): # check if interrupted
                             self.was_interrupted.set()
+                            self._set_state("inactive")
                             return "" # return empty string if interrupted
                         continue
                     status, result = self.parent_transcription_pipe.recv()
