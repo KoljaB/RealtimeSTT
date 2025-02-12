@@ -1265,6 +1265,7 @@ class AudioToTextRecorder:
         self.listen_start = time.time()
 
     def abort(self):
+        state = self.state
         self.start_recording_on_voice_activity = False
         self.stop_recording_on_voice_deactivity = False
         self.interrupt_stop_event.set()
@@ -1272,7 +1273,7 @@ class AudioToTextRecorder:
             self.was_interrupted.wait()
             self._set_state("transcribing")
         self.was_interrupted.clear()
-        if self.is_recording: # if recording, make sure to stop the recorder
+        if state == "recording": # if recording, make sure to stop the recorder
             self.stop()
 
 
