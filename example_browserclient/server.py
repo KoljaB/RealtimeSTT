@@ -1,6 +1,5 @@
 if __name__ == '__main__':
     print("Starting server, please wait...")
-
     from RealtimeSTT import AudioToTextRecorder
     import asyncio
     import websockets
@@ -8,24 +7,41 @@ if __name__ == '__main__':
     import numpy as np
     from scipy.signal import resample
     import json
+    import logging
+    import sys
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    logging.getLogger('websockets').setLevel(logging.WARNING)
+
+    is_running = True
     recorder = None
     recorder_ready = threading.Event()
     client_websocket = None
+    main_loop = None  # This will hold our primary event loop
 
     async def send_to_client(message):
+        global client_websocket
         if client_websocket:
-            await client_websocket.send(message)
+            try:
+                await client_websocket.send(message)
+            except websockets.exceptions.ConnectionClosed:
+                client_websocket = None
+                print("Client disconnected")
 
+    # Called from the recorder thread on stabilized realtime text.
     def text_detected(text):
-        asyncio.new_event_loop().run_until_complete(
-            send_to_client(
-                json.dumps({
+        global main_loop
+        if main_loop is not None:
+            # Schedule the sending on the main event loop
+            asyncio.run_coroutine_threadsafe(
+                send_to_client(json.dumps({
                     'type': 'realtime',
                     'text': text
-                })
-            )
-        )
+                })), main_loop)
         print(f"\r{text}", flush=True, end='')
 
     recorder_config = {
@@ -44,67 +60,93 @@ if __name__ == '__main__':
         'on_realtime_transcription_stabilized': text_detected,
     }
 
-    def recorder_thread():
-        global recorder
+    def run_recorder():
+        global recorder, main_loop, is_running
         print("Initializing RealtimeSTT...")
         recorder = AudioToTextRecorder(**recorder_config)
         print("RealtimeSTT initialized")
         recorder_ready.set()
-        while True:
-            full_sentence = recorder.text()
-            asyncio.new_event_loop().run_until_complete(
-                send_to_client(
-                    json.dumps({
-                        'type': 'fullSentence',
-                        'text': full_sentence
-                    })
-                )
-            )
-            print(f"\rSentence: {full_sentence}")
 
-    def decode_and_resample(
-            audio_data,
-            original_sample_rate,
-            target_sample_rate):
-
-        # Decode 16-bit PCM data to numpy array
-        audio_np = np.frombuffer(audio_data, dtype=np.int16)
-
-        # Calculate the number of samples after resampling
-        num_original_samples = len(audio_np)
-        num_target_samples = int(num_original_samples * target_sample_rate /
-                                 original_sample_rate)
-
-        # Resample the audio
-        resampled_audio = resample(audio_np, num_target_samples)
-
-        return resampled_audio.astype(np.int16).tobytes()
-
-    async def echo(websocket, path):
-        print("Client connected")
-        global client_websocket
-        client_websocket = websocket
-        async for message in websocket:
-
-            if not recorder_ready.is_set():
-                print("Recorder not ready")
+        # Loop indefinitely checking for full sentence output.
+        while is_running:
+            try:
+                full_sentence = recorder.text()
+                if full_sentence:
+                    if main_loop is not None:
+                        asyncio.run_coroutine_threadsafe(
+                            send_to_client(json.dumps({
+                                'type': 'fullSentence',
+                                'text': full_sentence
+                            })), main_loop)
+                    print(f"\rSentence: {full_sentence}")
+            except Exception as e:
+                print(f"Error in recorder thread: {e}")
                 continue
 
-            metadata_length = int.from_bytes(message[:4], byteorder='little')
-            metadata_json = message[4:4+metadata_length].decode('utf-8')
-            metadata = json.loads(metadata_json)
-            sample_rate = metadata['sampleRate']
-            chunk = message[4+metadata_length:]
-            resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
-            recorder.feed_audio(resampled_chunk)
+    def decode_and_resample(audio_data, original_sample_rate, target_sample_rate):
+        try:
+            audio_np = np.frombuffer(audio_data, dtype=np.int16)
+            num_original_samples = len(audio_np)
+            num_target_samples = int(num_original_samples * target_sample_rate / original_sample_rate)
+            resampled_audio = resample(audio_np, num_target_samples)
+            return resampled_audio.astype(np.int16).tobytes()
+        except Exception as e:
+            print(f"Error in resampling: {e}")
+            return audio_data
 
-    # start_server = websockets.serve(echo, "0.0.0.0", 9001)
-    start_server = websockets.serve(echo, "localhost", 8001)
+    async def echo(websocket):
+        global client_websocket
+        print("Client connected")
+        client_websocket = websocket
 
-    recorder_thread = threading.Thread(target=recorder_thread)
-    recorder_thread.start()
-    recorder_ready.wait()
+        try:
+            async for message in websocket:
+                if not recorder_ready.is_set():
+                    print("Recorder not ready")
+                    continue
 
-    print("Server started. Press Ctrl+C to stop the server.")
-    asyncio.get_event_loop().run_until_complete(start_server)
-    asyncio.get_event_loop().run_forever()
+                try:
+                    # Read the metadata length (first 4 bytes)
+                    metadata_length = int.from_bytes(message[:4], byteorder='little')
+                    # Get the metadata JSON string
+                    metadata_json = message[4:4+metadata_length].decode('utf-8')
+                    metadata = json.loads(metadata_json)
+                    sample_rate = metadata['sampleRate']
+                    # Get the audio chunk following the metadata
+                    chunk = message[4+metadata_length:]
+                    resampled_chunk = decode_and_resample(chunk, sample_rate, 16000)
+                    recorder.feed_audio(resampled_chunk)
+                except Exception as e:
+                    print(f"Error processing message: {e}")
+                    continue
+        except websockets.exceptions.ConnectionClosed:
+            print("Client disconnected")
+        finally:
+            if client_websocket == websocket:
+                client_websocket = None
+
+    async def main():
+        global main_loop
+        main_loop = asyncio.get_running_loop()
+
+        recorder_thread = threading.Thread(target=run_recorder)
+        recorder_thread.daemon = True
+        recorder_thread.start()
+        recorder_ready.wait()
+
+        print("Server started. Press Ctrl+C to stop the server.")
+        async with websockets.serve(echo, "localhost", 8001):
+            try:
+                await asyncio.Future()  # run forever
+            except asyncio.CancelledError:
+                print("\nShutting down server...")
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        is_running = False
+        recorder.stop()
+        recorder.shutdown()
+    finally:
+        if recorder:
+            del recorder

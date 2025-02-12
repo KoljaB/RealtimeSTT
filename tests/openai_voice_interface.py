@@ -18,13 +18,21 @@ if __name__ == '__main__':
         log_characters=True
     )
 
+    def recording_started():
+        print("Speak now...")
+
+    def recording_finished():
+        print("Speech end detected... transcribing...")
+
     # Speech-to-Text Recorder Setup
     recorder = AudioToTextRecorder(
         model="medium",
         language="en",
         wake_words="Jarvis",
         spinner=True,
-        wake_word_activation_delay=5
+        wake_word_activation_delay=5,
+        on_wakeword_detected=recording_started,
+        on_recording_stop=recording_finished,
     )
 
     system_prompt_message = {
@@ -45,7 +53,9 @@ if __name__ == '__main__':
         """Main loop for interaction."""
         while True:
             # Capture user input from microphone
+            print('Say "Jarvis" then speak.')
             user_text = recorder.text().strip()
+            print(f"Transcribed: {user_text}")
 
             if not user_text:
                 continue

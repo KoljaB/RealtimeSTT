@@ -1,6 +1,6 @@
 # RealtimeSTT
 [![PyPI](https://img.shields.io/pypi/v/RealtimeSTT)](https://pypi.org/project/RealtimeSTT/)
-[![Downloads](https://static.pepy.tech/badge/RealtimeSTT)](https://pepy.tech/project/KoljaB/RealtimeSTT)
+[![Downloads](https://static.pepy.tech/badge/RealtimeSTT)](https://www.pepy.tech/projects/realtimestt)
 [![GitHub release](https://img.shields.io/github/release/KoljaB/RealtimeSTT.svg)](https://GitHub.com/KoljaB/RealtimeSTT/releases/)
 [![GitHub commits](https://badgen.net/github/commits/KoljaB/RealtimeSTT)](https://GitHub.com/Naereen/KoljaB/RealtimeSTT/commit/)
 [![GitHub forks](https://img.shields.io/github/forks/KoljaB/RealtimeSTT.svg?style=social&label=Fork&maxAge=2592000)](https://GitHub.com/KoljaB/RealtimeSTT/network/)
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.3.92
+Latest Version: v0.3.94
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
