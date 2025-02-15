@@ -1265,12 +1265,17 @@ class AudioToTextRecorder:
         self.listen_start = time.time()
 
     def abort(self):
+        state = self.state
         self.start_recording_on_voice_activity = False
         self.stop_recording_on_voice_deactivity = False
-        self._set_state("inactive")
         self.interrupt_stop_event.set()
-        self.was_interrupted.wait()
+        if self.state != "inactive": # if inactive, was_interrupted will never be set
+            self.was_interrupted.wait()
+            self._set_state("transcribing")
         self.was_interrupted.clear()
+        if state == "recording": # if recording, make sure to stop the recorder
+            self.stop()
+
 
     def wait_audio(self):
         """
@@ -1416,6 +1421,12 @@ class AudioToTextRecorder:
 
                 while self.transcribe_count > 0:
                     logging.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
+                    if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
+                        if self.interrupt_stop_event.is_set(): # check if interrupted
+                            self.was_interrupted.set()
+                            self._set_state("inactive")
+                            return "" # return empty string if interrupted
+                        continue
                     status, result = self.parent_transcription_pipe.recv()
                     self.transcribe_count -= 1
 
@@ -1436,7 +1447,7 @@ class AudioToTextRecorder:
                             print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                         else:
                             logging.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return transcription
+                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
                 else:
                     logging.error(f"Transcription error: {result}")
                     raise Exception(result)
