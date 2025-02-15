@@ -26,15 +26,15 @@ Author: Kolja Beigel
 
 """
 
-from typing import Iterable, List, Optional, Union
-import torch.multiprocessing as mp
-import torch
-from ctypes import c_bool
-from openwakeword.model import Model
-from scipy.signal import resample
-from scipy import signal
-import signal as system_signal
 from faster_whisper import WhisperModel, BatchedInferencePipeline
+from typing import Iterable, List, Optional, Union
+from openwakeword.model import Model
+import torch.multiprocessing as mp
+from scipy.signal import resample
+import signal as system_signal
+from ctypes import c_bool
+from scipy import signal
+import soundfile as sf
 import faster_whisper
 import openwakeword
 import collections
@@ -43,14 +43,13 @@ import pvporcupine
 import traceback
 import threading
 import webrtcvad
-import itertools
 import datetime
 import platform
-import pyaudio
 import logging
 import struct
 import base64
 import queue
+import torch
 import halo
 import time
 import copy
@@ -144,8 +143,13 @@ class TranscriptionWorker:
                 model = BatchedInferencePipeline(model=model)
 
             # Run a warm-up transcription
-            dummy_audio = np.zeros(16000, dtype=np.float32)
-            model.transcribe(dummy_audio, language="en", beam_size=1)
+            current_dir = os.path.dirname(os.path.realpath(__file__))
+            warmup_audio_path = os.path.join(
+                current_dir, "warmup_audio.wav"
+            )
+            warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+            segments, info = model.transcribe(warmup_audio_data, language="en", beam_size=1)
+            model_warmup_transcription = " ".join(segment.text for segment in segments)
         except Exception as e:
             logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
             raise
@@ -728,8 +732,15 @@ class AudioToTextRecorder:
                 )
                 if self.realtime_batch_size > 0:
                     self.realtime_model_type = BatchedInferencePipeline(model=self.realtime_model_type)
-                dummy_audio = np.zeros(16000, dtype=np.float32)
-                self.realtime_model_type.transcribe(dummy_audio, language="en", beam_size=1)
+
+                # Run a warm-up transcription
+                current_dir = os.path.dirname(os.path.realpath(__file__))
+                warmup_audio_path = os.path.join(
+                    current_dir, "warmup_audio.wav"
+                )
+                warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                segments, info = self.realtime_model_type.transcribe(warmup_audio_data, language="en", beam_size=1)
+                model_warmup_transcription = " ".join(segment.text for segment in segments)
             except Exception as e:
                 logging.exception("Error initializing faster_whisper "
                                   f"realtime transcription model: {e}"
@@ -1267,10 +1278,14 @@ class AudioToTextRecorder:
     def abort(self):
         self.start_recording_on_voice_activity = False
         self.stop_recording_on_voice_deactivity = False
-        self._set_state("inactive")
         self.interrupt_stop_event.set()
-        self.was_interrupted.wait()
+        if self.state != "inactive": # if inactive, was_interrupted will never be set
+            self.was_interrupted.wait()
+            self._set_state("transcribing")
         self.was_interrupted.clear()
+        if self.is_recording: # if recording, make sure to stop the recorder
+            self.stop()
+
 
     def wait_audio(self):
         """
@@ -1416,6 +1431,12 @@ class AudioToTextRecorder:
 
                 while self.transcribe_count > 0:
                     logging.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
+                    if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
+                        if self.interrupt_stop_event.is_set(): # check if interrupted
+                            self.was_interrupted.set()
+                            self._set_state("inactive")
+                            return "" # return empty string if interrupted
+                        continue
                     status, result = self.parent_transcription_pipe.recv()
                     self.transcribe_count -= 1
 
@@ -1436,7 +1457,7 @@ class AudioToTextRecorder:
                             print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                         else:
                             logging.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return transcription
+                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
                 else:
                     logging.error(f"Transcription error: {result}")
                     raise Exception(result)
