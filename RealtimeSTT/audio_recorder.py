@@ -1276,6 +1276,7 @@ class AudioToTextRecorder:
         self.listen_start = time.time()
 
     def abort(self):
+        state = self.state
         self.start_recording_on_voice_activity = False
         self.stop_recording_on_voice_deactivity = False
         self.interrupt_stop_event.set()

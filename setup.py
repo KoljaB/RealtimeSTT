@@ -9,7 +9,7 @@ with open('requirements.txt') as f:
 
 setuptools.setup(
     name="RealtimeSTT",
-    version="0.3.94",
+    version="0.3.95",
     author="Kolja Beigel",
     author_email="kolja.beigel@web.de",
     description="A fast Voice Activity Detection and Transcription System",
@@ -25,6 +25,8 @@ setuptools.setup(
     python_requires='>=3.6',
     install_requires=requirements,
     keywords="real-time, audio, transcription, speech-to-text, voice-activity-detection, VAD, real-time-transcription, ambient-noise-detection, microphone-input, faster_whisper, speech-recognition, voice-assistants, audio-processing, buffered-transcription, pyaudio, ambient-noise-level, voice-deactivity",
+    package_data={"RealtimeSTT": ["warmup_audio.wav"]},
+    include_package_data=True,
     entry_points={
         'console_scripts': [
             'stt-server=RealtimeSTT_server.stt_server:main',
