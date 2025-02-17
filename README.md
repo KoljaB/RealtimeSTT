@@ -24,7 +24,9 @@ It's ideal for:
 - **Voice Assistants**
 - Applications requiring **fast and precise** speech-to-text conversion
 
-https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
+https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5  
+
+[CLI demo code (reproduces the video above)](tests/realtimestt_test.py)
 
 ### Updates
 
