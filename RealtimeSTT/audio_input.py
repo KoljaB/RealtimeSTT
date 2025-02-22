@@ -204,7 +204,7 @@ class AudioInput:
 
     def read_chunk(self):
         """Read a chunk of audio data"""
-        return self.stream.read(self.CHUNK, exception_on_overflow=False)
+        return self.stream.read(self.chunk_size, exception_on_overflow=False)
 
     def cleanup(self):
         """Clean up audio resources"""
