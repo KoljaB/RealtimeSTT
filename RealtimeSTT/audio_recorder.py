@@ -1478,7 +1478,7 @@ class AudioToTextRecorder:
             porcupine_index = self.porcupine.process(pcm)
             if self.debug_mode:
                 logging.info(f"wake words porcupine_index: {porcupine_index}")
-            return self.porcupine.process(pcm)
+            return porcupine_index
 
         elif self.wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
             pcm = np.frombuffer(data, dtype=np.int16)
