@@ -1,15 +1,20 @@
 import setuptools
+import os
 
-with open("README.md", "r") as fh:
-    long_description = fh.read()
+# Get the absolute path of requirements.txt
+req_path = os.path.join(os.path.dirname(__file__), "requirements.txt")
 
-# Read requirements.txt
-with open('requirements.txt') as f:
+# Read requirements.txt safely
+with open(req_path, "r", encoding="utf-8") as f:
     requirements = f.read().splitlines()
 
+# Read README.md
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 setuptools.setup(
-    name="RealtimeSTT",
-    version="0.3.97",
+    name="realtimestt",
+    version="0.3.98",
     author="Kolja Beigel",
     author_email="kolja.beigel@web.de",
     description="A fast Voice Activity Detection and Transcription System",
