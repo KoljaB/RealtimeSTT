@@ -273,6 +273,8 @@ class AudioToTextRecorder:
                  pre_recording_buffer_duration: float = (
                      INIT_PRE_RECORDING_BUFFER_DURATION
                  ),
+                 on_vad_start=None,
+                 on_vad_stop=None,
                  on_vad_detect_start=None,
                  on_vad_detect_stop=None,
 
@@ -422,10 +424,18 @@ class AudioToTextRecorder:
         - pre_recording_buffer_duration (float, default=0.2): Duration in
             seconds for the audio buffer to maintain pre-roll audio
             (compensates speech activity detection latency)
+        - on_vad_start (callable, default=None): Callback function to be called
+            when the system detected the start of voice activity presence.
+        - on_vad_stop (callable, default=None): Callback function to be called
+            when the system detected the stop (end) of voice activity presence.
         - on_vad_detect_start (callable, default=None): Callback function to
-            be called when the system listens for voice activity.
+            be called when the system listens for voice activity. This is not
+            called when VAD actually happens (use on_vad_start for this), but
+            when the system starts listening for it.
         - on_vad_detect_stop (callable, default=None): Callback function to be
-            called when the system stops listening for voice activity.
+            called when the system stops listening for voice activity. This is
+            not called when VAD actually stops (use on_vad_stop for this), but
+            when the system stops listening for it.
         - wakeword_backend (str, default="pvporcupine"): Specifies the backend
             library to use for wake word detection. Supported options include
             'pvporcupine' for using the Porcupine wake word engine or 'oww' for
@@ -550,6 +560,8 @@ class AudioToTextRecorder:
         self.on_recording_stop = on_recording_stop
         self.on_wakeword_detected = on_wakeword_detected
         self.on_wakeword_timeout = on_wakeword_timeout
+        self.on_vad_start = on_vad_start
+        self.on_vad_stop = on_vad_stop
         self.on_vad_detect_start = on_vad_detect_start
         self.on_vad_detect_stop = on_vad_detect_stop
         self.on_wakeword_detection_start = on_wakeword_detection_start
@@ -1985,8 +1997,8 @@ class AudioToTextRecorder:
 
                         if self._is_voice_active():
 
-                            if self.on_vad_detect_start:
-                               self.on_vad_detect_start()
+                            if self.on_vad_start:
+                               self.on_vad_start()
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Voice activity detected')
@@ -2106,8 +2118,8 @@ class AudioToTextRecorder:
                         if self.speech_end_silence_start and time.time() - \
                                 self.speech_end_silence_start >= \
                                 self.post_speech_silence_duration:
-                            if self.on_vad_detect_stop:
-                                self.on_vad_detect_stop()
+                            if self.on_vad_stop:
+                                self.on_vad_stop()
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Formatting silence start time')
@@ -2524,12 +2536,17 @@ class AudioToTextRecorder:
         logger.info(f"State changed from '{old_state}' to '{new_state}'")
 
         # Execute callbacks based on transitioning FROM a particular state
-        if old_state == "wakeword":
+        if old_state == "listening":
+            if self.on_vad_detect_stop:
+                self.on_vad_detect_stop()
+        elif old_state == "wakeword":
             if self.on_wakeword_detection_end:
                 self.on_wakeword_detection_end()
 
         # Execute callbacks based on transitioning TO a particular state
         if new_state == "listening":
+            if self.on_vad_detect_start:
+                self.on_vad_detect_start()
             self._set_spinner("speak now")
             if self.spinner and self.halo:
                 self.halo._interval = 250
