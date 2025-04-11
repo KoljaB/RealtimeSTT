@@ -257,10 +257,13 @@ class AudioToTextRecorderClient:
 
 
         if self.server_already_running:
-            self.set_parameter("language", self.language)
-            # self.set_parameter("model", self.model)
-
-
+            if not self.connection_established.wait(timeout=10):
+                print("Server connection not established within 10 seconds.")
+            else:
+                self.set_parameter("language", self.language)
+                print(f"Language set to {self.language}")
+                self.set_parameter("wake_word_activation_delay", self.wake_word_activation_delay)
+                print(f"Wake word activation delay set to {self.wake_word_activation_delay}")
 
     def text(self, on_transcription_finished=None):
         self.realtime_text = ""
@@ -490,11 +493,16 @@ class AudioToTextRecorderClient:
         print("STT server start command issued. Please wait a moment for it to initialize.", file=sys.stderr)
 
     def is_server_running(self):
-        parsed_url = urlparse(self.control_url)
-        host = parsed_url.hostname
-        port = parsed_url.port or 80
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex((host, port)) == 0
+        try:
+            # Attempt a proper WebSocket handshake to the control URL.
+            from websocket import create_connection
+            ws = create_connection(self.control_url, timeout=3)
+            ws.close()
+            return True
+        except Exception as e:
+            if self.debug_mode:
+                print(f"Server connectivity check failed: {e}")
+            return False
 
     def ensure_server_running(self):
         if not self.is_server_running():

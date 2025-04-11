@@ -279,7 +279,7 @@ class AudioToTextRecorder:
                  on_vad_detect_stop=None,
 
                  # Wake word parameters
-                 wakeword_backend: str = "pvporcupine",
+                 wakeword_backend: str = "",
                  openwakeword_model_paths: str = None,
                  openwakeword_inference_framework: str = "onnx",
                  wake_words: str = "",
@@ -641,6 +641,7 @@ class AudioToTextRecorder:
         self.early_transcription_on_silence = early_transcription_on_silence
         self.use_extended_logging = use_extended_logging
         self.faster_whisper_vad_filter = faster_whisper_vad_filter
+        self.awaiting_speech_end = False
 
         # ----------------------------------------------------------------------------
         # Named logger configuration
@@ -771,7 +772,7 @@ class AudioToTextRecorder:
                           "transcription model initialized successfully")
 
         # Setup wake word detection
-        if wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords'}:
+        if wake_words or wakeword_backend in {'oww', 'openwakeword', 'openwakewords', 'pvp', 'pvporcupine'}:
             self.wakeword_backend = wakeword_backend
 
             self.wake_words_list = [
@@ -1439,6 +1440,54 @@ class AudioToTextRecorder:
             self.shutdown()
             raise  # Re-raise the exception after cleanup
 
+
+    def perform_final_transcription(self, audio_bytes=None):
+        start_time = 0
+        with self.transcription_lock:
+            try:
+                if self.transcribe_count == 0:
+                    logger.debug("Adding transcription request, no early transcription started")
+                    start_time = time.time()  # Start timing
+                    self.parent_transcription_pipe.send((audio_bytes, self.language))
+                    self.transcribe_count += 1
+
+                while self.transcribe_count > 0:
+                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
+                    if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
+                        if self.interrupt_stop_event.is_set(): # check if interrupted
+                            self.was_interrupted.set()
+                            self._set_state("inactive")
+                            return "" # return empty string if interrupted
+                        continue
+                    status, result = self.parent_transcription_pipe.recv()
+                    self.transcribe_count -= 1
+
+                self.allowed_to_early_transcribe = True
+                self._set_state("inactive")
+                if status == 'success':
+                    segments, info = result
+                    self.detected_language = info.language if info.language_probability > 0 else None
+                    self.detected_language_probability = info.language_probability
+                    self.last_transcription_bytes = copy.deepcopy(audio_bytes)
+                    self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
+                    transcription = self._preprocess_output(segments)
+                    end_time = time.time()  # End timing
+                    transcription_time = end_time - start_time
+
+                    if start_time:
+                        if self.print_transcription_time:
+                            print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
+                        else:
+                            logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
+                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
+                else:
+                    logger.error(f"Transcription error: {result}")
+                    raise Exception(result)
+            except Exception as e:
+                logger.error(f"Error during transcription: {str(e)}", exc_info=True)
+                raise e
+
+
     def transcribe(self):
         """
         Transcribes audio captured by this class instance using the
@@ -1464,53 +1513,16 @@ class AudioToTextRecorder:
         Raises:
             Exception: If there is an error during the transcription process.
         """
-        self._set_state("transcribing")
         audio_copy = copy.deepcopy(self.audio)
-        start_time = 0
-        with self.transcription_lock:
-            
-            try:
-                if self.transcribe_count == 0:
-                    logger.debug("Adding transcription request, no early transcription started")
-                    start_time = time.time()  # Start timing
-                    self.parent_transcription_pipe.send((audio_copy, self.language))
-                    self.transcribe_count += 1
+        self._set_state("transcribing")
+        if self.on_transcription_start:
+            abort_value = self.on_transcription_start(audio_copy)
+            if not abort_value:
+                return self.perform_final_transcription(audio_copy)
+            return None
+        else:
+            return self.perform_final_transcription(audio_copy)
 
-                while self.transcribe_count > 0:
-                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
-                    if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
-                        if self.interrupt_stop_event.is_set(): # check if interrupted
-                            self.was_interrupted.set()
-                            self._set_state("inactive")
-                            return "" # return empty string if interrupted
-                        continue
-                    status, result = self.parent_transcription_pipe.recv()
-                    self.transcribe_count -= 1
-
-                self.allowed_to_early_transcribe = True
-                self._set_state("inactive")
-                if status == 'success':
-                    segments, info = result
-                    self.detected_language = info.language if info.language_probability > 0 else None
-                    self.detected_language_probability = info.language_probability
-                    self.last_transcription_bytes = copy.deepcopy(audio_copy)                    
-                    self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
-                    transcription = self._preprocess_output(segments)
-                    end_time = time.time()  # End timing
-                    transcription_time = end_time - start_time
-
-                    if start_time:
-                        if self.print_transcription_time:
-                            print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                        else:
-                            logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
-                else:
-                    logger.error(f"Transcription error: {result}")
-                    raise Exception(result)
-            except Exception as e:
-                logger.error(f"Error during transcription: {str(e)}", exc_info=True)
-                raise e
 
     def _process_wakeword(self, data):
         """
@@ -2084,6 +2096,7 @@ class AudioToTextRecorder:
                                 (time.time() - self.recording_start_time > self.min_length_of_recording):
 
                                 self.speech_end_silence_start = time.time()
+                                self.awaiting_speech_end = True
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Checking early transcription conditions')
@@ -2104,6 +2117,7 @@ class AudioToTextRecorder:
                                     self.allowed_to_early_transcribe = False
 
                         else:
+                            self.awaiting_speech_end = False
                             if self.use_extended_logging:
                                 logger.debug('Debug: Handling speech detection')
                             if self.speech_end_silence_start:
@@ -2118,6 +2132,7 @@ class AudioToTextRecorder:
                         if self.speech_end_silence_start and time.time() - \
                                 self.speech_end_silence_start >= \
                                 self.post_speech_silence_duration:
+
                             if self.on_vad_stop:
                                 self.on_vad_stop()
 
@@ -2150,6 +2165,8 @@ class AudioToTextRecorder:
                                 if self.use_extended_logging:
                                     logger.debug('Debug: Setting failed_stop_attempt to True')
                                 failed_stop_attempt = True
+
+                            self.awaiting_speech_end = False
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking if recording stopped')
@@ -2206,6 +2223,8 @@ class AudioToTextRecorder:
             logger.debug('Debug: Exiting _recording_worker method')
 
 
+
+
     def _realtime_worker(self):
         """
         Performs real-time transcription if the feature is enabled.
@@ -2225,14 +2244,29 @@ class AudioToTextRecorder:
             if not self.enable_realtime_transcription:
                 return
 
-            # Continue running as long as the main process is active
+            # Track time of last transcription
+            last_transcription_time = time.time()
+
             while self.is_running:
 
-                # Check if the recording is active
                 if self.is_recording:
 
-                    # Sleep for the duration of the transcription resolution
-                    time.sleep(self.realtime_processing_pause)
+                    # MODIFIED SLEEP LOGIC:
+                    # Wait until realtime_processing_pause has elapsed,
+                    # but check often so we can respond to changes quickly.
+                    while (
+                        time.time() - last_transcription_time
+                    ) < self.realtime_processing_pause:
+                        time.sleep(0.001)
+                        if not self.is_running or not self.is_recording:
+                            break
+
+                    if self.awaiting_speech_end:
+                        time.sleep(0.001)
+                        continue
+
+                    # Update transcription time
+                    last_transcription_time = time.time()
 
                     # Convert the buffer frames to a NumPy array
                     audio_array = np.frombuffer(
@@ -2557,8 +2591,6 @@ class AudioToTextRecorder:
             if self.spinner and self.halo:
                 self.halo._interval = 500
         elif new_state == "transcribing":
-            if self.on_transcription_start:
-                self.on_transcription_start()
             self._set_spinner("transcribing")
             if self.spinner and self.halo:
                 self.halo._interval = 50

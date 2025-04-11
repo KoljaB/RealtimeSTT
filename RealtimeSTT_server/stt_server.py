@@ -460,8 +460,8 @@ def parse_arguments():
     parser.add_argument('--wake_word_timeout', type=float, default=5.0,
                         help='Maximum time in seconds that the system will wait for a wake word before timing out. After this timeout, the system stops listening for wake words until reactivated. Default is 5.0 seconds.')
 
-    parser.add_argument('--wake_word_activation_delay', type=float, default=20,
-                        help='The delay in seconds before the wake word detection is activated after the system starts listening. This prevents false positives during the start of a session. Default is 0.5 seconds.')
+    parser.add_argument('--wake_word_activation_delay', type=float, default=0,
+                        help='The delay in seconds before the wake word detection is activated after the system starts listening. This prevents false positives during the start of a session. Default is 0 seconds.')
 
     parser.add_argument('--wakeword_backend', type=str, default='none',
                         help='The backend used for wake word detection. You can specify different backends such as "default" or any custom implementations depending on your setup. Default is "pvporcupine".')

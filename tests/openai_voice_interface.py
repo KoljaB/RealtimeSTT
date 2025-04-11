@@ -1,28 +1,24 @@
-import os
-import openai
-from RealtimeTTS import TextToAudioStream, AzureEngine
-from RealtimeSTT import AudioToTextRecorder
+"""
+pip install realtimestt realtimetts[edge]
+"""
+
+# Set this to False to start by waiting for a wake word first
+# Set this to True to start directly in voice activity mode
+START_IN_VOICE_ACTIVITY_MODE = False
 
 if __name__ == '__main__':
-    # Initialize OpenAI key
-    openai.api_key = os.environ.get("OPENAI_API_KEY")
+    import os
+    import openai
+    from RealtimeTTS import TextToAudioStream, EdgeEngine
+    from RealtimeSTT import AudioToTextRecorder
 
-    # Text-to-Speech Stream Setup
+    # Text-to-Speech Stream Setup (EdgeEngine)
+    engine = EdgeEngine(rate=0, pitch=0, volume=0)
+    engine.set_voice("en-US-SoniaNeural")
     stream = TextToAudioStream(
-
-        # Alternatives: SystemEngine or ElevenlabsEngine
-        AzureEngine(
-            os.environ.get("AZURE_SPEECH_KEY"),
-            os.environ.get("AZURE_SPEECH_REGION"),
-        ),
+        engine,
         log_characters=True
     )
-
-    def recording_started():
-        print("Speak now...")
-
-    def recording_finished():
-        print("Speech end detected... transcribing...")
 
     # Speech-to-Text Recorder Setup
     recorder = AudioToTextRecorder(
@@ -30,9 +26,7 @@ if __name__ == '__main__':
         language="en",
         wake_words="Jarvis",
         spinner=True,
-        wake_word_activation_delay=5,
-        on_wakeword_detected=recording_started,
-        on_recording_stop=recording_finished,
+        wake_word_activation_delay=5 if START_IN_VOICE_ACTIVITY_MODE else 0,
     )
 
     system_prompt_message = {
@@ -42,19 +36,33 @@ if __name__ == '__main__':
 
     def generate_response(messages):
         """Generate assistant's response using OpenAI."""
-        for chunk in openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages, stream=True):
-            text_chunk = chunk["choices"][0]["delta"].get("content")
+        response_stream = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            stream=True
+        )
+
+        for chunk in response_stream:
+            text_chunk = chunk.choices[0].delta.content
             if text_chunk:
                 yield text_chunk
 
     history = []
-
-    def main():
-        """Main loop for interaction."""
+    
+    try:
+        # Main loop for interaction
         while True:
-            # Capture user input from microphone
-            print('Say "Jarvis" then speak.')
+            if START_IN_VOICE_ACTIVITY_MODE:
+                print("Please speak...")
+            else:
+                print('Say "Jarvis" then speak...')
+
             user_text = recorder.text().strip()
+
+            # If not starting in voice activity mode, set the delay after the first interaction
+            if not START_IN_VOICE_ACTIVITY_MODE:
+                recorder.wake_word_activation_delay = 5
+
             print(f"Transcribed: {user_text}")
 
             if not user_text:
@@ -68,6 +76,6 @@ if __name__ == '__main__':
             stream.feed(assistant_response).play()
 
             history.append({'role': 'assistant', 'content': stream.text()})
-
-    if __name__ == "__main__":
-        main()
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt detected. Shutting down...")
+        recorder.shutdown()
