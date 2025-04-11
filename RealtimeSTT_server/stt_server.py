@@ -290,14 +290,12 @@ def text_detected(text, loop):
         print(f"\r[{timestamp}] {bcolors.OKCYAN}{text}{bcolors.ENDC}", flush=True, end='')
 
 def on_recording_start(loop):
-    # Send a message to the client indicating recording has started
     message = json.dumps({
         'type': 'recording_start'
     })
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 def on_recording_stop(loop):
-    # Send a message to the client indicating recording has stopped
     message = json.dumps({
         'type': 'recording_stop'
     })
@@ -316,28 +314,24 @@ def on_vad_detect_stop(loop):
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 def on_wakeword_detected(loop):
-    # Send a message to the client when wake word detection starts
     message = json.dumps({
         'type': 'wakeword_detected'
     })
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 def on_wakeword_detection_start(loop):
-    # Send a message to the client when wake word detection starts
     message = json.dumps({
         'type': 'wakeword_detection_start'
     })
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
 def on_wakeword_detection_end(loop):
-    # Send a message to the client when wake word detection ends
     message = json.dumps({
         'type': 'wakeword_detection_end'
     })
     asyncio.run_coroutine_threadsafe(audio_queue.put(message), loop)
 
-def on_transcription_start(loop):
-    # Send a message to the client when transcription starts
+def on_transcription_start(_audio_bytes, loop):
     message = json.dumps({
         'type': 'transcription_start'
     })
@@ -776,6 +770,7 @@ async def main_async():
         'use_main_model_for_realtime': args.use_main_model_for_realtime,
         'spinner': False,
         'use_microphone': False,
+
         'on_realtime_transcription_update': make_callback(loop, text_detected),
         'on_recording_start': make_callback(loop, on_recording_start),
         'on_recording_stop': make_callback(loop, on_recording_stop),
