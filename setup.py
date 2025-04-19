@@ -14,7 +14,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name="realtimestt",
-    version="0.3.101",
+    version="0.3.103",
     author="Kolja Beigel",
     author_email="kolja.beigel@web.de",
     description="A fast Voice Activity Detection and Transcription System",

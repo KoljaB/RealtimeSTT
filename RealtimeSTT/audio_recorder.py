@@ -751,6 +751,7 @@ class AudioToTextRecorder:
                 self.suppress_tokens,
                 self.batch_size,
                 self.faster_whisper_vad_filter,
+                self.normalize_audio,
             )
         )
 
