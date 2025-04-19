@@ -172,14 +172,16 @@ if __name__ == '__main__':
         # 'batch_size': 0,
         # 'realtime_batch_size': 0,        
         'no_log_file': True,
-        'initial_prompt': (
+        'initial_prompt_realtime': (
             "End incomplete sentences with ellipses.\n"
             "Examples:\n"
             "Complete: The sky is blue.\n"
             "Incomplete: When the sky...\n"
             "Complete: She walked home.\n"
             "Incomplete: Because he...\n"
-        )
+        ),
+        'silero_use_onnx': True,
+        'faster_whisper_vad_filter': False,
     }
 
     args = parser.parse_args()

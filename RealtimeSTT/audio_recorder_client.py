@@ -6,13 +6,13 @@ from urllib.parse import urlparse
 from datetime import datetime
 from websocket import WebSocketApp
 from websocket import ABNF
+import numpy as np
 import subprocess
 import threading
 import platform
 import logging
-import socket
 import struct
-import signal
+import base64
 import wave
 import json
 import time
@@ -59,6 +59,23 @@ class bcolors:
     ENDC = '\033[0m'      # Reset to default
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+
+def format_timestamp_ns(timestamp_ns: int) -> str:
+    # Split into whole seconds and the nanosecond remainder
+    seconds = timestamp_ns // 1_000_000_000
+    remainder_ns = timestamp_ns % 1_000_000_000
+
+    # Convert seconds part into a datetime object (local time)
+    dt = datetime.fromtimestamp(seconds)
+
+    # Format the main time as HH:MM:SS
+    time_str = dt.strftime("%H:%M:%S")
+
+    # For instance, if you want milliseconds, divide the remainder by 1e6 and format as 3-digit
+    milliseconds = remainder_ns // 1_000_000
+    formatted_timestamp = f"{time_str}.{milliseconds:03d}"
+
+    return formatted_timestamp
 
 class AudioToTextRecorderClient:
     """
@@ -112,8 +129,12 @@ class AudioToTextRecorderClient:
                  pre_recording_buffer_duration: float = (
                      INIT_PRE_RECORDING_BUFFER_DURATION
                  ),
+                 on_vad_start=None,
+                 on_vad_stop=None,
                  on_vad_detect_start=None,
                  on_vad_detect_stop=None,
+                 on_turn_detection_start=None,
+                 on_turn_detection_stop=None,
 
                  # Wake word parameters
                  wakeword_backend: str = "pvporcupine",
@@ -151,6 +172,7 @@ class AudioToTextRecorderClient:
                  data_url: str = DEFAULT_DATA_URL,
                  autostart_server: bool = True,
                  output_wav_file: str = None,
+                 faster_whisper_vad_filter: bool = False,
                  ):
 
         # Set instance variables from constructor parameters
@@ -190,8 +212,13 @@ class AudioToTextRecorderClient:
         self.min_length_of_recording = min_length_of_recording
         self.min_gap_between_recordings = min_gap_between_recordings
         self.pre_recording_buffer_duration = pre_recording_buffer_duration
+
+        self.on_vad_start = on_vad_start
+        self.on_vad_stop = on_vad_stop
         self.on_vad_detect_start = on_vad_detect_start
         self.on_vad_detect_stop = on_vad_detect_stop
+        self.on_turn_detection_start = on_turn_detection_start
+        self.on_turn_detection_stop = on_turn_detection_stop
 
         # Wake word parameters
         self.wakeword_backend = wakeword_backend
@@ -221,6 +248,7 @@ class AudioToTextRecorderClient:
         self.allowed_latency_limit = allowed_latency_limit
         self.no_log_file = no_log_file
         self.use_extended_logging = use_extended_logging
+        self.faster_whisper_vad_filter = faster_whisper_vad_filter
 
         # Server URLs
         self.control_url = control_url
@@ -315,12 +343,24 @@ class AudioToTextRecorderClient:
             print(f"Error in AudioToTextRecorderClient.text(): {e}")
             return ""
 
-    def feed_audio(self, chunk, original_sample_rate=16000):
+    def feed_audio(self, chunk, audio_meta_data, original_sample_rate=16000):
+        # Start with the base metadata
         metadata = {"sampleRate": original_sample_rate}
+
+        # Merge additional metadata if provided
+        if audio_meta_data:
+            server_sent_to_stt_ns = time.time_ns()
+            audio_meta_data["server_sent_to_stt"] = server_sent_to_stt_ns
+            metadata["server_sent_to_stt_formatted"] = format_timestamp_ns(server_sent_to_stt_ns)
+
+            metadata.update(audio_meta_data)
+
+        # Convert metadata to JSON and prepare the message
         metadata_json = json.dumps(metadata)
         metadata_length = len(metadata_json)
         message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + chunk
 
+        # Send the message if the connection is running
         if self.is_running:
             self.data_ws.send(message, opcode=ABNF.OPCODE_BINARY)
 
@@ -338,6 +378,9 @@ class AudioToTextRecorderClient:
 
     def clear_audio_queue(self):
         self.call_method("clear_audio_queue")
+
+    def perform_final_transcription(self):
+        self.call_method("perform_final_transcription")
 
     def stop(self):
         self.call_method("stop")
@@ -424,8 +467,8 @@ class AudioToTextRecorderClient:
         #     args += ['--allowed_latency_limit', str(self.allowed_latency_limit)]
         # if self.no_log_file:
         #     args.append('--no_log_file')  # flag, no need for True
-        # if self.debug_mode:
-        #     args.append('--debug')  # flag, no need for True/False
+        if self.debug_mode:
+            args.append('--debug')  # flag, no need for True/False
             
         if self.language:
             args += ['--language', self.language]
@@ -668,14 +711,36 @@ class AudioToTextRecorderClient:
                 if self.on_recording_stop:
                     self.on_recording_stop()
             elif data.get('type') == 'transcription_start':
+                audio_bytes_base64 = data.get('audio_bytes_base64')
+                decoded_bytes = base64.b64decode(audio_bytes_base64)
+
+                # Reconstruct the np.int16 array from the decoded bytes
+                audio_array = np.frombuffer(decoded_bytes, dtype=np.int16)
+
+                # If the original data was normalized, convert to np.float32 and normalize
+                INT16_MAX_ABS_VALUE = 32768.0
+                normalized_audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
+
                 if self.on_transcription_start:
-                    self.on_transcription_start()
+                    self.on_transcription_start(normalized_audio)
             elif data.get('type') == 'vad_detect_start':
                 if self.on_vad_detect_start:
                     self.on_vad_detect_start()
             elif data.get('type') == 'vad_detect_stop':
                 if self.on_vad_detect_stop:
                     self.on_vad_detect_stop()
+            elif data.get('type') == 'vad_start':
+                if self.on_vad_start:
+                    self.on_vad_start()
+            elif data.get('type') == 'vad_stop':
+                if self.on_vad_stop:
+                    self.on_vad_stop()
+            elif data.get('type') == 'start_turn_detection':
+                if self.on_turn_detection_start:
+                    self.on_turn_detection_start()
+            elif data.get('type') == 'stop_turn_detection':
+                if self.on_turn_detection_stop:
+                    self.on_turn_detection_stop()
             elif data.get('type') == 'wakeword_detected':
                 if self.on_wakeword_detected:
                     self.on_wakeword_detected()

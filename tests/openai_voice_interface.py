@@ -48,7 +48,7 @@ if __name__ == '__main__':
                 yield text_chunk
 
     history = []
-    
+
     try:
         # Main loop for interaction
         while True:
