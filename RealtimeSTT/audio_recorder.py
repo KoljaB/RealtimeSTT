@@ -334,6 +334,7 @@ class AudioToTextRecorder:
                  use_extended_logging: bool = False,
                  faster_whisper_vad_filter: bool = True,
                  normalize_audio: bool = False,
+                 start_callback_in_new_thread: bool = False,
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -566,6 +567,10 @@ class AudioToTextRecorder:
         - normalize_audio (bool, default=False): If set to True, the system will
             normalize the audio to a specific range before processing. This can
             help improve the quality of the transcription.
+        - start_callback_in_new_thread (bool, default=False): If set to True,
+            the callback functions will be executed in a
+            new thread. This can help improve performance by allowing the
+            callback to run concurrently with other operations.
 
         Raises:
             Exception: Errors related to initializing transcription
@@ -681,6 +686,7 @@ class AudioToTextRecorder:
         self.faster_whisper_vad_filter = faster_whisper_vad_filter
         self.normalize_audio = normalize_audio
         self.awaiting_speech_end = False
+        self.start_callback_in_new_thread = start_callback_in_new_thread
 
         # ----------------------------------------------------------------------------
         # Named logger configuration
@@ -1015,8 +1021,12 @@ class AudioToTextRecorder:
         worker.run()
 
     def _run_callback(self, cb, *args, **kwargs):
-        if cb:
+        if self.start_callback_in_new_thread:
+            # Run the callback in a new thread to avoid blocking the main thread
             threading.Thread(target=cb, args=args, kwargs=kwargs, daemon=True).start()
+        else:
+            # Run the callback in the main thread to avoid threading issues
+            cb(*args, **kwargs)
 
     @staticmethod
     def _audio_data_worker(

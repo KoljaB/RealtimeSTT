@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ### Updates
 
-Latest Version: v0.3.100
+Latest Version: v0.3.104
 
 See [release history](https://github.com/KoljaB/RealtimeSTT/releases).
 
@@ -476,6 +476,8 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **allowed_latency_limit** (int, default=100): Specifies the maximum number of unprocessed chunks in the queue before discarding chunks. This helps prevent the system from being overwhelmed and losing responsiveness in real-time applications.
 
 - **no_log_file** (bool, default=False): If set, the system will skip writing the debug log file, reducing disk I/O. Useful if logging to a file is not needed and performance is a priority.
+
+- **start_callback_in_new_thread** (bool, default=False): If set, the system will create a new thread for all callback functions. This can be useful if the callback function is blocking and you want to avoid blocking the realtimestt application thread. 
 
 #### Real-time Transcription Parameters
 
