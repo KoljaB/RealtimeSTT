@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/koljab-realtimestt-badge.png)](https://mseep.ai/app/koljab-realtimestt)
+
 # RealtimeSTT
 [![PyPI](https://img.shields.io/pypi/v/RealtimeSTT)](https://pypi.org/project/RealtimeSTT/)
 [![Downloads](https://static.pepy.tech/badge/RealtimeSTT)](https://www.pepy.tech/projects/realtimestt)
