@@ -272,6 +272,7 @@ class AudioToTextRecorder:
                  enable_realtime_transcription=False,
                  use_main_model_for_realtime=False,
                  realtime_model_type=INIT_MODEL_TRANSCRIPTION_REALTIME,
+                 realtime_language: str = "",
                  realtime_processing_pause=INIT_REALTIME_PROCESSING_PAUSE,
                  init_realtime_after_seconds=INIT_REALTIME_INITIAL_PAUSE,
                  on_realtime_transcription_update=None,
@@ -401,6 +402,9 @@ class AudioToTextRecorder:
             learning model to be used for real-time transcription. Valid
             options include 'tiny', 'tiny.en', 'base', 'base.en', 'small',
             'small.en', 'medium', 'medium.en', 'large-v1', 'large-v2'.
+        - realtime_language (str, default=""): Language code for real-time speech-to-text engine.
+            If not specified, the model will attempt to detect the language
+            automatically.
         - realtime_processing_pause (float, default=0.1): Specifies the time
             interval in seconds after a chunk of audio gets transcribed. Lower
             values will result in more "real-time" (frequent) transcription
@@ -618,6 +622,7 @@ class AudioToTextRecorder:
             download_root = None
         self.download_root = download_root
         self.realtime_model_type = realtime_model_type
+        self.realtime_language = realtime_language
         self.realtime_processing_pause = realtime_processing_pause
         self.init_realtime_after_seconds = init_realtime_after_seconds
         self.on_realtime_transcription_update = (
@@ -797,6 +802,7 @@ class AudioToTextRecorder:
                     compute_type=self.compute_type,
                     device_index=self.gpu_device_index,
                     download_root=self.download_root,
+                    language=self.realtime_language
                 )
                 if self.realtime_batch_size > 0:
                     self.realtime_model_type = BatchedInferencePipeline(model=self.realtime_model_type)
