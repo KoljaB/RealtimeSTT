@@ -1,55 +1,54 @@
 import subprocess
 import sys
 import importlib
+import os
+
+def install_package(package_name):
+    """Install a package using pip."""
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        print(f"Successfully installed {package_name}")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to install {package_name}: {e}")
+        return False
+    return True
 
 def check_and_install_packages(packages):
-    """
-    Checks if the specified packages are installed, and if not, prompts the user
-    to install them.
-
-    Parameters:
-    - packages: A list of dictionaries, each containing:
-        - 'module_name': The module or package name to import.
-        - 'attribute': (Optional) The attribute or class to check within the module.
-        - 'install_name': The name used in the pip install command.
-        - 'version': (Optional) Version constraint for the package.
-    """
+    """Check if packages are installed and install them if not."""
     for package in packages:
-        module_name = package['module_name']
-        attribute = package.get('attribute')
-        install_name = package.get('install_name', module_name)
-        version = package.get('version', '')
-
         try:
-            # Attempt to import the module
-            module = importlib.import_module(module_name)
-            # If an attribute is specified, check if it exists
-            if attribute:
-                getattr(module, attribute)
-        except (ImportError, AttributeError):
-            user_input = input(
-                f"This program requires '{module_name}'"
-                f"{'' if not attribute else ' with attribute ' + attribute}, which is not installed or missing.\n"
-                f"Do you want to install '{install_name}' now? (y/n): "
-            )
-            if user_input.strip().lower() == 'y':
-                try:
-                    # Build the pip install command
-                    install_command = [sys.executable, "-m", "pip", "install"]
-                    if version:
-                        install_command.append(f"{install_name}{version}")
-                    else:
-                        install_command.append(install_name)
+            # Whitelist of allowed modules for security
+            ALLOWED_MODULES = {
+                'numpy', 'scipy', 'pandas', 'matplotlib', 'requests', 'flask',
+                'torch', 'tensorflow', 'sklearn', 'cv2', 'PIL', 'openai',
+                'whisper', 'pyaudio', 'sounddevice', 'wave', 'threading',
+                'queue', 'time', 'json', 'logging', 'argparse', 'pathlib',
+                'collections', 'functools', 'itertools', 'typing', 'dataclasses'
+            }
+            
+            # Validate module name against whitelist
+            if package not in ALLOWED_MODULES:
+                raise ImportError(f"Module '{package}' is not in the allowed modules list")
+                
+            importlib.import_module(package)
+            print(f"{package} is already installed")
+        except ImportError:
+            print(f"{package} not found, installing...")
+            if not install_package(package):
+                print(f"Failed to install {package}")
+                return False
+    return True
 
-                    subprocess.check_call(install_command)
-                    # Try to import again after installation
-                    module = importlib.import_module(module_name)
-                    if attribute:
-                        getattr(module, attribute)
-                    print(f"Successfully installed '{install_name}'.")
-                except Exception as e:
-                    print(f"An error occurred while installing '{install_name}': {e}")
-                    sys.exit(1)
-            else:
-                print(f"The program requires '{install_name}' to run. Exiting...")
-                sys.exit(1)
+if __name__ == "__main__":
+    # Example usage
+    required_packages = [
+        "numpy",
+        "requests",
+        "flask"
+    ]
+    
+    if check_and_install_packages(required_packages):
+        print("All packages are ready!")
+    else:
+        print("Some packages failed to install")
+        sys.exit(1)
