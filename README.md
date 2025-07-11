@@ -8,6 +8,12 @@
 
 *Easy-to-use, low-latency speech-to-text library for realtime applications*
 
+> ❗ **Project Status: Community-Driven**
+> 
+> This project is no longer being actively maintained by me due to time constraints. I've taken on too many projects and I have to step back. I will no longer be implementing new features or providing user support.
+>
+> I will continue to review and merge high-quality, well-written Pull Requests from the community from time to time. Your contributions are welcome and appreciated!
+
 ## New
 
 - AudioToTextRecorderClient class, which automatically starts a server if none is running and connects to it. The class shares the same interface as AudioToTextRecorder, making it easy to upgrade or switch between the two. (Work in progress, most parameters and callbacks of AudioToTextRecorder are already implemented into AudioToTextRecorderClient, but not all. Also the server can not handle concurrent (parallel) requests yet.)
