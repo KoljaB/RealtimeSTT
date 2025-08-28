@@ -69,6 +69,9 @@ INIT_MODEL_TRANSCRIPTION = "tiny"
 INIT_MODEL_TRANSCRIPTION_REALTIME = "tiny"
 INIT_REALTIME_PROCESSING_PAUSE = 0.2
 INIT_REALTIME_INITIAL_PAUSE = 0.2
+INIT_SILERO_REPO_OR_DIR = "snakers4/silero-vad"
+INIT_SILERO_SOURCE = "github"
+INIT_SILERO_MODEL = "silero_vad"
 INIT_SILERO_SENSITIVITY = 0.4
 INIT_WEBRTC_SENSITIVITY = 3
 INIT_POST_SPEECH_SILENCE_DURATION = 0.6
@@ -279,6 +282,9 @@ class AudioToTextRecorder:
                  realtime_batch_size: int = 16,
 
                  # Voice activation parameters
+                 silero_repo_or_dir: str = INIT_SILERO_REPO_OR_DIR,
+                 silero_source: str = INIT_SILERO_SOURCE,
+                 silero_model: str = INIT_SILERO_MODEL,
                  silero_sensitivity: float = INIT_SILERO_SENSITIVITY,
                  silero_use_onnx: bool = False,
                  silero_deactivity_detection: bool = False,
@@ -418,6 +424,12 @@ class AudioToTextRecorder:
             slight delay compared to the regular real-time updates.
         - realtime_batch_size (int, default=16): Batch size for the real-time
             transcription model.
+        - silero_repo_or_dir (str, default="snakers4/silero-vad"): Specifies the repository or directory
+            from which to load the Silero VAD model. It can be github repo name or a local directory.
+        - silero_source (str, default="github"): Specifies the source to use for loading the Silero VAD model.
+            Typically "github" for remote loading, or "local" for local files.
+        - silero_model (str, default="silero_vad"): Specifies the model name to use for Silero VAD.
+            Usually "silero_vad" unless using a custom model.
         - silero_sensitivity (float, default=SILERO_SENSITIVITY): Sensitivity
             for the Silero Voice Activity Detection model ranging from 0
             (least sensitive) to 1 (most sensitive). Default is 0.5.
@@ -920,8 +932,9 @@ class AudioToTextRecorder:
         # Setup voice activity detection model Silero VAD
         try:
             self.silero_vad_model, _ = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad",
-                model="silero_vad",
+                repo_or_dir=silero_repo_or_dir,
+                source=silero_source,
+                model=silero_model,
                 verbose=False,
                 onnx=silero_use_onnx
             )
