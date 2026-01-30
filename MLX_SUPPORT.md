@@ -96,24 +96,37 @@ The following Whisper model sizes are supported with automatic translation to ML
 
 ### Benchmarks (Apple M2)
 
-Based on testing with various audio files:
+Real-time streaming tests (simulating microphone input):
 
-| Audio Duration | Model | Backend | RTF | Transcription Time |
-|---------------|-------|---------|-----|-------------------|
-| 6.6s | tiny | MLX | 1.80x | 12.0s |
-| 6.6s | tiny | CPU (faster-whisper) | 1.81x | 12.0s |
-| 167s | tiny | MLX | ~1.1x | ~185s |
-| 167s | tiny | CPU (faster-whisper) | 1.07x | 178s |
+#### Short Audio (6.6s)
+| Model | Backend | First Transcription | Result |
+|-------|---------|---------------------|--------|
+| tiny  | CPU (faster-whisper) | 4.5s | ✓ Correct |
+| tiny  | GPU (mlx-whisper) | 4.3s | ✓ **0.2s faster** |
 
-**RTF (Real-Time Factor)**: Processing time relative to audio duration. Lower is better (< 1.0 = faster than real-time).
+#### Multi-Sentence (19.6s, 5 sentences with 2.5s silence)
+
+**Tiny Model:**
+| Backend | Sentences | First | All Responses |
+|---------|-----------|-------|---------------|
+| CPU | 4/5 | 2.4s | 2.4s, 7.1s, 11.8s, 16.0s |
+| MLX | 4/5 | 2.3s | 2.3s, 7.0s, 11.7s, 15.9s |
+
+**Medium Model:**
+| Backend | Sentences | First | Quality |
+|---------|-----------|-------|---------|
+| CPU | 3/5 ⚠️ | 7.2s | Missing sentences |
+| MLX | 4/5 ✓ | 3.0s | **4.2s faster**, complete |
 
 ### Key Performance Notes
 
-1. **MLX performs similarly to CPU faster-whisper** for tiny models
-2. **MLX scales better with larger models** due to Apple Silicon optimization
-3. **No CUDA required** - works out of the box on Apple Silicon Macs
-4. **First run downloads models** (~150MB for tiny, ~3GB for large-v3-turbo)
-5. **Subsequent runs use cached models** (instant loading)
+1. **Tiny model**: MLX marginally faster (0.1-0.2s per transcription)
+2. **Medium model**: MLX shows **significant advantage** (4.2s faster, better quality)
+3. **Heavier models benefit more** from GPU acceleration
+4. **MLX maintains quality** while CPU backend drops sentences under load
+5. **No CUDA required** - works out of the box on Apple Silicon Macs
+6. **First run downloads models** (~150MB for tiny, ~3GB for large-v3-turbo)
+7. **Subsequent runs use cached models** (instant loading)
 
 ## Technical Details
 
