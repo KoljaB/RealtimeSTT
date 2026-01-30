@@ -10,3 +10,4 @@ openwakeword>=0.4.0
 websockets==15.0.1
 websocket-client==1.8.0
 soundfile==0.13.1
+mlx-whisper>=0.4.3;platform_system=="Darwin"  # MLX support for Apple Silicon (optional)
