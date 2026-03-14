@@ -48,6 +48,13 @@ import datetime
 import platform
 import logging
 import struct
+
+# MLX support (optional, for Apple Silicon)
+try:
+    import mlx_whisper
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
 import base64
 import queue
 import torch
@@ -57,6 +64,18 @@ import copy
 import os
 import re
 import gc
+
+# MLX compatibility classes (must be at module level for pickling)
+class MLXTranscriptionInfo:
+    """Info object for MLX transcription results (compatible with faster-whisper)"""
+    def __init__(self, language="", language_probability=1.0):
+        self.language = language
+        self.language_probability = language_probability
+
+class MLXTranscriptionSegment:
+    """Segment object for MLX transcription results (compatible with faster-whisper)"""
+    def __init__(self, text):
+        self.text = text
 
 # Named logger for this module.
 logger = logging.getLogger("realtimestt")
@@ -94,7 +113,7 @@ if platform.system() != 'Darwin':
 class TranscriptionWorker:
     def __init__(self, conn, stdout_pipe, model_path, download_root, compute_type, gpu_device_index, device,
                  ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens,
-                 batch_size, faster_whisper_vad_filter, normalize_audio):
+                 batch_size, faster_whisper_vad_filter, normalize_audio, backend="faster-whisper"):
         self.conn = conn
         self.stdout_pipe = stdout_pipe
         self.model_path = model_path
@@ -111,6 +130,7 @@ class TranscriptionWorker:
         self.batch_size = batch_size
         self.faster_whisper_vad_filter = faster_whisper_vad_filter
         self.normalize_audio = normalize_audio
+        self.backend = backend  # Store backend choice
         self.queue = queue.Queue()
 
     def custom_print(self, *args, **kwargs):
@@ -139,34 +159,77 @@ class TranscriptionWorker:
              system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
              __builtins__['print'] = self.custom_print
 
-        logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
+        # Initialize model based on backend
+        if self.backend == "mlx-whisper":
+            if not MLX_AVAILABLE:
+                raise ImportError("MLX-Whisper is not installed. Install it with: pip install mlx-whisper")
+            
+            # Translate model names to MLX-community format
+            mlx_model_map = {
+                "tiny": "mlx-community/whisper-tiny",
+                "tiny.en": "mlx-community/whisper-tiny.en",
+                "base": "mlx-community/whisper-base",
+                "base.en": "mlx-community/whisper-base.en",
+                "small": "mlx-community/whisper-small",
+                "small.en": "mlx-community/whisper-small.en",
+                "medium": "mlx-community/whisper-medium",
+                "medium.en": "mlx-community/whisper-medium.en",
+                "large-v1": "mlx-community/whisper-large-v1",
+                "large-v2": "mlx-community/whisper-large-v2",
+                "large-v3": "mlx-community/whisper-large-v3",
+                "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+            }
+            
+            mlx_model_path = mlx_model_map.get(self.model_path, self.model_path)
+            logging.info(f"Initializing MLX-Whisper transcription model {mlx_model_path}")
+            
+            try:
+                # MLX-Whisper doesn't need explicit model loading - it loads on first use
+                # But we'll warm it up
+                current_dir = os.path.dirname(os.path.realpath(__file__))
+                warmup_audio_path = os.path.join(current_dir, "warmup_audio.wav")
+                warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                
+                # Warm up the model
+                result = mlx_whisper.transcribe(
+                    warmup_audio_data,
+                    path_or_hf_repo=mlx_model_path,
+                    language="en"
+                )
+                model_warmup_transcription = result.get("text", "")
+                logging.info("✅ MLX-Whisper model loaded and cached")
+                model = None  # MLX doesn't need a model object
+                # Store the translated path for later use
+                self.mlx_model_path = mlx_model_path
+            except Exception as e:
+                logging.exception(f"Error initializing MLX-Whisper transcription model: {e}")
+                raise
+        else:
+            # Default: faster-whisper backend
+            logging.info(f"Initializing faster_whisper main transcription model {self.model_path}")
+            try:
+                model = faster_whisper.WhisperModel(
+                    model_size_or_path=self.model_path,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    device_index=self.gpu_device_index,
+                    download_root=self.download_root,
+                )
+                if self.batch_size > 0:
+                    model = BatchedInferencePipeline(model=model)
 
-        try:
-            model = faster_whisper.WhisperModel(
-                model_size_or_path=self.model_path,
-                device=self.device,
-                compute_type=self.compute_type,
-                device_index=self.gpu_device_index,
-                download_root=self.download_root,
-            )
-            # Create a short dummy audio array, for example 1 second of silence at 16 kHz
-            if self.batch_size > 0:
-                model = BatchedInferencePipeline(model=model)
-
-            # Run a warm-up transcription
-            current_dir = os.path.dirname(os.path.realpath(__file__))
-            warmup_audio_path = os.path.join(
-                current_dir, "warmup_audio.wav"
-            )
-            warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
-            segments, info = model.transcribe(warmup_audio_data, language="en", beam_size=1)
-            model_warmup_transcription = " ".join(segment.text for segment in segments)
-        except Exception as e:
-            logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
-            raise
+                # Run a warm-up transcription
+                current_dir = os.path.dirname(os.path.realpath(__file__))
+                warmup_audio_path = os.path.join(current_dir, "warmup_audio.wav")
+                warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+                segments, info = model.transcribe(warmup_audio_data, language="en", beam_size=1)
+                model_warmup_transcription = " ".join(segment.text for segment in segments)
+            except Exception as e:
+                logging.exception(f"Error initializing main faster_whisper transcription model: {e}")
+                raise
 
         self.ready_event.set()
-        logging.debug("Faster_whisper main speech to text transcription model initialized successfully")
+        logging.debug(f"{self.backend} main speech to text transcription model initialized successfully")
 
         # Start the polling thread
         polling_thread = threading.Thread(target=self.poll_connection)
@@ -195,25 +258,45 @@ class TranscriptionWorker:
                         if use_prompt:
                             prompt = self.initial_prompt if self.initial_prompt else None
 
-                        if self.batch_size > 0:
-                            segments, info = model.transcribe(
-                                audio,
-                                language=language if language else None,
-                                beam_size=self.beam_size,
-                                initial_prompt=prompt,
-                                suppress_tokens=self.suppress_tokens,
-                                batch_size=self.batch_size, 
-                                vad_filter=self.faster_whisper_vad_filter
-                            )
+                        if self.backend == "mlx-whisper":
+                            # MLX-Whisper transcription
+                            kwargs = {
+                                "path_or_hf_repo": self.mlx_model_path,
+                            }
+                            if language:
+                                kwargs["language"] = language
+                            if prompt:
+                                kwargs["initial_prompt"] = prompt
+                            
+                            result = mlx_whisper.transcribe(audio, **kwargs)
+                            # Convert MLX result to faster-whisper compatible format
+                            text = result.get("text", "")
+                            detected_lang = result.get("language", "")
+                            
+                            # Create compatible objects using module-level classes
+                            segments = [MLXTranscriptionSegment(text)]
+                            info = MLXTranscriptionInfo(detected_lang, 1.0)
                         else:
-                            segments, info = model.transcribe(
-                                audio,
-                                language=language if language else None,
-                                beam_size=self.beam_size,
-                                initial_prompt=prompt,
-                                suppress_tokens=self.suppress_tokens,
-                                vad_filter=self.faster_whisper_vad_filter
-                            )
+                            # faster-whisper transcription
+                            if self.batch_size > 0:
+                                segments, info = model.transcribe(
+                                    audio,
+                                    language=language if language else None,
+                                    beam_size=self.beam_size,
+                                    initial_prompt=prompt,
+                                    suppress_tokens=self.suppress_tokens,
+                                    batch_size=self.batch_size, 
+                                    vad_filter=self.faster_whisper_vad_filter
+                                )
+                            else:
+                                segments, info = model.transcribe(
+                                    audio,
+                                    language=language if language else None,
+                                    beam_size=self.beam_size,
+                                    initial_prompt=prompt,
+                                    suppress_tokens=self.suppress_tokens,
+                                    vad_filter=self.faster_whisper_vad_filter
+                                )
                         elapsed = time.time() - start_t
                         transcription = " ".join(seg.text for seg in segments).strip()
                         logging.debug(f"Final text detected with main model: {transcription} in {elapsed:.4f}s")
@@ -258,6 +341,7 @@ class AudioToTextRecorder:
                  input_device_index: int = None,
                  gpu_device_index: Union[int, List[int]] = 0,
                  device: str = "cuda",
+                 backend: str = "faster-whisper",  # New: "faster-whisper" or "mlx-whisper"
                  on_recording_start=None,
                  on_recording_stop=None,
                  on_transcription_start=None,
@@ -582,6 +666,7 @@ class AudioToTextRecorder:
         self.input_device_index = input_device_index
         self.gpu_device_index = gpu_device_index
         self.device = device
+        self.backend = backend  # Store backend choice
         self.wake_words = wake_words
         self.wake_word_activation_delay = wake_word_activation_delay
         self.wake_word_timeout = wake_word_timeout
@@ -758,6 +843,7 @@ class AudioToTextRecorder:
                 self.batch_size,
                 self.faster_whisper_vad_filter,
                 self.normalize_audio,
+                self.backend,  # Pass backend parameter
             )
         )
 

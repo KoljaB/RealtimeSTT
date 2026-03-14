@@ -1,0 +1,14 @@
+# Requirements for Apple Silicon (MLX-Whisper backend)
+# Install with: pip install -r requirements-mlx.txt
+
+# Core requirements
+faster-whisper>=1.1.0
+webrtcvad
+openwakeword
+pvporcupine==3.0.2
+scipy
+halo
+
+# MLX-Whisper for Apple Silicon acceleration
+mlx-whisper>=0.4.3
+mlx>=0.4.0
