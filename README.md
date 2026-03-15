@@ -507,6 +507,11 @@ When you initialize the `AudioToTextRecorder` class, you have various options to
 - **beam_size_realtime** (int, default=3): The beam size to use for real-time transcription beam search decoding.
 
 #### Voice Activation Parameters
+- **silero_repo_or_dir** (str, default="snakers4/silero-vad"): Specifies the repository or directory from which to load the Silero VAD model. You can provide a GitHub repository name for remote loading or a local directory path for loading a custom model.
+
+- **silero_source** (str, default="github"): Specifies the source to use for loading the Silero VAD model. Set to "github" to load from a remote repository, or "local" to load from local files.
+
+- **silero_model** (str, default="silero_vad"): Specifies the model name to use for Silero VAD. Use "silero_vad" for the default model, or specify a custom model name if needed.
 
 - **silero_sensitivity** (float, default=0.6): Sensitivity for Silero's voice activity detection ranging from 0 (least sensitive) to 1 (most sensitive). Default is 0.6.
 
