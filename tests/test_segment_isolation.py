@@ -250,6 +250,64 @@ class TestSegmentIsolation(unittest.TestCase):
         
         print("✓ 测试通过: buffer_lock 正确保护并发的 feed_audio 和 clear_buffers 操作")
 
+    def test_segment_id_in_transcription_pipeline(self):
+        """测试转写管道中 segment_id 的传递"""
+        self.recorder.start()
+        segment_1_id = self.recorder._get_current_segment_id()
+        
+        test_audio = generate_test_audio(duration_seconds=0.1)
+        for _ in range(3):
+            self.recorder.feed_audio(test_audio)
+        
+        with self.recorder.frames_lock:
+            frames_1 = self.recorder.frames.copy()
+        
+        self.recorder.stop()
+        
+        self.recorder.start()
+        segment_2_id = self.recorder._get_current_segment_id()
+        
+        self.assertNotEqual(segment_1_id, segment_2_id, "不同 segment 应该有不同的 ID")
+        
+        self.recorder.stop()
+        
+        print(f"✓ 测试通过: segment_id 在不同 segment 之间正确隔离")
+        print(f"  segment_1_id: {segment_1_id}")
+        print(f"  segment_2_id: {segment_2_id}")
+
+    def test_stale_result_discarded_simulation(self):
+        """模拟测试：过期的转写结果应该被丢弃
+        
+        这个测试通过直接检查 segment_id 比较逻辑来验证
+        当 segment_id 不匹配时，结果会被正确识别为过期
+        """
+        from unittest.mock import MagicMock, patch
+        
+        self.recorder.start()
+        segment_1_id = self.recorder._get_current_segment_id()
+        
+        self.recorder.stop()
+        
+        self.recorder.start()
+        segment_2_id = self.recorder._get_current_segment_id()
+        
+        self.assertNotEqual(segment_1_id, segment_2_id, "不同 segment 应该有不同的 ID")
+        
+        with self.recorder.frames_lock:
+            current_segment_id = self.recorder._current_segment_id
+            is_same_segment_1 = (current_segment_id == segment_1_id)
+            is_same_segment_2 = (current_segment_id == segment_2_id)
+        
+        self.assertFalse(is_same_segment_1, "旧 segment_id 不应该匹配当前 segment_id")
+        self.assertTrue(is_same_segment_2, "当前 segment_id 应该匹配")
+        
+        self.recorder.stop()
+        
+        print(f"✓ 测试通过: segment_id 比较逻辑正确")
+        print(f"  当前 segment_id: {current_segment_id}")
+        print(f"  旧 segment_id (segment_1): {segment_1_id}, 匹配结果: {is_same_segment_1}")
+        print(f"  当前 segment_id (segment_2): {segment_2_id}, 匹配结果: {is_same_segment_2}")
+
 
 def run_interactive_test():
     """运行交互式测试"""

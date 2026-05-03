@@ -175,9 +175,15 @@ class TranscriptionWorker:
         try:
             while not self.shutdown_event.is_set():
                 try:
-                    audio, language, use_prompt = self.queue.get(timeout=0.1)
+                    queue_item = self.queue.get(timeout=0.1)
+                    if len(queue_item) == 4:
+                        audio, language, use_prompt, segment_id = queue_item
+                    else:
+                        audio, language, use_prompt = queue_item
+                        segment_id = None
+                    
                     try:
-                        logging.debug(f"Transcribing audio with language {language}")
+                        logging.debug(f"Transcribing audio with language {language}, segment_id: {segment_id}")
                         start_t = time.time()
 
                         # normalize audio to -0.95 dBFS
@@ -188,7 +194,7 @@ class TranscriptionWorker:
                                     audio = (audio / peak) * 0.95
                         else:
                             logging.error("Received None audio for transcription")
-                            self.conn.send(('error', "Received None audio for transcription"))
+                            self.conn.send(('error', "Received None audio for transcription", segment_id))
                             continue
 
                         prompt = None
@@ -217,10 +223,10 @@ class TranscriptionWorker:
                         elapsed = time.time() - start_t
                         transcription = " ".join(seg.text for seg in segments).strip()
                         logging.debug(f"Final text detected with main model: {transcription} in {elapsed:.4f}s")
-                        self.conn.send(('success', (transcription, info)))
+                        self.conn.send(('success', (transcription, info), segment_id))
                     except Exception as e:
                         logging.error(f"General error in transcription: {e}", exc_info=True)
-                        self.conn.send(('error', str(e)))
+                        self.conn.send(('error', str(e), segment_id))
                 except queue.Empty:
                     continue
                 except KeyboardInterrupt:
@@ -1542,26 +1548,47 @@ class AudioToTextRecorder:
 
             if audio_bytes is None or len(audio_bytes) == 0:
                 print("No audio data available for transcription")
-                #logger.info("No audio data available for transcription")
                 return ""
+
+            with self.frames_lock:
+                current_segment_id = self._current_segment_id
 
             try:
                 if self.transcribe_count == 0:
-                    logger.debug("Adding transcription request, no early transcription started")
-                    start_time = time.time()  # Start timing
-                    self.parent_transcription_pipe.send((audio_bytes, self.language, use_prompt))
+                    logger.debug(f"Adding transcription request, no early transcription started, segment_id: {current_segment_id}")
+                    start_time = time.time()
+                    self.parent_transcription_pipe.send((audio_bytes, self.language, use_prompt, current_segment_id))
                     self.transcribe_count += 1
 
                 while self.transcribe_count > 0:
-                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
-                    if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
-                        if self.interrupt_stop_event.is_set(): # check if interrupted
+                    logger.debug(F"Receive from parent_transcription_pipe after sending transcription request, transcribe_count: {self.transcribe_count}")
+                    if not self.parent_transcription_pipe.poll(0.1):
+                        if self.interrupt_stop_event.is_set():
                             self.was_interrupted.set()
                             self._set_state("inactive")
-                            return "" # return empty string if interrupted
+                            return ""
                         continue
-                    status, result = self.parent_transcription_pipe.recv()
+                    
+                    recv_data = self.parent_transcription_pipe.recv()
+                    if len(recv_data) == 3:
+                        status, result, response_segment_id = recv_data
+                    else:
+                        status, result = recv_data
+                        response_segment_id = None
+                    
                     self.transcribe_count -= 1
+
+                    with self.frames_lock:
+                        is_same_segment = (self._current_segment_id == response_segment_id) or response_segment_id is None
+                    
+                    if not is_same_segment:
+                        logger.warning(f"Discarding stale transcription result. Current segment_id: {self._current_segment_id}, Response segment_id: {response_segment_id}")
+                        if self.transcribe_count > 0:
+                            continue
+                        else:
+                            self.allowed_to_early_transcribe = True
+                            self._set_state("inactive")
+                            return ""
 
                 self.allowed_to_early_transcribe = True
                 self._set_state("inactive")
@@ -1572,7 +1599,7 @@ class AudioToTextRecorder:
                     self.last_transcription_bytes = copy.deepcopy(audio_bytes)
                     self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
                     transcription = self._preprocess_output(segments)
-                    end_time = time.time()  # End timing
+                    end_time = time.time()
                     transcription_time = end_time - start_time
 
                     if start_time:
@@ -1580,7 +1607,7 @@ class AudioToTextRecorder:
                             print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                         else:
                             logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
+                    return "" if self.interrupt_stop_event.is_set() else transcription
                 else:
                     logger.error(f"Transcription error: {result}")
                     raise Exception(result)
@@ -1844,39 +1871,30 @@ class AudioToTextRecorder:
         accumulated until the buffer size is reached, and then the accumulated
         data is fed into the audio_queue.
         """
-        # Check if the buffer attribute exists, if not, initialize it
-        if not hasattr(self, 'buffer'):
-            self.buffer = bytearray()
+        with self.buffer_lock:
+            if not hasattr(self, 'buffer'):
+                self.buffer = bytearray()
 
-        # Check if input is a NumPy array
-        if isinstance(chunk, np.ndarray):
-            # Handle stereo to mono conversion if necessary
-            if chunk.ndim == 2:
-                chunk = np.mean(chunk, axis=1)
+            if isinstance(chunk, np.ndarray):
+                if chunk.ndim == 2:
+                    chunk = np.mean(chunk, axis=1)
 
-            # Resample to 16000 Hz if necessary
-            if original_sample_rate != 16000:
-                num_samples = int(len(chunk) * 16000 / original_sample_rate)
-                chunk = resample(chunk, num_samples)
+                if original_sample_rate != 16000:
+                    num_samples = int(len(chunk) * 16000 / original_sample_rate)
+                    chunk = resample(chunk, num_samples)
 
-            # Ensure data type is int16
-            chunk = chunk.astype(np.int16)
+                chunk = chunk.astype(np.int16)
 
-            # Convert the NumPy array to bytes
-            chunk = chunk.tobytes()
+                chunk = chunk.tobytes()
 
-        # Append the chunk to the buffer
-        self.buffer += chunk
-        buf_size = 2 * self.buffer_size  # silero complains if too short
+            self.buffer += chunk
+            buf_size = 2 * self.buffer_size
 
-        # Check if the buffer has reached or exceeded the buffer_size
-        while len(self.buffer) >= buf_size:
-            # Extract self.buffer_size amount of data from the buffer
-            to_process = self.buffer[:buf_size]
-            self.buffer = self.buffer[buf_size:]
+            while len(self.buffer) >= buf_size:
+                to_process = self.buffer[:buf_size]
+                self.buffer = self.buffer[buf_size:]
 
-            # Feed the extracted data to the audio_queue
-            self.audio_queue.put(to_process)
+                self.audio_queue.put(to_process)
 
     def set_microphone(self, microphone_on=True):
         """
@@ -2443,10 +2461,23 @@ class AudioToTextRecorder:
                     if self.use_main_model_for_realtime:
                         with self.transcription_lock:
                             try:
-                                self.parent_transcription_pipe.send((audio_array, self.language, True))
-                                if self.parent_transcription_pipe.poll(timeout=5):  # Wait for 5 seconds
+                                self.parent_transcription_pipe.send((audio_array, self.language, True, current_segment_id))
+                                if self.parent_transcription_pipe.poll(timeout=5):
                                     logger.debug("Receive from realtime worker after transcription request to main model")
-                                    status, result = self.parent_transcription_pipe.recv()
+                                    recv_data = self.parent_transcription_pipe.recv()
+                                    if len(recv_data) == 3:
+                                        status, result, response_segment_id = recv_data
+                                    else:
+                                        status, result = recv_data
+                                        response_segment_id = None
+                                    
+                                    with self.frames_lock:
+                                        is_same_segment = (self._current_segment_id == response_segment_id) or response_segment_id is None
+                                    
+                                    if not is_same_segment:
+                                        logger.warning(f"Discarding stale realtime transcription result. Current segment_id: {self._current_segment_id}, Response segment_id: {response_segment_id}")
+                                        continue
+                                    
                                     if status == 'success':
                                         segments, info = result
                                         self.detected_realtime_language = info.language if info.language_probability > 0 else None
