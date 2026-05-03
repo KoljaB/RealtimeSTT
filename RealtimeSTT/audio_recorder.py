@@ -175,9 +175,15 @@ class TranscriptionWorker:
         try:
             while not self.shutdown_event.is_set():
                 try:
-                    audio, language, use_prompt = self.queue.get(timeout=0.1)
+                    queue_item = self.queue.get(timeout=0.1)
+                    if len(queue_item) == 4:
+                        audio, language, use_prompt, segment_id = queue_item
+                    else:
+                        audio, language, use_prompt = queue_item
+                        segment_id = None
+                    
                     try:
-                        logging.debug(f"Transcribing audio with language {language}")
+                        logging.debug(f"Transcribing audio with language {language}, segment_id: {segment_id}")
                         start_t = time.time()
 
                         # normalize audio to -0.95 dBFS
@@ -188,7 +194,7 @@ class TranscriptionWorker:
                                     audio = (audio / peak) * 0.95
                         else:
                             logging.error("Received None audio for transcription")
-                            self.conn.send(('error', "Received None audio for transcription"))
+                            self.conn.send(('error', "Received None audio for transcription", segment_id))
                             continue
 
                         prompt = None
@@ -217,10 +223,10 @@ class TranscriptionWorker:
                         elapsed = time.time() - start_t
                         transcription = " ".join(seg.text for seg in segments).strip()
                         logging.debug(f"Final text detected with main model: {transcription} in {elapsed:.4f}s")
-                        self.conn.send(('success', (transcription, info)))
+                        self.conn.send(('success', (transcription, info), segment_id))
                     except Exception as e:
                         logging.error(f"General error in transcription: {e}", exc_info=True)
-                        self.conn.send(('error', str(e)))
+                        self.conn.send(('error', str(e), segment_id))
                 except queue.Empty:
                     continue
                 except KeyboardInterrupt:
@@ -679,6 +685,8 @@ class AudioToTextRecorder:
         self.detected_realtime_language_probability = 0
         self.transcription_lock = threading.Lock()
         self.shutdown_lock = threading.Lock()
+        self.frames_lock = threading.RLock()
+        self.buffer_lock = threading.RLock()
         self.transcribe_count = 0
         self.print_transcription_time = print_transcription_time
         self.early_transcription_on_silence = early_transcription_on_silence
@@ -687,6 +695,11 @@ class AudioToTextRecorder:
         self.normalize_audio = normalize_audio
         self.awaiting_speech_end = False
         self.start_callback_in_new_thread = start_callback_in_new_thread
+
+        self._segment_id_counter = 0
+        self._current_segment_id = None
+        self._segment_completed_event = threading.Event()
+        self._segment_completed_event.set()
 
         # ----------------------------------------------------------------------------
         # Named logger configuration
@@ -1378,6 +1391,31 @@ class AudioToTextRecorder:
         """
         self.listen_start = time.time()
 
+    def _clear_all_buffers(self):
+        """
+        清理所有音频缓冲区，包括：
+        - audio_queue: 多进程音频队列
+        - audio_buffer: 预录音缓冲区
+        - frames: 当前录音帧
+        - last_frames: 上一次录音帧
+        - feed_audio 内部 buffer
+        """
+        logger.debug("Clearing all audio buffers")
+
+        self.clear_audio_queue()
+
+        with self.frames_lock:
+            self.frames.clear()
+            self.last_frames.clear()
+
+        with self.buffer_lock:
+            if hasattr(self, 'buffer'):
+                self.buffer = bytearray()
+
+        self._segment_completed_event.set()
+
+        logger.debug("All audio buffers cleared")
+
     def abort(self):
         state = self.state
         self.start_recording_on_voice_activity = False
@@ -1388,7 +1426,8 @@ class AudioToTextRecorder:
             self._set_state("transcribing")
         self.was_interrupted.clear()
         if self.is_recording: # if recording, make sure to stop the recorder
-            self.stop()
+            self.stop(mark_segment_completed=True)
+        self._clear_all_buffers()
 
 
     def wait_audio(self):
@@ -1412,7 +1451,9 @@ class AudioToTextRecorder:
                 self.listen_start = time.time()
 
             # If not yet started recording, wait for voice activity to initiate.
-            if not self.is_recording and not self.frames:
+            with self.frames_lock:
+                frames_empty = not self.frames
+            if not self.is_recording and frames_empty:
                 self._set_state("listening")
                 self.start_recording_on_voice_activity = True
 
@@ -1433,9 +1474,10 @@ class AudioToTextRecorder:
                     if (self.stop_recording_event.wait(timeout=0.02)):
                         break
 
-            frames = self.frames
-            if len(frames) == 0:
-                frames = self.last_frames
+            with self.frames_lock:
+                frames = self.frames.copy()
+                if len(frames) == 0:
+                    frames = self.last_frames.copy()
 
             # Calculate samples needed for backdating resume
             samples_to_keep = int(self.sample_rate * self.backdate_resume_seconds)
@@ -1479,9 +1521,10 @@ class AudioToTextRecorder:
                 self.audio = full_audio
                 logger.debug(f"No samples removed, final audio length: {len(self.audio)}")
 
-            self.frames.clear()
-            self.last_frames.clear()
-            self.frames.extend(frames_to_read)
+            with self.frames_lock:
+                self.frames.clear()
+                self.last_frames.clear()
+                self.frames.extend(frames_to_read)
 
             # Reset backdating parameters
             self.backdate_stop_seconds = 0.0
@@ -1505,26 +1548,47 @@ class AudioToTextRecorder:
 
             if audio_bytes is None or len(audio_bytes) == 0:
                 print("No audio data available for transcription")
-                #logger.info("No audio data available for transcription")
                 return ""
+
+            with self.frames_lock:
+                current_segment_id = self._current_segment_id
 
             try:
                 if self.transcribe_count == 0:
-                    logger.debug("Adding transcription request, no early transcription started")
-                    start_time = time.time()  # Start timing
-                    self.parent_transcription_pipe.send((audio_bytes, self.language, use_prompt))
+                    logger.debug(f"Adding transcription request, no early transcription started, segment_id: {current_segment_id}")
+                    start_time = time.time()
+                    self.parent_transcription_pipe.send((audio_bytes, self.language, use_prompt, current_segment_id))
                     self.transcribe_count += 1
 
                 while self.transcribe_count > 0:
-                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
-                    if not self.parent_transcription_pipe.poll(0.1): # check if transcription done
-                        if self.interrupt_stop_event.is_set(): # check if interrupted
+                    logger.debug(F"Receive from parent_transcription_pipe after sending transcription request, transcribe_count: {self.transcribe_count}")
+                    if not self.parent_transcription_pipe.poll(0.1):
+                        if self.interrupt_stop_event.is_set():
                             self.was_interrupted.set()
                             self._set_state("inactive")
-                            return "" # return empty string if interrupted
+                            return ""
                         continue
-                    status, result = self.parent_transcription_pipe.recv()
+                    
+                    recv_data = self.parent_transcription_pipe.recv()
+                    if len(recv_data) == 3:
+                        status, result, response_segment_id = recv_data
+                    else:
+                        status, result = recv_data
+                        response_segment_id = None
+                    
                     self.transcribe_count -= 1
+
+                    with self.frames_lock:
+                        is_same_segment = (self._current_segment_id == response_segment_id) or response_segment_id is None
+                    
+                    if not is_same_segment:
+                        logger.warning(f"Discarding stale transcription result. Current segment_id: {self._current_segment_id}, Response segment_id: {response_segment_id}")
+                        if self.transcribe_count > 0:
+                            continue
+                        else:
+                            self.allowed_to_early_transcribe = True
+                            self._set_state("inactive")
+                            return ""
 
                 self.allowed_to_early_transcribe = True
                 self._set_state("inactive")
@@ -1535,7 +1599,7 @@ class AudioToTextRecorder:
                     self.last_transcription_bytes = copy.deepcopy(audio_bytes)
                     self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
                     transcription = self._preprocess_output(segments)
-                    end_time = time.time()  # End timing
+                    end_time = time.time()
                     transcription_time = end_time - start_time
 
                     if start_time:
@@ -1543,7 +1607,7 @@ class AudioToTextRecorder:
                             print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                         else:
                             logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
+                    return "" if self.interrupt_stop_event.is_set() else transcription
                 else:
                     logger.error(f"Transcription error: {result}")
                     raise Exception(result)
@@ -1682,6 +1746,19 @@ class AudioToTextRecorder:
         result = f"{integer_part[-2:]}.{decimal_part[:2]}"
         return result
 
+    def _generate_segment_id(self):
+        """生成唯一的 segment ID"""
+        self._segment_id_counter += 1
+        return self._segment_id_counter
+
+    def _get_current_segment_id(self):
+        """获取当前 segment ID"""
+        return self._current_segment_id
+
+    def _wait_for_segment_completion(self, timeout=None):
+        """等待当前 segment 完成处理"""
+        return self._segment_completed_event.wait(timeout=timeout)
+
     def start(self, frames = None):
         """
         Starts recording audio directly without waiting for voice activity.
@@ -1703,9 +1780,15 @@ class AudioToTextRecorder:
         self.realtime_stabilized_safetext = ""
         self.wakeword_detected = False
         self.wake_word_detect_time = 0
-        self.frames = []
-        if frames:
-            self.frames = frames
+
+        # 生成新的 segment ID 并标记为进行中
+        with self.frames_lock:
+            self._current_segment_id = self._generate_segment_id()
+            self._segment_completed_event.clear()
+            self.frames = []
+            if frames:
+                self.frames = frames
+
         self.is_recording = True
 
         self.recording_start_time = time.time()
@@ -1722,6 +1805,7 @@ class AudioToTextRecorder:
     def stop(self,
              backdate_stop_seconds: float = 0.0,
              backdate_resume_seconds: float = 0.0,
+             mark_segment_completed: bool = True,
         ):
         """
         Stops recording audio.
@@ -1732,6 +1816,8 @@ class AudioToTextRecorder:
             command is issued after the actual stop time.
         - backdate_resume_seconds (float, default="0.0"): Specifies the number
             of seconds to backdate the time relistening is initiated.
+        - mark_segment_completed (bool, default=True): Whether to mark the current
+            segment as completed. Set to False if the segment will be continued.
         """
 
         # Ensure there's a minimum interval
@@ -1744,7 +1830,12 @@ class AudioToTextRecorder:
             return self
 
         logger.info("recording stopped")
-        self.last_frames = copy.deepcopy(self.frames)
+
+        with self.frames_lock:
+            self.last_frames = copy.deepcopy(self.frames)
+            if mark_segment_completed:
+                self._segment_completed_event.set()
+
         self.backdate_stop_seconds = backdate_stop_seconds
         self.backdate_resume_seconds = backdate_resume_seconds
         self.is_recording = False
@@ -1780,39 +1871,30 @@ class AudioToTextRecorder:
         accumulated until the buffer size is reached, and then the accumulated
         data is fed into the audio_queue.
         """
-        # Check if the buffer attribute exists, if not, initialize it
-        if not hasattr(self, 'buffer'):
-            self.buffer = bytearray()
+        with self.buffer_lock:
+            if not hasattr(self, 'buffer'):
+                self.buffer = bytearray()
 
-        # Check if input is a NumPy array
-        if isinstance(chunk, np.ndarray):
-            # Handle stereo to mono conversion if necessary
-            if chunk.ndim == 2:
-                chunk = np.mean(chunk, axis=1)
+            if isinstance(chunk, np.ndarray):
+                if chunk.ndim == 2:
+                    chunk = np.mean(chunk, axis=1)
 
-            # Resample to 16000 Hz if necessary
-            if original_sample_rate != 16000:
-                num_samples = int(len(chunk) * 16000 / original_sample_rate)
-                chunk = resample(chunk, num_samples)
+                if original_sample_rate != 16000:
+                    num_samples = int(len(chunk) * 16000 / original_sample_rate)
+                    chunk = resample(chunk, num_samples)
 
-            # Ensure data type is int16
-            chunk = chunk.astype(np.int16)
+                chunk = chunk.astype(np.int16)
 
-            # Convert the NumPy array to bytes
-            chunk = chunk.tobytes()
+                chunk = chunk.tobytes()
 
-        # Append the chunk to the buffer
-        self.buffer += chunk
-        buf_size = 2 * self.buffer_size  # silero complains if too short
+            self.buffer += chunk
+            buf_size = 2 * self.buffer_size
 
-        # Check if the buffer has reached or exceeded the buffer_size
-        while len(self.buffer) >= buf_size:
-            # Extract self.buffer_size amount of data from the buffer
-            to_process = self.buffer[:buf_size]
-            self.buffer = self.buffer[buf_size:]
+            while len(self.buffer) >= buf_size:
+                to_process = self.buffer[:buf_size]
+                self.buffer = self.buffer[buf_size:]
 
-            # Feed the extracted data to the audio_queue
-            self.audio_queue.put(to_process)
+                self.audio_queue.put(to_process)
 
     def set_microphone(self, microphone_on=True):
         """
@@ -2090,8 +2172,10 @@ class AudioToTextRecorder:
                                 logger.debug('Debug: Adding buffered audio to frames')
                             # Add the buffered audio
                             # to the recording frames
-                            self.frames.extend(list(self.audio_buffer))
-                            self.audio_buffer.clear()
+                            with self.frames_lock:
+                                self.frames.extend(list(self.audio_buffer))
+                            with self.buffer_lock:
+                                self.audio_buffer.clear()
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Resetting Silero VAD model states')
@@ -2121,17 +2205,18 @@ class AudioToTextRecorder:
                             logger.debug('Debug: Removing wakeword samples')
                         # Remove samples from the beginning of self.frames
                         samples_removed = 0
-                        while wakeword_samples_to_remove > 0 and self.frames:
-                            frame = self.frames[0]
-                            frame_samples = len(frame) // 2  # Assuming 16-bit audio
-                            if wakeword_samples_to_remove >= frame_samples:
-                                self.frames.pop(0)
-                                samples_removed += frame_samples
-                                wakeword_samples_to_remove -= frame_samples
-                            else:
-                                self.frames[0] = frame[wakeword_samples_to_remove * 2:]
-                                samples_removed += wakeword_samples_to_remove
-                                samples_to_remove = 0
+                        with self.frames_lock:
+                            while wakeword_samples_to_remove > 0 and self.frames:
+                                frame = self.frames[0]
+                                frame_samples = len(frame) // 2  # Assuming 16-bit audio
+                                if wakeword_samples_to_remove >= frame_samples:
+                                    self.frames.pop(0)
+                                    samples_removed += frame_samples
+                                    wakeword_samples_to_remove -= frame_samples
+                                else:
+                                    self.frames[0] = frame[wakeword_samples_to_remove * 2:]
+                                    samples_removed += wakeword_samples_to_remove
+                                    samples_to_remove = 0
                         
                         wakeword_samples_to_remove = 0
 
@@ -2234,7 +2319,8 @@ class AudioToTextRecorder:
                                         f"time since silence start: {time_diff:.3f} seconds")
 
                                 logger.debug('Debug: Appending data to frames and stopping recording')
-                            self.frames.append(data)
+                            with self.frames_lock:
+                                self.frames.append(data)
                             self.stop()
                             if not self.is_recording:
                                 if self.speech_end_silence_start != 0:
@@ -2289,14 +2375,16 @@ class AudioToTextRecorder:
                 if self.is_recording and not failed_stop_attempt:
                     if self.use_extended_logging:
                         logger.debug('Debug: Appending data to frames')
-                    self.frames.append(data)
+                    with self.frames_lock:
+                        self.frames.append(data)
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking if not recording or speech end silence start')
                 if not self.is_recording or self.speech_end_silence_start:
                     if self.use_extended_logging:
                         logger.debug('Debug: Appending data to audio buffer')
-                    self.audio_buffer.append(data)
+                    with self.buffer_lock:
+                        self.audio_buffer.append(data)
 
         except Exception as e:
             logger.debug('Debug: Caught exception in main try block')
@@ -2353,9 +2441,14 @@ class AudioToTextRecorder:
                     # Update transcription time
                     last_transcription_time = time.time()
 
+                    # 记录当前的 segment_id，用于后面检查
+                    with self.frames_lock:
+                        current_segment_id = self._current_segment_id
+                        frames_copy = self.frames.copy()
+
                     # Convert the buffer frames to a NumPy array
                     audio_array = np.frombuffer(
-                        b''.join(self.frames),
+                        b''.join(frames_copy),
                         dtype=np.int16
                         )
 
@@ -2368,10 +2461,23 @@ class AudioToTextRecorder:
                     if self.use_main_model_for_realtime:
                         with self.transcription_lock:
                             try:
-                                self.parent_transcription_pipe.send((audio_array, self.language, True))
-                                if self.parent_transcription_pipe.poll(timeout=5):  # Wait for 5 seconds
+                                self.parent_transcription_pipe.send((audio_array, self.language, True, current_segment_id))
+                                if self.parent_transcription_pipe.poll(timeout=5):
                                     logger.debug("Receive from realtime worker after transcription request to main model")
-                                    status, result = self.parent_transcription_pipe.recv()
+                                    recv_data = self.parent_transcription_pipe.recv()
+                                    if len(recv_data) == 3:
+                                        status, result, response_segment_id = recv_data
+                                    else:
+                                        status, result = recv_data
+                                        response_segment_id = None
+                                    
+                                    with self.frames_lock:
+                                        is_same_segment = (self._current_segment_id == response_segment_id) or response_segment_id is None
+                                    
+                                    if not is_same_segment:
+                                        logger.warning(f"Discarding stale realtime transcription result. Current segment_id: {self._current_segment_id}, Response segment_id: {response_segment_id}")
+                                        continue
+                                    
                                     if status == 'success':
                                         segments, info = result
                                         self.detected_realtime_language = info.language if info.language_probability > 0 else None
@@ -2423,9 +2529,12 @@ class AudioToTextRecorder:
                         )
                         logger.debug(f"Realtime text detected: {realtime_text}")
 
-                    # double check recording state
+                    # double check recording state and segment_id
                     # because it could have changed mid-transcription
-                    if self.is_recording and time.time() - \
+                    with self.frames_lock:
+                        is_same_segment = (self._current_segment_id == current_segment_id)
+
+                    if self.is_recording and is_same_segment and time.time() - \
                             self.recording_start_time > self.init_realtime_after_seconds:
 
                         self.realtime_transcription_text = realtime_text
