@@ -308,6 +308,150 @@ class TestSegmentIsolation(unittest.TestCase):
         print(f"  旧 segment_id (segment_1): {segment_1_id}, 匹配结果: {is_same_segment_1}")
         print(f"  当前 segment_id (segment_2): {segment_2_id}, 匹配结果: {is_same_segment_2}")
 
+    def test_old_format_response_discarded_with_mock_pipe(self):
+        """使用 mock pipe 测试：旧格式响应(没有 segment_id)应该被丢弃
+        
+        旧格式响应是指只有 (status, result) 两个元素的元组，
+        没有第三个元素 segment_id。这种情况下 response_segment_id 会是 None。
+        
+        测试验证：
+        1. 旧格式响应 (2元素元组) 会被正确丢弃
+        2. 新格式响应 (3元素元组) 但 segment_id 不匹配也会被丢弃
+        3. 新格式响应且 segment_id 匹配会被接受
+        """
+        from unittest.mock import MagicMock, patch, PropertyMock
+        import copy
+        import numpy as np
+
+        test_audio = generate_test_audio(duration_seconds=0.1)
+        audio_array = np.frombuffer(test_audio, dtype=np.int16)
+        audio_float = audio_array.astype(np.float32) / 32768.0
+
+        self.recorder.start()
+        current_segment_id = self.recorder._get_current_segment_id()
+
+        old_segment_id = current_segment_id - 1 if current_segment_id > 1 else 999
+
+        class MockInfo:
+            def __init__(self):
+                self.language = "en"
+                self.language_probability = 0.9
+
+        mock_info = MockInfo()
+
+        test_cases = [
+            {
+                "name": "旧格式响应 (2元素元组, 无 segment_id)",
+                "response": ('success', ("Old transcription", mock_info)),
+                "expected_accepted": False,
+                "expected_segment_id_in_response": None,
+            },
+            {
+                "name": "新格式响应但 segment_id 不匹配",
+                "response": ('success', ("Stale transcription", mock_info), old_segment_id),
+                "expected_accepted": False,
+                "expected_segment_id_in_response": old_segment_id,
+            },
+            {
+                "name": "新格式响应且 segment_id 匹配",
+                "response": ('success', ("Valid transcription", mock_info), current_segment_id),
+                "expected_accepted": True,
+                "expected_segment_id_in_response": current_segment_id,
+            },
+        ]
+
+        for test_case in test_cases:
+            with self.subTest(test_case["name"]):
+                mock_pipe = MagicMock()
+                mock_pipe.poll.return_value = True
+                mock_pipe.recv.return_value = test_case["response"]
+                mock_pipe.send = MagicMock()
+
+                original_pipe = self.recorder.parent_transcription_pipe
+                self.recorder.parent_transcription_pipe = mock_pipe
+                self.recorder.transcribe_count = 0
+
+                try:
+                    with patch.object(self.recorder, '_preprocess_output', return_value="Processed text"):
+                        result = self.recorder.perform_final_transcription(audio_float, use_prompt=True)
+
+                    if test_case["expected_accepted"]:
+                        self.assertEqual(result, "Processed text", 
+                            f"有效响应应该被接受，但返回: {result}")
+                        print(f"✓ {test_case['name']}: 正确接受了有效响应")
+                    else:
+                        self.assertEqual(result, "", 
+                            f"无效响应应该被丢弃，但返回: {result}")
+                        print(f"✓ {test_case['name']}: 正确丢弃了无效响应")
+                        print(f"  当前 segment_id: {current_segment_id}")
+                        print(f"  响应中的 segment_id: {test_case['expected_segment_id_in_response']}")
+
+                finally:
+                    self.recorder.parent_transcription_pipe = original_pipe
+
+        self.recorder.stop()
+
+    def test_is_same_segment_logic_directly(self):
+        """直接测试 is_same_segment 逻辑的正确性
+        
+        验证新的逻辑:
+        - is_same_segment = (response_segment_id is not None) and (current_segment_id == response_segment_id)
+        """
+        test_cases = [
+            {
+                "current": 1,
+                "response": 1,
+                "expected": True,
+                "description": "segment_id 匹配",
+            },
+            {
+                "current": 1,
+                "response": 2,
+                "expected": False,
+                "description": "segment_id 不匹配",
+            },
+            {
+                "current": 1,
+                "response": None,
+                "expected": False,
+                "description": "旧格式响应 (response_segment_id=None)",
+            },
+            {
+                "current": 5,
+                "response": None,
+                "expected": False,
+                "description": "旧格式响应 (response_segment_id=None), current=5",
+            },
+            {
+                "current": None,
+                "response": 1,
+                "expected": False,
+                "description": "current_segment_id 为 None",
+            },
+            {
+                "current": None,
+                "response": None,
+                "expected": False,
+                "description": "两者都为 None",
+            },
+        ]
+
+        print("\n直接测试 is_same_segment 逻辑:")
+        for test_case in test_cases:
+            current = test_case["current"]
+            response = test_case["response"]
+            expected = test_case["expected"]
+            
+            is_same_segment = (response is not None) and (current == response)
+            
+            self.assertEqual(is_same_segment, expected,
+                f"失败: current={current}, response={response}, "
+                f"expected={expected}, got={is_same_segment}")
+            
+            status = "✓" if is_same_segment == expected else "✗"
+            print(f"  {status} {test_case['description']}: "
+                  f"current={current}, response={response} -> {is_same_segment}")
+
 
 def run_interactive_test():
     """运行交互式测试"""

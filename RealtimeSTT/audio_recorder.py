@@ -1579,7 +1579,7 @@ class AudioToTextRecorder:
                     self.transcribe_count -= 1
 
                     with self.frames_lock:
-                        is_same_segment = (self._current_segment_id == response_segment_id) or response_segment_id is None
+                        is_same_segment = (response_segment_id is not None) and (self._current_segment_id == response_segment_id)
                     
                     if not is_same_segment:
                         logger.warning(f"Discarding stale transcription result. Current segment_id: {self._current_segment_id}, Response segment_id: {response_segment_id}")
@@ -2269,9 +2269,12 @@ class AudioToTextRecorder:
                                     audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
                                     audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
 
+                                    with self.frames_lock:
+                                        current_segment_id = self._current_segment_id
+
                                     if self.use_extended_logging:
                                         logger.debug("Debug: early transcription request pipe send")
-                                    self.parent_transcription_pipe.send((audio, self.language, True))
+                                    self.parent_transcription_pipe.send((audio, self.language, True, current_segment_id))
                                     if self.use_extended_logging:
                                         logger.debug("Debug: early transcription request pipe send return")
                                     self.allowed_to_early_transcribe = False
