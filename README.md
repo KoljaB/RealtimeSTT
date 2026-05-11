@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/koljab-realtimestt-badge.png)](https://mseep.ai/app/koljab-realtimestt)
+
 # RealtimeSTT
 
 RealtimeSTT is a Python speech-to-text library for applications that need
