@@ -92,6 +92,10 @@ send_recorded_chunk = False
 log_incoming_chunks = False
 silence_timing = False
 writechunks = False
+verify_data_integrity_enabled = False
+reject_corrupted_data = False
+corruption_rejection_threshold = 0  # 0 = reject immediately, >0 = allow N failures before rejection
+corruption_failure_count = {}  # Track failures per client connection
 wav_file = None
 
 hard_break_even_on_background_noise = 3.0
@@ -218,7 +222,7 @@ def preprocess_text(text):
     # Uppercase the first letter
     if text:
         text = text[0].upper() + text[1:]
-    
+
     return text
 
 def debug_print(message):
@@ -243,6 +247,74 @@ def format_timestamp_ns(timestamp_ns: int) -> str:
     formatted_timestamp = f"{time_str}.{milliseconds:03d}"
 
     return formatted_timestamp
+
+def verify_data_integrity(audio_chunk, metadata, client_id=None):
+    """
+    Verify that received audio data matches what was sent by the frontend
+    Returns: (is_valid: bool, should_reject: bool, error_message: str)
+    """
+    if 'checksum' not in metadata or 'dataLength' not in metadata:
+        debug_print("No verification data in metadata")
+        return True, False, ""  # No verification data = pass through
+
+    expected_checksum = metadata['checksum']
+    expected_length = metadata['dataLength']
+
+    # Convert bytes to int16 array for checksum calculation
+    audio_data = np.frombuffer(audio_chunk, dtype=np.int16)
+    actual_length = len(audio_data)
+
+    # Calculate checksum the same way as frontend
+    actual_checksum = int(np.sum(audio_data, dtype=np.int64)) & 0xFFFFFFFF
+
+    # Verify length and checksum
+    length_match = actual_length == expected_length
+    checksum_match = actual_checksum == expected_checksum
+    is_valid = length_match and checksum_match
+
+    timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+
+    if is_valid:
+        if extended_logging:
+            print(f"  [{timestamp}] [OK] Data integrity verified (length: {actual_length}, checksum: {actual_checksum:08X})")
+        return True, False, ""
+    else:
+        # Data integrity failed
+        error_details = []
+        if not length_match:
+            error_details.append(f"Length mismatch: expected {expected_length}, got {actual_length}")
+        if not checksum_match:
+            error_details.append(f"Checksum mismatch: expected {expected_checksum:08X}, got {actual_checksum:08X}")
+
+        error_message = "; ".join(error_details)
+
+        print(f"  [{timestamp}] [FAIL] Data integrity check failed!")
+        print(f"    Length: expected {expected_length}, got {actual_length} ({'OK' if length_match else 'FAIL'})")
+        print(f"    Checksum: expected {expected_checksum:08X}, got {actual_checksum:08X} ({'OK' if checksum_match else 'FAIL'})")
+
+        # Additional debugging info
+        if not length_match:
+            print(f"    Length mismatch could indicate audio corruption or transmission error")
+        if not checksum_match:
+            print(f"    Checksum mismatch indicates audio data corruption during transmission")
+
+        # Handle rejection policy if enabled
+        should_reject = False
+        if reject_corrupted_data and client_id:
+            # Track failure count for this client
+            if client_id not in corruption_failure_count:
+                corruption_failure_count[client_id] = 0
+            corruption_failure_count[client_id] += 1
+
+            # Check if we should reject
+            if corruption_failure_count[client_id] > corruption_rejection_threshold:
+                should_reject = True
+                print(f"    [REJECT] Client {client_id} exceeded corruption threshold ({corruption_failure_count[client_id]} failures)")
+                print(f"    [REJECT] Disconnecting client due to repeated data corruption")
+            else:
+                print(f"    [WARNING] Client {client_id} corruption count: {corruption_failure_count[client_id]}/{corruption_rejection_threshold + 1}")
+
+        return False, should_reject, error_message
 
 def text_detected(text, loop):
     global prev_text
@@ -396,7 +468,7 @@ def on_turn_detection_stop(loop):
 
 # Define the server's arguments
 def parse_arguments():
-    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks, dynamic_silence_timing
+    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks, dynamic_silence_timing, verify_data_integrity_enabled, reject_corrupted_data, corruption_rejection_threshold
 
     import argparse
     parser = argparse.ArgumentParser(description='Start the Speech-to-Text (STT) server with various configuration options.')
@@ -406,7 +478,7 @@ def parse_arguments():
 
     parser.add_argument('-r', '--rt-model', '--realtime_model_type', type=str, default='tiny',
                         help='Model size for real-time transcription. Options same as --model.  This is used only if real-time transcription is enabled (enable_realtime_transcription). Default is tiny.en.')
-    
+
     parser.add_argument('-l', '--lang', '--language', type=str, default='en',
                 help='Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is en. List of supported language codes: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110')
 
@@ -427,7 +499,7 @@ def parse_arguments():
     parser.add_argument('--debug_websockets', action='store_true', help='Enable debug logging for detailed server websocket operations')
 
     parser.add_argument('-W', '--write', metavar='FILE', help='Save received audio to a WAV file')
-    
+
     parser.add_argument('-b', '--batch', '--batch_size', type=int, default=16, help='Batch size for inference. This parameter controls the number of audio chunks processed in parallel during transcription. Default is 16.')
 
     parser.add_argument('--root', '--download_root', type=str,default=None, help='Specifies the root path where the Whisper models are downloaded to. Default is None.')
@@ -436,11 +508,11 @@ def parse_arguments():
                     help='Enable dynamic adjustment of silence duration for sentence detection. Adjusts post-speech silence duration based on detected sentence structure and punctuation. Default is False.')
 
     parser.add_argument('--init_realtime_after_seconds', type=float, default=0.2,
-                        help='The initial waiting time in seconds before real-time transcription starts. This delay helps prevent false positives at the beginning of a session. Default is 0.2 seconds.')  
-    
+                        help='The initial waiting time in seconds before real-time transcription starts. This delay helps prevent false positives at the beginning of a session. Default is 0.2 seconds.')
+
     parser.add_argument('--realtime_batch_size', type=int, default=16,
                         help='Batch size for the real-time transcription model. This parameter controls the number of audio chunks processed in parallel during real-time transcription. Default is 16.')
-    
+
     parser.add_argument('--initial_prompt_realtime', type=str, default="", help='Initial prompt that guides the real-time transcription model to produce transcriptions in a particular style or format.')
 
     parser.add_argument('--silero_sensitivity', type=float, default=0.05,
@@ -458,14 +530,14 @@ def parse_arguments():
     parser.add_argument('--min_gap_between_recordings', type=float, default=0,
                         help='Minimum time (in seconds) between consecutive recordings. Setting this helps avoid overlapping recordings when there’s a brief silence between them. Default is 0 seconds.')
 
-    parser.add_argument('--enable_realtime_transcription', action='store_true', default=True,
-                        help='Enable continuous real-time transcription of audio as it is received. When enabled, transcriptions are sent in near real-time. Default is True.')
+    parser.add_argument('--enable_realtime_transcription', type=lambda x: x.lower() == 'true', default=True,
+                        help='Enable continuous real-time transcription of audio as it is received. When enabled, transcriptions are sent in near real-time. Use --enable_realtime_transcription true/false. Default is True.')
 
     parser.add_argument('--realtime_processing_pause', type=float, default=0.02,
                         help='Time interval (in seconds) between processing audio chunks for real-time transcription. Lower values increase responsiveness but may put more load on the CPU. Default is 0.02 seconds.')
 
-    parser.add_argument('--silero_deactivity_detection', action='store_true', default=True,
-                        help='Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources. Default is True.')
+    parser.add_argument('--silero_deactivity_detection', type=lambda x: x.lower() == 'true', default=True,
+                        help='Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources. Use --silero_deactivity_detection true/false. Default is True.')
 
     parser.add_argument('--early_transcription_on_silence', type=float, default=0.2,
                         help='Start transcription after the specified seconds of silence. This is useful when you want to trigger transcription mid-speech when there is a brief pause. Should be lower than post_speech_silence_duration. Set to 0 to disable. Default is 0.2 seconds.')
@@ -521,10 +593,10 @@ def parse_arguments():
 
     parser.add_argument('--gpu_device_index', type=int, default=0,
                         help='Index of the GPU device to use. Default is None.')
-    
+
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device for model to use. Can either be "cuda" or "cpu". Default is cuda.')
-    
+
     parser.add_argument('--handle_buffer_overflow', action='store_true',
                         help='Handle buffer overflow during transcription. Default is False.')
 
@@ -538,6 +610,12 @@ def parse_arguments():
 
     parser.add_argument('--logchunks', action='store_true', help='Enable logging of incoming audio chunks (periods)')
 
+    parser.add_argument('--verify-data-integrity', action='store_true', help='Enable verification that frontend sent data matches server received data')
+
+    parser.add_argument('--reject-corrupted-data', action='store_true', help='Reject and disconnect clients that send corrupted data repeatedly')
+
+    parser.add_argument('--corruption-threshold', type=int, default=0, help='Number of corruption failures allowed before rejecting client (default: 0 = reject immediately)')
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -546,6 +624,9 @@ def parse_arguments():
     writechunks = args.write
     log_incoming_chunks = args.logchunks
     dynamic_silence_timing = args.silence_timing
+    verify_data_integrity_enabled = getattr(args, 'verify_data_integrity', False)
+    reject_corrupted_data = getattr(args, 'reject_corrupted_data', False)
+    corruption_rejection_threshold = getattr(args, 'corruption_threshold', 0)
 
 
     ws_logger = logging.getLogger('websockets')
@@ -576,7 +657,7 @@ def _recorder_thread(loop):
     recorder = AudioToTextRecorder(**recorder_config)
     print(f"{bcolors.OKGREEN}{bcolors.BOLD}RealtimeSTT initialized{bcolors.ENDC}")
     recorder_ready.set()
-    
+
     def process_text(full_sentence):
         global prev_text
         prev_text = ""
@@ -733,16 +814,49 @@ async def data_handler(websocket):
                 metadata_json = message[4:4+metadata_length].decode('utf-8')
                 metadata = json.loads(metadata_json)
                 sample_rate = metadata['sampleRate']
+                chunk = message[4+metadata_length:]
 
                 if 'server_sent_to_stt' in metadata:
                     stt_received_ns = time.time_ns()
                     metadata["stt_received"] = stt_received_ns
                     metadata["stt_received_formatted"] = format_timestamp_ns(stt_received_ns)
-                    print(f"Server received audio chunk of length {len(message)} bytes, metadata: {metadata}")
+
+                    # Verify data integrity if enabled
+                    should_process_audio = True
+                    if verify_data_integrity_enabled:
+                        client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+                        is_valid, should_reject, error_message = verify_data_integrity(chunk, metadata, client_id)
+
+                        if should_reject:
+                            # Send rejection message to client and close connection
+                            rejection_message = {
+                                "type": "error",
+                                "error": "data_corruption",
+                                "message": f"Connection rejected due to repeated data corruption: {error_message}",
+                                "action": "disconnect"
+                            }
+
+                            try:
+                                await websocket.send(json.dumps(rejection_message))
+                            except:
+                                pass  # Client may already be disconnected
+
+                            print(f"    [DISCONNECT] Closing connection to {client_id} due to data corruption")
+                            break  # Exit the message loop, which will close the connection
+
+                        elif not is_valid and reject_corrupted_data:
+                            # Log corruption but don't process the corrupted audio
+                            should_process_audio = False
+                            print(f"    [SKIP] Skipping corrupted audio chunk from {client_id}")
+
+                    if should_process_audio:
+                        print(f"Server received audio chunk of length {len(message)} bytes, metadata: {metadata}")
+                    else:
+                        # Don't process corrupted audio
+                        continue
 
                 if extended_logging:
                     debug_print(f"Processing audio chunk with sample rate {sample_rate}")
-                chunk = message[4+metadata_length:]
 
                 if writechunks:
                     if not wav_file:
@@ -767,6 +881,16 @@ async def data_handler(websocket):
     finally:
         data_connections.remove(websocket)
         recorder.clear_audio_queue()  # Ensure audio queue is cleared if client disconnects
+
+        # Clean up corruption tracking for this client
+        if reject_corrupted_data:
+            try:
+                client_id = f"{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+                if client_id in corruption_failure_count:
+                    del corruption_failure_count[client_id]
+                    print(f"    [CLEANUP] Removed corruption tracking for {client_id}")
+            except:
+                pass  # Client info may not be available
 
 async def broadcast_audio_messages():
     while True:
@@ -857,10 +981,10 @@ async def main_async():
 
     try:
         # Attempt to start control and data servers
-        control_server = await websockets.serve(control_handler, "localhost", args.control)
-        data_server = await websockets.serve(data_handler, "localhost", args.data)
-        print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://localhost:{args.control}{bcolors.ENDC}")
-        print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://localhost:{args.data}{bcolors.ENDC}")
+        control_server = await websockets.serve(control_handler, "0.0.0.0", args.control)
+        data_server = await websockets.serve(data_handler, "0.0.0.0", args.data)
+        print(f"{bcolors.OKGREEN}Control server started on {bcolors.OKBLUE}ws://0.0.0.0:{args.control}{bcolors.ENDC}")
+        print(f"{bcolors.OKGREEN}Data server started on {bcolors.OKBLUE}ws://0.0.0.0:{args.data}{bcolors.ENDC}")
 
         # Start the broadcast and recorder threads
         broadcast_task = asyncio.create_task(broadcast_audio_messages())
@@ -912,3 +1036,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+#python -m RealtimeSTT_server.stt_server --model large-v2 --control_port 8011 --data_port 8012 --verify-data-integrity --compute_type int8 --batch_size 1 --beam_size 1 --enable_realtime_transcription false

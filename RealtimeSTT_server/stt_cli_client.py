@@ -84,6 +84,8 @@ def main():
                       help="Minimum text similarity for hard break (default: 0.99)")
     parser.add_argument("--min-chars", type=int, default=15,
                       help="Minimum characters for hard break (default: 15)")
+    parser.add_argument("--verify-data", action="store_true",
+                      help="Enable data integrity verification (default: False)")
 
     args = parser.parse_args()
 
@@ -216,6 +218,7 @@ def main():
         use_microphone=True,
         input_device_index=args.input_device,  # Pass input device index
         output_wav_file = args.write or None,
+        enable_data_verification=args.verify_data,  # Enable data verification if requested
     )
 
     # Process command-line parameters

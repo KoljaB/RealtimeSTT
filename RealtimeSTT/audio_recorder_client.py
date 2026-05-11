@@ -173,6 +173,9 @@ class AudioToTextRecorderClient:
                  autostart_server: bool = True,
                  output_wav_file: str = None,
                  faster_whisper_vad_filter: bool = False,
+                 
+                 # Data integrity verification
+                 enable_data_verification: bool = False,
                  ):
 
         # Set instance variables from constructor parameters
@@ -255,6 +258,9 @@ class AudioToTextRecorderClient:
         self.data_url = data_url
         self.autostart_server = autostart_server
         self.output_wav_file = output_wav_file
+        
+        # Data integrity verification
+        self.enable_data_verification = enable_data_verification
 
         # Instance variables
         self.muted = False
@@ -343,6 +349,12 @@ class AudioToTextRecorderClient:
             print(f"Error in AudioToTextRecorderClient.text(): {e}")
             return ""
 
+    def calculate_checksum(self, audio_data):
+        """Calculate checksum for data verification"""
+        audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        checksum = int(np.sum(audio_array, dtype=np.int64)) & 0xFFFFFFFF
+        return checksum
+
     def feed_audio(self, chunk, audio_meta_data, original_sample_rate=16000):
         # Start with the base metadata
         metadata = {"sampleRate": original_sample_rate}
@@ -354,6 +366,13 @@ class AudioToTextRecorderClient:
             metadata["server_sent_to_stt_formatted"] = format_timestamp_ns(server_sent_to_stt_ns)
 
             metadata.update(audio_meta_data)
+            
+            # Add verification data if server_sent_to_stt is present (enables verification)
+            if "server_sent_to_stt" in audio_meta_data:
+                audio_array = np.frombuffer(chunk, dtype=np.int16)
+                metadata["dataLength"] = len(audio_array)
+                metadata["checksum"] = self.calculate_checksum(chunk)
+                metadata["timestamp"] = int(time.time() * 1000)
 
         # Convert metadata to JSON and prepare the message
         metadata_json = json.dumps(metadata)
@@ -629,6 +648,15 @@ class AudioToTextRecorderClient:
 
                     if self.recording_start.is_set():
                         metadata = {"sampleRate": self.audio_input.device_sample_rate}
+                        
+                        # Add verification data if enabled
+                        if self.enable_data_verification:
+                            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+                            metadata["dataLength"] = len(audio_array)
+                            metadata["checksum"] = self.calculate_checksum(audio_data)
+                            metadata["timestamp"] = int(time.time() * 1000)
+                            metadata["server_sent_to_stt"] = True
+                        
                         metadata_json = json.dumps(metadata)
                         metadata_length = len(metadata_json)
                         message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + audio_data
