@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatBot with Speech-to-Text</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 1rem;
+            text-align: center;
+            color: white;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 0.9rem;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            background: white;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            margin-top: 20px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 500px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+
+        .message.user .message-avatar {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .message.bot .message-avatar {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            word-wrap: break-word;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.bot .message-content {
+            background: white;
+            color: #333;
+            border: 1px solid #e9ecef;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-time {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 4px;
+        }
+
+        .input-area {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .input-container {
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            background: #f8f9fa;
+            border-radius: 25px;
+            padding: 8px 12px;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .input-container.focused {
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .input-container.listening {
+            border-color: #dc3545;
+            background: #fff5f5;
+            box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.1);
+        }
+
+        .message-input {
+            flex: 1;
+            border: none;
+            outline: none;
+            padding: 12px 16px;
+            font-size: 15px;
+            background: transparent;
+            resize: none;
+            max-height: 100px;
+            min-height: 20px;
+            line-height: 1.4;
+            font-family: inherit;
+        }
+
+        .mic-button {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .mic-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.3);
+        }
+
+        .mic-button.listening {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            animation: pulse 1.5s infinite;
+        }
+
+        .mic-button.disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+
+        .send-button {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+
+        .send-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        .send-button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .status-bar {
+            padding: 8px 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e9ecef;
+            font-size: 12px;
+            color: #6c757d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #dc3545;
+            animation: blink 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #28a745;
+            animation: none;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+
+        .realtime-preview {
+            padding: 8px 16px;
+            background: rgba(102, 126, 234, 0.1);
+            border-left: 3px solid #667eea;
+            margin: 8px 0;
+            font-style: italic;
+            color: #667eea;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .realtime-preview.active {
+            display: block;
+        }
+
+        .welcome-message {
+            text-align: center;
+            color: #6c757d;
+            padding: 40px 20px;
+            font-style: italic;
+        }
+
+        .config-panel {
+            padding: 12px 20px;
+            background: rgba(102, 126, 234, 0.05);
+            border-bottom: 1px solid #e9ecef;
+            font-size: 12px;
+        }
+
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 4px 0;
+        }
+
+        .config-row label {
+            min-width: 80px;
+            color: #495057;
+        }
+
+        .config-row input {
+            flex: 1;
+            padding: 4px 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        @media (max-width: 768px) {
+            .chat-container {
+                margin: 10px;
+                border-radius: 8px;
+            }
+            
+            .message-content {
+                max-width: 85%;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 AI ChatBot</h1>
+        <p>Click the microphone to speak, or type your message</p>
+    </div>
+
+    <div class="chat-container">
+        <div class="config-panel">
+            <div class="config-row">
+                <label>Server:</label>
+                <input type="text" id="control-url" value="ws://localhost:8011" placeholder="Control URL">
+                <input type="text" id="data-url" value="ws://localhost:8012" placeholder="Data URL">
+            </div>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+            <div class="welcome-message">
+                👋 Welcome! Start a conversation by typing or using the microphone button.
+            </div>
+        </div>
+
+        <div class="realtime-preview" id="realtime-preview"></div>
+
+        <div class="input-area">
+            <div class="input-container" id="input-container">
+                <textarea 
+                    class="message-input" 
+                    id="message-input" 
+                    placeholder="Type your message or click the mic to speak..."
+                    rows="1"
+                ></textarea>
+                
+                <button class="mic-button" id="mic-button" title="Click to speak">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 1C10.34 1 9 2.34 9 4V12C9 13.66 10.34 15 12 15C13.66 15 15 13.66 15 12V4C15 2.34 13.66 1 12 1Z"/>
+                        <path d="M19 10V12C19 15.866 15.866 19 12 19C8.134 19 5 15.866 5 12V10H7V12C7 14.761 9.239 17 12 17C14.761 17 17 14.761 17 12V10H19Z"/>
+                        <path d="M11 21H13V23H11V21Z"/>
+                        <path d="M8 23H16V24H8V23Z"/>
+                    </svg>
+                </button>
+                
+                <button class="send-button" id="send-button" title="Send message">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M2 21L23 12L2 3V10L17 12L2 14V21Z"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <div class="connection-status">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="connection-text">Connecting...</span>
+            </div>
+            <div>
+                <span id="session-info">Session: Not connected</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include the RealtimeSTT library -->
+    <script src="realtime-stt.js"></script>
+    
+    <script>
+        class ChatBot {
+            constructor() {
+                this.stt = null;
+                this.isListening = false;
+                this.isConnected = false;
+                this.sessionId = null;
+                
+                this.initializeElements();
+                this.initializeSTT();
+                this.setupEventListeners();
+                this.autoResizeTextarea();
+            }
+
+            initializeElements() {
+                // Get DOM elements
+                this.elements = {
+                    chatMessages: document.getElementById('chat-messages'),
+                    messageInput: document.getElementById('message-input'),
+                    micButton: document.getElementById('mic-button'),
+                    sendButton: document.getElementById('send-button'),
+                    inputContainer: document.getElementById('input-container'),
+                    statusDot: document.getElementById('status-dot'),
+                    connectionText: document.getElementById('connection-text'),
+                    sessionInfo: document.getElementById('session-info'),
+                    realtimePreview: document.getElementById('realtime-preview'),
+                    controlUrl: document.getElementById('control-url'),
+                    dataUrl: document.getElementById('data-url')
+                };
+            }
+
+            initializeSTT() {
+                // Initialize RealtimeSTT
+                const config = {
+                    controlUrl: this.elements.controlUrl.value || 'ws://172.31.10.139:8011',
+                    dataUrl: this.elements.dataUrl.value || 'ws://172.31.10.139:8012',
+                    language: 'en',
+                    debug: true,
+                    autoConnect: true,
+                    reconnectAttempts: 3,
+                    reconnectDelay: 2000
+                };
+
+                this.stt = new RealtimeSTT(config);
+                this.setupSTTEventListeners();
+            }
+
+            setupSTTEventListeners() {
+                // Connection events
+                this.stt.on('connected', () => {
+                    this.isConnected = true;
+                    this.updateConnectionStatus('Connected', true);
+                    this.elements.micButton.classList.remove('disabled');
+                });
+
+                this.stt.on('disconnected', () => {
+                    this.isConnected = false;
+                    this.isListening = false;
+                    this.updateConnectionStatus('Disconnected', false);
+                    this.elements.micButton.classList.add('disabled');
+                    this.elements.micButton.classList.remove('listening');
+                    this.elements.inputContainer.classList.remove('listening');
+                });
+
+                this.stt.on('session-initialized', (sessionId) => {
+                    this.sessionId = sessionId;
+                    this.elements.sessionInfo.textContent = `Session: ${sessionId.substring(0, 8)}...`;
+                });
+
+                this.stt.on('connection-failed', () => {
+                    this.updateConnectionStatus('Connection Failed', false);
+                });
+
+                // Audio events
+                this.stt.on('listening-started', () => {
+                    this.isListening = true;
+                    this.elements.micButton.classList.add('listening');
+                    this.elements.inputContainer.classList.add('listening');
+                    this.updateConnectionStatus('Listening...', true);
+                });
+
+                this.stt.on('listening-stopped', () => {
+                    this.isListening = false;
+                    this.elements.micButton.classList.remove('listening');
+                    this.elements.inputContainer.classList.remove('listening');
+                    this.elements.realtimePreview.classList.remove('active');
+                    this.updateConnectionStatus('Connected', true);
+                });
+
+                // Speech recognition events
+                this.stt.on('realtime-text', (text) => {
+                    this.showRealtimePreview(text);
+                    this.appendToInput(text);
+                });
+
+                this.stt.on('sentence-end', (text) => {
+                    this.elements.realtimePreview.classList.remove('active');
+                    this.appendToInput(text, true); // Final sentence
+                });
+
+                // Error handling
+                this.stt.on('error', (error) => {
+                    console.error('STT Error:', error);
+                    this.updateConnectionStatus(`Error: ${error.message}`, false);
+                    this.addSystemMessage(`⚠️ STT Error: ${error.message}`);
+                });
+            }
+
+            setupEventListeners() {
+                // Microphone button
+                this.elements.micButton.addEventListener('click', () => {
+                    if (!this.isConnected) {
+                        this.addSystemMessage('❌ Please wait for connection before using microphone');
+                        return;
+                    }
+
+                    if (this.isListening) {
+                        this.stt.stopListening();
+                    } else {
+                        this.stt.startListening().catch(error => {
+                            console.error('Failed to start listening:', error);
+                            this.addSystemMessage(`❌ Failed to start microphone: ${error.message}`);
+                        });
+                    }
+                });
+
+                // Send button
+                this.elements.sendButton.addEventListener('click', () => {
+                    this.sendMessage();
+                });
+
+                // Input field events
+                this.elements.messageInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                });
+
+                this.elements.messageInput.addEventListener('focus', () => {
+                    this.elements.inputContainer.classList.add('focused');
+                });
+
+                this.elements.messageInput.addEventListener('blur', () => {
+                    this.elements.inputContainer.classList.remove('focused');
+                });
+
+                this.elements.messageInput.addEventListener('input', () => {
+                    this.autoResizeTextarea();
+                    this.updateSendButtonState();
+                });
+
+                // URL configuration changes
+                this.elements.controlUrl.addEventListener('change', () => {
+                    this.reconnectSTT();
+                });
+
+                this.elements.dataUrl.addEventListener('change', () => {
+                    this.reconnectSTT();
+                });
+            }
+
+            reconnectSTT() {
+                if (this.stt) {
+                    this.stt.disconnect();
+                    setTimeout(() => {
+                        this.initializeSTT();
+                    }, 1000);
+                }
+            }
+
+            updateConnectionStatus(text, connected) {
+                this.elements.connectionText.textContent = text;
+                if (connected) {
+                    this.elements.statusDot.classList.add('connected');
+                } else {
+                    this.elements.statusDot.classList.remove('connected');
+                }
+            }
+
+            showRealtimePreview(text) {
+                if (text.trim()) {
+                    this.elements.realtimePreview.textContent = `🎤 ${text}`;
+                    this.elements.realtimePreview.classList.add('active');
+                } else {
+                    this.elements.realtimePreview.classList.remove('active');
+                }
+            }
+
+            appendToInput(text, isFinal = false) {
+                const currentValue = this.elements.messageInput.value;
+                
+                if (isFinal) {
+                    // For final sentences, replace any trailing realtime text
+                    const lines = currentValue.split('\n');
+                    const lastLine = lines[lines.length - 1];
+                    
+                    // If the last line seems to be incomplete realtime text, replace it
+                    if (lastLine && text.toLowerCase().includes(lastLine.toLowerCase().substring(0, 10))) {
+                        lines[lines.length - 1] = text;
+                        this.elements.messageInput.value = lines.join('\n');
+                    } else {
+                        // Otherwise, add as new line
+                        this.elements.messageInput.value = currentValue + (currentValue ? '\n' : '') + text;
+                    }
+                } else {
+                    // For realtime text, update in place
+                    const lines = currentValue.split('\n');
+                    const beforeLastLine = lines.slice(0, -1).join('\n');
+                    const newValue = beforeLastLine + (beforeLastLine ? '\n' : '') + text;
+                    this.elements.messageInput.value = newValue;
+                }
+                
+                this.autoResizeTextarea();
+                this.updateSendButtonState();
+            }
+
+            autoResizeTextarea() {
+                const textarea = this.elements.messageInput;
+                textarea.style.height = 'auto';
+                textarea.style.height = Math.min(textarea.scrollHeight, 100) + 'px';
+            }
+
+            updateSendButtonState() {
+                const hasText = this.elements.messageInput.value.trim().length > 0;
+                this.elements.sendButton.disabled = !hasText;
+            }
+
+            sendMessage() {
+                const message = this.elements.messageInput.value.trim();
+                if (!message) return;
+
+                // Add user message to chat
+                this.addMessage(message, 'user');
+
+                // Clear input
+                this.elements.messageInput.value = '';
+                this.autoResizeTextarea();
+                this.updateSendButtonState();
+                this.elements.realtimePreview.classList.remove('active');
+
+                // Simulate bot response (replace with actual chatbot logic)
+                setTimeout(() => {
+                    this.generateBotResponse(message);
+                }, 1000);
+            }
+
+            addMessage(text, sender) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${sender}`;
+
+                const avatar = document.createElement('div');
+                avatar.className = 'message-avatar';
+                avatar.textContent = sender === 'user' ? '👤' : '🤖';
+
+                const content = document.createElement('div');
+                content.className = 'message-content';
+                content.textContent = text;
+
+                const time = document.createElement('div');
+                time.className = 'message-time';
+                time.textContent = new Date().toLocaleTimeString();
+
+                content.appendChild(time);
+                messageDiv.appendChild(avatar);
+                messageDiv.appendChild(content);
+
+                // Remove welcome message if it exists
+                const welcomeMessage = this.elements.chatMessages.querySelector('.welcome-message');
+                if (welcomeMessage) {
+                    welcomeMessage.remove();
+                }
+
+                this.elements.chatMessages.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            addSystemMessage(text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.style.cssText = `
+                    text-align: center;
+                    color: #6c757d;
+                    font-size: 12px;
+                    margin: 10px 0;
+                    padding: 8px;
+                    background: rgba(108, 117, 125, 0.1);
+                    border-radius: 15px;
+                    font-style: italic;
+                `;
+                messageDiv.textContent = text;
+
+                this.elements.chatMessages.appendChild(messageDiv);
+                this.scrollToBottom();
+            }
+
+            generateBotResponse(userMessage) {
+                // Simple bot responses (replace with actual AI/chatbot logic)
+                const responses = [
+                    `I heard you say: "${userMessage}". That's interesting!`,
+                    `Thanks for sharing that with me. Can you tell me more?`,
+                    `I understand you said: "${userMessage}". How can I help you with that?`,
+                    `Got it! You mentioned: "${userMessage}". What would you like to know?`,
+                    `Interesting point about "${userMessage}". What's your next question?`
+                ];
+
+                const response = responses[Math.floor(Math.random() * responses.length)];
+                this.addMessage(response, 'bot');
+            }
+
+            scrollToBottom() {
+                this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+            }
+        }
+
+        // Initialize the chatbot when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ChatBot();
+        });
+    </script>
+</body>
+</html>
