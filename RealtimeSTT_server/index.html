@@ -129,20 +129,25 @@
           const message = JSON.parse(event.data);
 
           if (message.type === "realtime") {
-            // Show real-time transcription with the last word in bold, orange
             let words = message.text.split(" ");
             let lastWord = words.pop();
-            transcriptionDiv.innerHTML = `${words.join(" ")} <span class="last-word">${lastWord}</span>`;
+            transcriptionDiv.textContent = "";
+            if (words.length > 0) {
+              transcriptionDiv.appendChild(document.createTextNode(words.join(" ") + " "));
+            }
+            if (lastWord) {
+              const lastWordSpan = document.createElement("span");
+              lastWordSpan.className = "last-word";
+              lastWordSpan.textContent = lastWord;
+              transcriptionDiv.appendChild(lastWordSpan);
+            }
 
-            // Auto-scroll to the bottom of the transcription container
             const transcriptionContainer = document.getElementById("transcriptionContainer");
             transcriptionContainer.scrollTop = transcriptionContainer.scrollHeight;
           } else if (message.type === "fullSentence") {
-            // Accumulate the final transcription in green
-            fullTextDiv.innerHTML += message.text + " ";
-            transcriptionDiv.innerHTML = message.text;
+            fullTextDiv.textContent += message.text + " ";
+            transcriptionDiv.textContent = message.text;
 
-            // Scroll to the bottom of fullTextContainer when new text is added
             const fullTextContainer = document.getElementById("fullTextContainer");
             fullTextContainer.scrollTop = fullTextContainer.scrollHeight;
           }
