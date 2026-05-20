@@ -39,8 +39,37 @@ class UnsupportedTranscriptionEngineError(TranscriptionEngineError):
     pass
 
 
+class StreamingTranscriptionSession(ABC):
+    @abstractmethod
+    def reset(self):
+        """Reset the session for a new utterance."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def accept_audio(self, audio, sample_rate=None):
+        """Accept one chunk of audio for the current utterance."""
+        raise NotImplementedError
+
+    def decode(self):
+        """Run any pending decode work for already accepted audio."""
+
+    @abstractmethod
+    def get_result(self) -> TranscriptionResult:
+        """Return the current partial or final transcription result."""
+        raise NotImplementedError
+
+    def finish(self) -> TranscriptionResult:
+        """Finalize the utterance and return the final transcription result."""
+        self.decode()
+        return self.get_result()
+
+    def close(self):
+        """Release any resources owned by the session."""
+
+
 class BaseTranscriptionEngine(ABC):
     engine_name = "base"
+    supports_streaming = False
 
     def __init__(self, config: TranscriptionEngineConfig):
         self.config = config
@@ -51,6 +80,11 @@ class BaseTranscriptionEngine(ABC):
     @abstractmethod
     def transcribe(self, audio, language=None, use_prompt=True) -> TranscriptionResult:
         raise NotImplementedError
+
+    def create_streaming_session(self, language=None, use_prompt=True) -> StreamingTranscriptionSession:
+        raise TranscriptionEngineError(
+            "%s does not support chunk streaming." % self.engine_name
+        )
 
     def _normalize_audio(self, audio):
         if audio is None or audio.size == 0:

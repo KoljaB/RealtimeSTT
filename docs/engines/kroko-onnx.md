@@ -16,79 +16,68 @@ the generic engine-name normalization.
 
 ## Install
 
-Kroko-ONNX is currently built from source:
+Kroko-ONNX is not installed by default. RealtimeSTT exposes a small builder
+helper:
 
 ```bash
-git clone https://github.com/kroko-ai/kroko-onnx.git
-cd kroko-onnx
-python -m pip install .
+python -m pip install "RealtimeSTT[kroko-builder]"
+stt-install-kroko --build
 ```
 
-For Pro models, build/install with license support as documented upstream and
-pass the license key through `transcription_engine_options["key"]` or the
-FastAPI `--engine-options` JSON. Do not commit license keys.
+The helper uses Kroko's `cross-platform-builds` branch. On Windows it builds a
+CPython 3.12 `win_amd64` wheel with Docker Desktop, then installs that wheel.
+On Linux it patches the checkout and installs from source. Add `--skip-install`
+to build without installing into the active Python environment.
 
-Upstream documentation currently focuses on Linux and Docker. Windows and macOS
-build instructions are listed as coming soon, so use WSL2/Linux or Docker if a
-native Windows build fails.
+Windows requirements:
 
-## Windows Install Status
+- Python 3.12 x64
+- Git
+- Docker Desktop running with the WSL2 backend
 
-Native Windows installation has been attempted in a local test environment and
-did not produce a usable `kroko_onnx` Python package.
+Linux requirements:
 
-The first attempt used the default upstream build:
+- Git
+- CMake
+- A working C/C++ build toolchain
 
-```powershell
-python -m pip install git+https://github.com/kroko-ai/kroko-onnx.git
+Use `--variant pro` when you need licensed Pro models:
+
+```bash
+stt-install-kroko --build --variant pro
 ```
 
-It cloned `kroko-ai/kroko-onnx` at commit
-`808ad7aad096467dcbfa5cc6d0cfbf2a39d54dc3` and failed while building the
-native CMake wheel with MSVC.
+The `free` variant is for public Community models. The `pro` variant is for
+licensed Pro/private models and may need network access for Kroko's license
+check.
 
-A second attempt disabled GPU and several optional components:
+## Models
 
-```powershell
-$env:SHERPA_ONNX_CMAKE_ARGS='-DSHERPA_ONNX_ENABLE_GPU=OFF -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF -DSHERPA_ONNX_ENABLE_TTS=OFF -DSHERPA_ONNX_ENABLE_SPEAKER_DIARIZATION=OFF -DSHERPA_ONNX_ENABLE_BINARY=OFF'
-python -m pip install --log test-results\kroko-onnx-pip-install-cpu.log git+https://github.com/kroko-ai/kroko-onnx.git
-```
+Public Community models are available from
+[Banafo/Kroko-ASR](https://huggingface.co/Banafo/Kroko-ASR). RealtimeSTT can
+download known public Community `.data` files automatically when
+`auto_download_model` is enabled. Bare Kroko filenames are cached under
+`~/.cache/realtimestt/kroko-onnx` unless `download_root` points somewhere else.
 
-That CPU-only build also failed. The relevant MSVC errors were:
-
-```text
-online-recognizer.cc(32,10): error C1083: include file cannot be opened: "bits/stdc++.h": No such file or directory
-license.h(7,10): error C1083: include file cannot be opened: "websocketpp/config/asio_client.hpp": No such file or directory
-Exception: Failed to build and install sherpa
-```
-
-After these failures, `import kroko_onnx` still returned
-`ModuleNotFoundError`, so neither CPU nor CUDA provider runtime tests could run
-on native Windows. The community model download itself did work; the blocker is
-the upstream native Windows build.
-
-For real CPU or GPU validation, use WSL2/Linux or Docker and install
-Kroko-ONNX there before running the opt-in smoke and FastAPI performance tests.
-
-## Model Download
-
-Community models are available from
-[Banafo/Kroko-ASR](https://huggingface.co/Banafo/Kroko-ASR). The English
-community streaming model is a good first smoke test:
+You can also pre-download models into a project-local ignored cache:
 
 ```powershell
 New-Item -ItemType Directory -Path test-model-cache\kroko-onnx -Force
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Banafo/Kroko-ASR', filename='Kroko-EN-Community-64-L-Streaming-001.data', local_dir='test-model-cache/kroko-onnx')"
 ```
 
-Pass the `.data` file as `model`:
+Pro/private models are not assumed to be public. Pass an existing `.data` path,
+`model_download_url`, or explicit Hugging Face repo/token options. Pass Pro keys
+through environment/config or CLI options only; do not commit keys.
+
+## Python Usage
 
 ```python
 from RealtimeSTT import AudioToTextRecorder
 
 recorder = AudioToTextRecorder(
     transcription_engine="kroko_onnx",
-    model="test-model-cache/kroko-onnx/Kroko-EN-Community-64-L-Streaming-001.data",
+    model="Kroko-EN-Community-64-L-Streaming-001.data",
     device="cpu",
     language="en",
     transcription_engine_options={
@@ -98,13 +87,41 @@ recorder = AudioToTextRecorder(
 )
 ```
 
+For realtime previews, Kroko uses a persistent native stream and receives only
+new audio frames. Final transcription still uses one full-utterance call.
+
+```python
+recorder = AudioToTextRecorder(
+    transcription_engine="kroko_onnx",
+    model="Kroko-EN-Community-128-L-Streaming-001.data",
+    enable_realtime_transcription=True,
+    realtime_transcription_engine="kroko_onnx",
+    realtime_model_type="Kroko-EN-Pro-16-L-Streaming-001.data",
+    realtime_transcription_engine_options={
+        "provider": "cpu",
+        "num_threads": 4,
+        "key": "...",
+        "suppress_native_output": True,
+    },
+)
+```
+
+`Pro-16-L` is the fastest measured partial-cadence option when Pro access is
+available. Kroko model names encode native streaming cadence as
+`number * 20 ms`, so `16` is about `320 ms`, `32` is about `640 ms`, and `64`
+is about `1280 ms`. Feeding smaller chunks does not force Kroko to emit
+partials faster; it only avoids extra scheduling and buffer latency.
+
 ## Options
 
 | Option | Meaning |
 | --- | --- |
 | `model_path` | Explicit `.data` model file. Overrides `model`. |
-| `model_dir` | Directory containing a single `.data` file, or the default English community filename. |
+| `model_dir` | Directory containing a single `.data` file, or the default English Community filename. |
 | `model_filename` | File name to use inside `model_dir`. |
+| `auto_download_model` / `download_model` | Download missing public Community model files. Defaults to `True`. |
+| `model_download_url` | Direct download URL for a missing `.data` file. Useful for Pro/private models. |
+| `model_repo_id`, `model_revision`, `hf_token` | Optional Hugging Face download settings. |
 | `key` | License key for Pro models. |
 | `referralcode` | Optional Kroko referral code. |
 | `provider` | `cpu`, `cuda`, or `coreml`. Defaults from `device`. |
@@ -117,12 +134,17 @@ recorder = AudioToTextRecorder(
 | `blank_penalty` | Blank-symbol penalty during decoding. |
 | `enable_endpoint_detection` | Enables Kroko endpoint detection. |
 | `rule1_min_trailing_silence`, `rule2_min_trailing_silence`, `rule3_min_utterance_length` | Endpoint rule values. |
-| `tail_padding_seconds` | Final silence padding before decoding. Defaults to `0.66`. |
+| `tail_padding_seconds` / `finalization_padding_seconds` | Final silence padding before one-shot decoding. Defaults to `auto`, inferred from model cadence plus a small margin. |
+| `suppress_native_output` | Redirect Kroko native stdout/stderr during recognizer calls and set `KROKO_ONNX_SUPPRESS_LICENSE_OUTPUT=1`. Aliases: `suppress_output`, `quiet`, `silent`. |
 | `recognizer` | Extra dictionary merged into `OnlineRecognizer.from_transducer(...)`. |
 
-## FastAPI Examples
+`suppress_native_output` is a Python-side mitigation plus an environment flag.
+Reliable suppression of asynchronous Pro license refresh messages such as
+`Remaining seconds updated: ...` requires a Kroko wheel built with RealtimeSTT's
+native patch. Older/unpatched Kroko wheels may still print background license
+messages.
 
-Kroko for both final and realtime transcription on CPU:
+## FastAPI Example
 
 ```powershell
 $model = "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data"
@@ -139,35 +161,6 @@ python example_fastapi_server\server.py `
   --realtime-engine-options '{"provider":"cpu","num_threads":1}'
 ```
 
-Kroko final transcription with a lighter realtime engine:
-
-```powershell
-$model = "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data"
-python example_fastapi_server\server.py `
-  --engine kroko_onnx `
-  --model $model `
-  --realtime-engine whisper_cpp `
-  --realtime-model tiny.en `
-  --device cpu `
-  --language en `
-  --engine-options '{"provider":"cpu","num_threads":2}'
-```
-
-CUDA provider, when the installed Kroko-ONNX build supports it:
-
-```powershell
-$model = "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data"
-python example_fastapi_server\server.py `
-  --engine kroko_onnx `
-  --model $model `
-  --realtime-engine kroko_onnx `
-  --realtime-model $model `
-  --device cuda `
-  --language en `
-  --engine-options '{"provider":"cuda","num_threads":2}' `
-  --realtime-engine-options '{"provider":"cuda","num_threads":1}'
-```
-
 ## Tests
 
 Fast contract tests use fake Kroko runtime objects and do not require the
@@ -177,7 +170,7 @@ optional dependency:
 python -m unittest -v tests.unit.test_kroko_onnx_engine
 ```
 
-Opt-in real-model smoke test:
+Opt-in real Community smoke test:
 
 ```powershell
 $env:REALTIMESTT_RUN_KROKO_ONNX = "1"
@@ -187,28 +180,18 @@ $env:REALTIMESTT_KROKO_ONNX_NUM_THREADS = "1"
 python -m unittest -v tests.unit.test_kroko_onnx_engine.KrokoOnnxGoldenTranscriptionTests
 ```
 
-FastAPI multi-user performance harness:
-
-```powershell
-$env:REALTIMESTT_RUN_FASTAPI_MULTI_USER_PERF = "1"
-$env:REALTIMESTT_FASTAPI_ASR_CLIENTS = "2"
-$env:REALTIMESTT_FASTAPI_ASR_ENGINE = "kroko_onnx"
-$env:REALTIMESTT_FASTAPI_ASR_MODEL = "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data"
-$env:REALTIMESTT_FASTAPI_ASR_REALTIME_ENGINE = "kroko_onnx"
-$env:REALTIMESTT_FASTAPI_ASR_REALTIME_MODEL = "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data"
-$env:REALTIMESTT_FASTAPI_ASR_DEVICE = "cpu"
-$env:REALTIMESTT_FASTAPI_ASR_ENGINE_OPTIONS = "provider=cpu,num_threads=2"
-$env:REALTIMESTT_FASTAPI_ASR_REALTIME_ENGINE_OPTIONS = "provider=cpu,num_threads=1"
-$env:REALTIMESTT_FASTAPI_ASR_METRICS_JSON = "test-results\kroko-onnx-fastapi-cpu-2clients.json"
-python -m unittest -v tests.unit.test_fastapi_server_multi_user_asr_integration.FastAPIMultiUserRealEngineASRTests
-```
+`REALTIMESTT_KROKO_ONNX_KEY`, `KROKO_ONNX_KEY`, or `KROKO_KEY` may be used for
+licensed Pro-only checks. Keep those values out of committed files, shell logs,
+and generated reports.
 
 ## Troubleshooting
 
 - Missing dependency errors mean `kroko_onnx` is not importable in the active
   environment. Install Kroko-ONNX in that same environment.
 - Missing model errors name the exact `.data` file path RealtimeSTT tried.
-- If native Windows builds fail, use WSL2/Linux or Docker. Kroko's own README
-  currently says Windows and macOS build instructions are coming soon.
+- Free Kroko wheels cannot load Pro `.data` models; the native error can look
+  like a payload parsing or block-size mismatch.
 - CUDA runs require both CUDA-capable hardware and a Kroko-ONNX build with CUDA
   provider support.
+- On Windows, prefer the helper's `cross-platform-builds` wheel workflow over a
+  direct native source build.

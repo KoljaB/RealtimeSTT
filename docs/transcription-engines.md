@@ -16,7 +16,7 @@ The compatibility default is `faster_whisper`.
 | Compatibility with OpenAI's local Whisper package | `openai_whisper` | Uses the original `openai-whisper` Python package. |
 | English CPU server with manually downloaded ONNX models | `sherpa_onnx_moonshine` | Offline CPU INT8 path with predictable local model files. |
 | CPU Parakeet without NeMo runtime | `sherpa_onnx_parakeet` | Offline CPU INT8 Parakeet through sherpa-onnx. |
-| Kroko/Banafo `.data` streaming models | `kroko_onnx` | Optional Kroko-ONNX runtime with community or licensed Kroko models. |
+| Kroko/Banafo `.data` streaming models | `kroko_onnx` | Optional Kroko-ONNX runtime with Community or licensed Pro models and realtime streaming previews. |
 | NVIDIA Parakeet on Linux/WSL2 | `parakeet` | Uses NVIDIA NeMo ASR for the Parakeet checkpoint. |
 | Hugging Face speech-language models | `granite_speech`, `qwen3_asr`, `moonshine`, `cohere_transcribe` | Thin adapters around model-family packages and Transformers. |
 
@@ -107,7 +107,7 @@ meaningful for one engine may be ignored or invalid for another.
 | `moonshine`, `granite_speech`, `qwen3_asr`, `cohere_transcribe` | Yes, through Hugging Face or the engine package, subject to access. | `download_root` maps to cache options where supported. |
 | `parakeet` NeMo | Yes, through NeMo model loading. | NeMo cache/model options may be passed in `transcription_engine_options`. |
 | `sherpa_onnx_*` | No. | Download and extract the sherpa-onnx model bundle, then pass the extracted directory. |
-| `kroko_onnx` | No. | Download a Kroko `.data` model from Banafo/Kroko-ASR or Kroko, then pass the file path. |
+| `kroko_onnx` | Yes, for known public Community `.data` files when enabled. | Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
 
 Every optional engine page documents its install command, model behavior,
 important options, and troubleshooting notes.

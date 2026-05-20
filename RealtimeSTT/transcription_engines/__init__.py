@@ -1,5 +1,6 @@
 from .base import (
     BaseTranscriptionEngine,
+    StreamingTranscriptionSession,
     TranscriptionEngineConfig,
     TranscriptionEngineError,
     TranscriptionInfo,
@@ -10,6 +11,7 @@ from .factory import create_transcription_engine, get_supported_transcription_en
 
 __all__ = [
     "BaseTranscriptionEngine",
+    "StreamingTranscriptionSession",
     "TranscriptionEngineConfig",
     "TranscriptionEngineError",
     "TranscriptionInfo",

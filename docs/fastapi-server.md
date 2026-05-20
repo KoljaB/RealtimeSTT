@@ -368,8 +368,9 @@ More test details are in [testing.md](testing.md).
 
 - Use Linux or WSL2 for CUDA-heavy engines such as Parakeet, Qwen vLLM, and
   larger Transformers models.
-- Use Linux, WSL2, or Docker for Kroko-ONNX when native Windows builds fail;
-  upstream Windows and macOS build instructions are not yet published.
+- Install Kroko-ONNX with `RealtimeSTT[kroko-builder]` and
+  `stt-install-kroko --build` before selecting `kroko_onnx`. On Windows, use
+  Python 3.12 x64 and start Docker Desktop first.
 - Keep model caches on persistent storage so restarts do not redownload models.
 - Put the server behind a reverse proxy when exposing it beyond localhost.
 - Size `--max-sessions`, `--max-active-speakers`, queue depths, and model lanes

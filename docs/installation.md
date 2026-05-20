@@ -60,14 +60,22 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `parakeet` / `nvidia-parakeet` | `nemo_toolkit[asr]` | NVIDIA NeMo Parakeet backend, best on Linux or WSL2. |
 | `qwen` / `qwen3-asr` | `qwen-asr` | Qwen ASR backend. |
 | `qwen-vllm` | `qwen-asr[vllm]` | Qwen ASR with vLLM support. |
+| `kroko-builder` | RealtimeSTT builder helper only | Builds/installs Kroko-ONNX from upstream on Windows or Linux. |
 | `porcupine` / `pvporcupine` / `pvp` | `pvporcupine` | Porcupine wake-word backend. |
 | `openwakeword` / `oww` | `openwakeword` | OpenWakeWord wake-word backend. |
 | `wakewords` / `wake-words` | `pvporcupine`, `openwakeword` | Both wake-word backends. |
 | `recommended` / `default` | `faster-whisper` | The default local transcription path. |
 | `all` | All PyPI-installable optional backends | Broad development or experimentation environments. |
 
-`kroko_onnx` is not included as a PyPI extra because the runtime is currently
-installed from the upstream source repository. See
+`kroko-builder` does not install Kroko-ONNX by itself; it exposes
+`stt-install-kroko`, which builds and installs Kroko-ONNX from upstream:
+
+```bash
+python -m pip install "RealtimeSTT[kroko-builder]"
+stt-install-kroko --build
+```
+
+On Windows, use Python 3.12 x64 and start Docker Desktop first. See
 [engines/kroko-onnx.md](engines/kroko-onnx.md).
 
 ## VAD Dependencies
@@ -154,7 +162,7 @@ Install only the engine stack you plan to use:
 | `granite_speech` | `python -m pip install "RealtimeSTT[granite]"` | Downloads Hugging Face model files automatically. |
 | `qwen3_asr` | `python -m pip install -U "RealtimeSTT[qwen]"` | Downloads Qwen model files through the Qwen ASR package. |
 | `cohere_transcribe` | `python -m pip install "RealtimeSTT[cohere]"` | Downloads Hugging Face model files; gated model access may be required. |
-| `kroko_onnx` | Install `kroko-onnx` from its upstream source repository | Download a Kroko `.data` model manually. |
+| `kroko_onnx` | `python -m pip install "RealtimeSTT[kroko-builder]"`, then `stt-install-kroko --build` | Public Community models can auto-download; Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
 
 Per-engine setup lives in [transcription-engines.md](transcription-engines.md)
 and the `docs/engines/` pages.

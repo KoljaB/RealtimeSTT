@@ -15,10 +15,10 @@ Manual demos, regression harnesses, and legacy experiments directly under
 From the repository root:
 
 ```powershell
-python -m unittest -v tests.unit.test_audio_fixtures tests.unit.test_whisper_cpp_engine tests.unit.test_openai_whisper_engine tests.unit.test_additional_transcription_engines tests.unit.test_cohere_transcribe_engine tests.unit.test_granite_speech_engine tests.unit.test_moonshine_engine tests.unit.test_sherpa_onnx_engine tests.unit.test_kroko_onnx_engine tests.unit.test_fastapi_server_protocol tests.unit.test_fastapi_server_multi_user
+python -m unittest -v tests.unit.test_audio_fixtures tests.unit.test_whisper_cpp_engine tests.unit.test_openai_whisper_engine tests.unit.test_additional_transcription_engines tests.unit.test_cohere_transcribe_engine tests.unit.test_granite_speech_engine tests.unit.test_moonshine_engine tests.unit.test_sherpa_onnx_engine tests.unit.test_kroko_onnx_engine tests.unit.test_realtime_streaming_transcription tests.unit.test_fastapi_server_protocol tests.unit.test_fastapi_server_multi_user
 ```
 
-Use the Python executable from your active virtual environment. In this workspace that can also be run explicitly as `D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe`.
+Use the Python executable from your active virtual environment.
 
 Without golden-test environment variables, the slow model tests are skipped intentionally. A result with skipped tests means the fast tests passed and the opt-in model tests did not run.
 
@@ -125,11 +125,12 @@ Run the Kroko-ONNX contract tests:
 
 ```powershell
 python -m unittest -v tests.unit.test_kroko_onnx_engine
+python -m unittest -v tests.unit.test_realtime_streaming_transcription
 ```
 
 The fast Kroko tests use fake runtime objects and do not install or import
-Kroko-ONNX. For a real-model smoke test, install Kroko-ONNX in the active
-environment, download a `.data` model from `Banafo/Kroko-ASR`, and opt in:
+Kroko-ONNX. For a real-model Community smoke test, install Kroko-ONNX in the
+active environment and opt in:
 
 ```powershell
 $env:REALTIMESTT_RUN_KROKO_ONNX = "1"
@@ -140,8 +141,9 @@ $env:REALTIMESTT_KROKO_ONNX_NUM_THREADS = "1"
 python -m unittest -v tests.unit.test_kroko_onnx_engine.KrokoOnnxGoldenTranscriptionTests
 ```
 
-`REALTIMESTT_KROKO_ONNX_KEY` can be set for licensed Pro models. Do not store
-keys in command history, docs, or committed files.
+`REALTIMESTT_KROKO_ONNX_KEY`, `KROKO_ONNX_KEY`, or `KROKO_KEY` can be set for
+licensed Pro models. Do not store keys in command history, docs, generated
+reports, or committed files.
 
 ## FastAPI Multi-User Load Test
 

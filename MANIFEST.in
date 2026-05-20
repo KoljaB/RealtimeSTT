@@ -1,5 +1,6 @@
 include requirements.txt
 include README.md
+include RELEASE_NOTES.md
 include LICENSE
 prune docs/development
 prune dev-log

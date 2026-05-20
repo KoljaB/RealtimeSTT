@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import time
 import unittest
@@ -11,6 +12,7 @@ except ModuleNotFoundError:
     np = None
 
 from RealtimeSTT.transcription_engines import (
+    BaseTranscriptionEngine,
     TranscriptionEngineConfig,
     TranscriptionEngineError,
     create_transcription_engine,
@@ -18,12 +20,30 @@ from RealtimeSTT.transcription_engines import (
 )
 from RealtimeSTT.transcription_engines.kroko_onnx_engine import (
     DEFAULT_KROKO_ONNX_MODEL,
+    KROKO_ONNX_LICENSE_QUIET_ENV,
+    KROKO_ONNX_PUBLIC_MODELS,
     KrokoOnnxBackend,
     KrokoOnnxDecodedOutput,
     KrokoOnnxEngine,
+    KrokoOnnxStreamingSession,
 )
 from tests.unit import test_additional_transcription_engines as audio_fixtures
 from tests.unit.test_additional_transcription_engines import AudioVector
+
+
+KROKO_ONNX_KEY_ENV_NAMES = (
+    "REALTIMESTT_KROKO_ONNX_KEY",
+    "KROKO_ONNX_KEY",
+    "KROKO_KEY",
+)
+
+
+def _first_env_value(names):
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
 
 
 class FakeKrokoResult:
@@ -80,6 +100,49 @@ class FakeKrokoRecognizer:
         return FakeKrokoResult()
 
 
+class NoisyKrokoStream(FakeKrokoStream):
+    def accept_waveform(self, sample_rate, waveform):
+        os.write(1, b"kroko accept stdout\n")
+        os.write(2, b"kroko accept stderr\n")
+        super().accept_waveform(sample_rate, waveform)
+
+    def input_finished(self):
+        os.write(1, b"kroko finish stdout\n")
+        os.write(2, b"kroko finish stderr\n")
+        super().input_finished()
+
+
+class NoisyKrokoRecognizer(FakeKrokoRecognizer):
+    @classmethod
+    def from_transducer(cls, **kwargs):
+        os.write(1, b"kroko init stdout\n")
+        os.write(2, b"kroko init stderr\n")
+        cls.transducer_calls.append(kwargs)
+        return cls(kwargs)
+
+    def create_stream(self):
+        os.write(1, b"kroko stream stdout\n")
+        os.write(2, b"kroko stream stderr\n")
+        stream = NoisyKrokoStream()
+        self.streams.append(stream)
+        return stream
+
+    def is_ready(self, stream):
+        os.write(1, b"kroko ready stdout\n")
+        os.write(2, b"kroko ready stderr\n")
+        return super().is_ready(stream)
+
+    def decode_streams(self, streams):
+        os.write(1, b"kroko decode stdout\n")
+        os.write(2, b"kroko decode stderr\n")
+        super().decode_streams(streams)
+
+    def get_result(self, stream):
+        os.write(1, b"kroko result stdout\n")
+        os.write(2, b"kroko result stderr\n")
+        return super().get_result(stream)
+
+
 class FakeKrokoBackend:
     def __init__(self, config=None):
         self.config = config
@@ -104,6 +167,38 @@ class KrokoOnnxEngineTests(unittest.TestCase):
         path = Path(temp_dir.name) / filename
         path.write_bytes(b"placeholder")
         return temp_dir, path
+
+    def capture_fd_output(self, callback):
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:
+                pass
+
+        saved_stdout = os.dup(1)
+        saved_stderr = os.dup(2)
+        try:
+            with tempfile.TemporaryFile() as stdout_file:
+                with tempfile.TemporaryFile() as stderr_file:
+                    os.dup2(stdout_file.fileno(), 1)
+                    os.dup2(stderr_file.fileno(), 2)
+                    try:
+                        callback()
+                    finally:
+                        for stream in (sys.stdout, sys.stderr):
+                            try:
+                                stream.flush()
+                            except Exception:
+                                pass
+                        os.dup2(saved_stdout, 1)
+                        os.dup2(saved_stderr, 2)
+
+                    stdout_file.seek(0)
+                    stderr_file.seek(0)
+                    return stdout_file.read(), stderr_file.read()
+        finally:
+            os.close(saved_stdout)
+            os.close(saved_stderr)
 
     def test_supported_engines_include_kroko_aliases(self):
         engines = get_supported_transcription_engines()
@@ -214,6 +309,77 @@ class KrokoOnnxEngineTests(unittest.TestCase):
                     numpy_module=np,
                 )
 
+    def test_auto_downloads_public_model_under_download_root(self):
+        filename = sorted(KROKO_ONNX_PUBLIC_MODELS)[0]
+
+        def fake_download(url, target_path, token=""):
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(b"downloaded")
+            return target_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch(
+                "RealtimeSTT.transcription_engines.kroko_onnx_engine.import_module",
+                side_effect=ModuleNotFoundError("huggingface_hub"),
+            ), patch(
+                "RealtimeSTT.transcription_engines.kroko_onnx_engine._download_file",
+                side_effect=fake_download,
+            ) as download_file:
+                backend = KrokoOnnxBackend(
+                    TranscriptionEngineConfig(
+                        model=filename,
+                        download_root=temp_dir,
+                    ),
+                    recognizer_cls=FakeKrokoRecognizer,
+                    numpy_module=np,
+                )
+
+        self.assertEqual(backend.model_path.name, filename)
+        self.assertTrue(download_file.called)
+        self.assertEqual(
+            FakeKrokoRecognizer.transducer_calls[0]["model_path"],
+            str(backend.model_path),
+        )
+
+    def test_bare_default_model_downloads_to_realtimestt_cache(self):
+        def fake_download(url, target_path, token=""):
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(b"downloaded")
+            return target_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / "cache"
+            with patch(
+                "RealtimeSTT.transcription_engines.kroko_onnx_engine.KROKO_ONNX_DEFAULT_CACHE_DIR",
+                cache_dir,
+            ), patch(
+                "RealtimeSTT.transcription_engines.kroko_onnx_engine.import_module",
+                side_effect=ModuleNotFoundError("huggingface_hub"),
+            ), patch(
+                "RealtimeSTT.transcription_engines.kroko_onnx_engine._download_file",
+                side_effect=fake_download,
+            ):
+                backend = KrokoOnnxBackend(
+                    TranscriptionEngineConfig(model=DEFAULT_KROKO_ONNX_MODEL),
+                    recognizer_cls=FakeKrokoRecognizer,
+                    numpy_module=np,
+                )
+
+        self.assertEqual(backend.model_path, cache_dir / DEFAULT_KROKO_ONNX_MODEL)
+
+    def test_auto_download_can_be_disabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / DEFAULT_KROKO_ONNX_MODEL
+            with self.assertRaisesRegex(TranscriptionEngineError, "Missing kroko-onnx"):
+                KrokoOnnxBackend(
+                    TranscriptionEngineConfig(
+                        model=str(missing),
+                        engine_options={"auto_download_model": False},
+                    ),
+                    recognizer_cls=FakeKrokoRecognizer,
+                    numpy_module=np,
+                )
+
     def test_provider_mapping_from_device_and_option(self):
         temp_dir, model_path = self.make_model_file()
         self.addCleanup(temp_dir.cleanup)
@@ -310,6 +476,128 @@ class KrokoOnnxEngineTests(unittest.TestCase):
         self.assertEqual(len(backend.recognizer.decode_streams_calls), 2)
         self.assertEqual(stream.decode_count, 2)
 
+    def test_suppress_native_output_silences_recognizer_stdout_and_stderr(self):
+        temp_dir, model_path = self.make_model_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        def run_noisy_backend():
+            backend = KrokoOnnxBackend(
+                TranscriptionEngineConfig(
+                    model=str(model_path),
+                    engine_options={
+                        "tail_padding_seconds": 0.0,
+                        "suppress_native_output": True,
+                    },
+                ),
+                recognizer_cls=NoisyKrokoRecognizer,
+                numpy_module=np,
+            )
+            output = backend.transcribe([0.25], language="en")
+            self.assertEqual(output.text, "kroko text")
+
+        stdout, stderr = self.capture_fd_output(run_noisy_backend)
+
+        self.assertEqual(stdout, b"")
+        self.assertEqual(stderr, b"")
+
+    def test_suppress_native_output_sets_kroko_license_quiet_env(self):
+        temp_dir, model_path = self.make_model_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(KROKO_ONNX_LICENSE_QUIET_ENV, None)
+
+            KrokoOnnxBackend(
+                TranscriptionEngineConfig(
+                    model=str(model_path),
+                    engine_options={"suppress_native_output": True},
+                ),
+                recognizer_cls=FakeKrokoRecognizer,
+                numpy_module=np,
+            )
+
+            self.assertEqual(os.environ.get(KROKO_ONNX_LICENSE_QUIET_ENV), "1")
+
+    def test_default_backend_does_not_set_kroko_license_quiet_env(self):
+        temp_dir, model_path = self.make_model_file()
+        self.addCleanup(temp_dir.cleanup)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(KROKO_ONNX_LICENSE_QUIET_ENV, None)
+
+            KrokoOnnxBackend(
+                TranscriptionEngineConfig(model=str(model_path)),
+                recognizer_cls=FakeKrokoRecognizer,
+                numpy_module=np,
+            )
+
+            self.assertIsNone(os.environ.get(KROKO_ONNX_LICENSE_QUIET_ENV))
+
+    def test_auto_tail_padding_uses_model_chunk_size(self):
+        temp_dir, model_path = self.make_model_file(
+            "Kroko-EN-Community-128-L-Streaming-001.data"
+        )
+        self.addCleanup(temp_dir.cleanup)
+
+        backend = KrokoOnnxBackend(
+            TranscriptionEngineConfig(model=str(model_path)),
+            recognizer_cls=FakeKrokoRecognizer,
+            numpy_module=np,
+        )
+
+        self.assertAlmostEqual(backend.tail_padding_seconds, 2.66)
+
+    def test_auto_tail_padding_uses_model_chunk_size_for_pro_m_and_s(self):
+        for filename in (
+            "Kroko-EN-Pro-128-M-Streaming-001.data",
+            "Kroko-EN-Pro-128-S-Streaming-001.data",
+        ):
+            with self.subTest(filename=filename):
+                temp_dir, model_path = self.make_model_file(filename)
+                self.addCleanup(temp_dir.cleanup)
+
+                backend = KrokoOnnxBackend(
+                    TranscriptionEngineConfig(model=str(model_path)),
+                    recognizer_cls=FakeKrokoRecognizer,
+                    numpy_module=np,
+                )
+
+                self.assertAlmostEqual(backend.tail_padding_seconds, 2.66)
+
+    def test_auto_tail_padding_can_be_requested_explicitly(self):
+        temp_dir, model_path = self.make_model_file(
+            "Kroko-EN-Community-32-L-Streaming-001.data"
+        )
+        self.addCleanup(temp_dir.cleanup)
+
+        backend = KrokoOnnxBackend(
+            TranscriptionEngineConfig(
+                model=str(model_path),
+                engine_options={"tail_padding_seconds": "auto"},
+            ),
+            recognizer_cls=FakeKrokoRecognizer,
+            numpy_module=np,
+        )
+
+        self.assertAlmostEqual(backend.tail_padding_seconds, 0.74)
+
+    def test_explicit_tail_padding_overrides_model_chunk_size(self):
+        temp_dir, model_path = self.make_model_file(
+            "Kroko-EN-Community-128-L-Streaming-001.data"
+        )
+        self.addCleanup(temp_dir.cleanup)
+
+        backend = KrokoOnnxBackend(
+            TranscriptionEngineConfig(
+                model=str(model_path),
+                engine_options={"tail_padding_seconds": 0.5},
+            ),
+            recognizer_cls=FakeKrokoRecognizer,
+            numpy_module=np,
+        )
+
+        self.assertEqual(backend.tail_padding_seconds, 0.5)
+
     def test_engine_normalizes_audio_and_returns_language(self):
         backend = FakeKrokoBackend()
         engine = KrokoOnnxEngine(
@@ -343,6 +631,83 @@ class KrokoOnnxEngineTests(unittest.TestCase):
 
         self.assertEqual(output.language, "en")
 
+    def test_base_engine_is_non_streaming_by_default(self):
+        class NonStreamingEngine(BaseTranscriptionEngine):
+            def transcribe(self, audio, language=None, use_prompt=True):
+                return None
+
+        engine = NonStreamingEngine(TranscriptionEngineConfig(model="model"))
+
+        self.assertFalse(engine.supports_streaming)
+        with self.assertRaisesRegex(TranscriptionEngineError, "does not support"):
+            engine.create_streaming_session()
+
+    def test_streaming_session_reuses_one_kroko_stream_and_feeds_chunks(self):
+        temp_dir, model_path = self.make_model_file(
+            "Kroko-EN-Community-64-L-Streaming-001.data"
+        )
+        self.addCleanup(temp_dir.cleanup)
+        backend = KrokoOnnxBackend(
+            TranscriptionEngineConfig(
+                model=str(model_path),
+                engine_options={"tail_padding_seconds": 0.1},
+            ),
+            recognizer_cls=FakeKrokoRecognizer,
+            numpy_module=np,
+        )
+        engine = KrokoOnnxEngine(
+            TranscriptionEngineConfig(
+                model=str(model_path),
+                engine_options={"tail_padding_seconds": 0.1},
+            ),
+            backend=backend,
+        )
+
+        session = engine.create_streaming_session(language="en")
+        session.accept_audio([0.1, 0.2], sample_rate=16000)
+        session.decode()
+        partial = session.get_result()
+        session.accept_audio([0.3], sample_rate=16000)
+        final = session.finish()
+
+        stream = backend.recognizer.streams[0]
+        self.assertIsInstance(session, KrokoOnnxStreamingSession)
+        self.assertTrue(engine.supports_streaming)
+        self.assertEqual(len(backend.recognizer.streams), 1)
+        self.assertEqual(partial.text, "kroko text")
+        self.assertEqual(final.text, "kroko text")
+        self.assertEqual(final.info.language, "en")
+        self.assertTrue(stream.finished)
+        self.assertEqual(len(stream.accepted), 3)
+        self.assertTrue(np.allclose(stream.accepted[0][1], [0.1, 0.2]))
+        self.assertTrue(np.allclose(stream.accepted[1][1], [0.3]))
+        self.assertEqual(stream.accepted[2][1].shape[0], 1600)
+        self.assertEqual(stream.decode_count, 2)
+
+    def test_streaming_session_reset_starts_a_new_kroko_stream(self):
+        temp_dir, model_path = self.make_model_file()
+        self.addCleanup(temp_dir.cleanup)
+        backend = KrokoOnnxBackend(
+            TranscriptionEngineConfig(model=str(model_path)),
+            recognizer_cls=FakeKrokoRecognizer,
+            numpy_module=np,
+        )
+        engine = KrokoOnnxEngine(
+            TranscriptionEngineConfig(model=str(model_path)),
+            backend=backend,
+        )
+
+        session = engine.create_streaming_session(language="en")
+        first_stream = session.stream
+        session.accept_audio([0.1], sample_rate=16000)
+        session.reset()
+        session.accept_audio([0.2], sample_rate=16000)
+
+        self.assertEqual(len(backend.recognizer.streams), 2)
+        self.assertIsNot(first_stream, session.stream)
+        self.assertTrue(np.allclose(backend.recognizer.streams[0].accepted[0][1], [0.1]))
+        self.assertTrue(np.allclose(backend.recognizer.streams[1].accepted[0][1], [0.2]))
+
 
 class KrokoOnnxGoldenTranscriptionTests(unittest.TestCase):
     def setUp(self):
@@ -369,7 +734,7 @@ class KrokoOnnxGoldenTranscriptionTests(unittest.TestCase):
             "provider": os.environ.get("REALTIMESTT_KROKO_ONNX_PROVIDER", "cpu"),
             "num_threads": int(os.environ.get("REALTIMESTT_KROKO_ONNX_NUM_THREADS", "1")),
         }
-        key = os.environ.get("REALTIMESTT_KROKO_ONNX_KEY")
+        key = _first_env_value(KROKO_ONNX_KEY_ENV_NAMES)
         if key:
             engine_options["key"] = key
 

@@ -5,7 +5,7 @@ import setuptools
 from setuptools.command.build_py import build_py as _build_py
 
 
-current_version = "1.0.0"
+current_version = "1.0.1"
 
 
 INSTALL_GUIDE = """
@@ -36,6 +36,7 @@ Available extras include:
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend
 - qwen-vllm: Qwen ASR with vLLM extras
+- kroko-builder: helper command for building/installing Kroko-ONNX
 - porcupine: Porcupine wake-word backend
 - openwakeword: OpenWakeWord wake-word backend
 - wakewords: both wake-word backends
@@ -44,6 +45,12 @@ Available extras include:
 
 The WebRTC VAD and Silero VAD dependencies are still part of the core install
 because AudioToTextRecorder currently initializes both VAD paths.
+
+For live Kroko-ONNX usage, install the builder helper and then build Kroko in
+the same Python environment:
+
+    pip install "realtimestt[kroko-builder]"
+    stt-install-kroko --build
 
 """
 
@@ -118,6 +125,7 @@ transformers_requirements = ["transformers"]
 parakeet_requirements = ["nemo_toolkit[asr]"]
 qwen_requirements = ["qwen-asr"]
 qwen_vllm_requirements = ["qwen-asr[vllm]"]
+kroko_builder_requirements = []
 porcupine_requirements = [requirement("pvporcupine")]
 openwakeword_requirements = [requirement("openwakeword")]
 
@@ -150,6 +158,7 @@ extras_require = {
     "qwen": qwen_requirements,
     "qwen3-asr": qwen_requirements,
     "qwen-vllm": qwen_vllm_requirements,
+    "kroko-builder": kroko_builder_requirements,
     "porcupine": porcupine_requirements,
     "pvporcupine": porcupine_requirements,
     "pvp": porcupine_requirements,
@@ -205,6 +214,7 @@ setuptools.setup(
         'console_scripts': [
             'stt-server=RealtimeSTT_server.stt_server:main',
             'stt=RealtimeSTT_server.stt_cli_client:main',
+            'stt-install-kroko=RealtimeSTT.install_kroko:main',
         ],
     },
 )

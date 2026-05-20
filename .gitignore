@@ -5,6 +5,7 @@ test_env/
 tests_private/
 docs_private/
 docs/development/
+dev/
 dev-log/
 roadmap/
 env_realtimestt/
@@ -13,6 +14,23 @@ server/
 RealtimeSTT.code-workspace
 check_versions.py
 test-results/
+
+# Local RealtimeSTT/Kroko diagnostics and scratch reports
+tests/kroko_onnx_latency*.json
+tests/kroko_onnx_latency*.out.txt
+tests/kroko_onnx_model_evaluation*.json
+tests/kroko_onnx_model_evaluation*.md
+tests/kroko_onnx_streaming_smoke*.json
+tests/kroko_pro32s_key_smoke*.json
+tests/kroko_pro32s_key_smoke*.md
+tests/kroko_realtime_worker_latency*.json
+tests/kroko_realtimestt_stall_repro*.jsonl
+tests/kroko_realtimestt_stall_repro*.out.txt
+tests/kroko_realtimestt_stall_repro*.summary.json
+tests/kroko_tail3_quality*.json
+tests/kroko_tail3_quality*.md
+tests/realtimestt_kroko_test*.out.txt
+tests/unit/audio/voice_corpus/
 
 # Local backup/copy files
 * - Kopie*.py

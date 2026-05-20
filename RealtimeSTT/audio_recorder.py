@@ -2730,7 +2730,7 @@ class AudioToTextRecorder:
                 logger.debug(f"Could not snapshot realtime frames: {e}", exc_info=True)
                 return None
 
-        def _frames_to_audio_array(frames_snapshot):
+        def _frames_to_audio_array(frames_snapshot, enforce_min_samples=True):
             if not frames_snapshot:
                 return None
 
@@ -2777,18 +2777,19 @@ class AudioToTextRecorder:
             if audio_array is None or audio_array.size == 0:
                 return None
 
-            sample_rate = _safe_get_sample_rate()
+            if enforce_min_samples:
+                sample_rate = _safe_get_sample_rate()
 
-            # Avoid sending tiny initial buffers into Whisper.
-            # 50 ms is enough to avoid startup races without adding real latency.
-            min_samples = max(1, int(sample_rate * 0.05))
+                # Avoid sending tiny initial buffers into Whisper.
+                # 50 ms is enough to avoid startup races without adding real latency.
+                min_samples = max(1, int(sample_rate * 0.05))
 
-            if audio_array.size < min_samples:
-                logger.debug(
-                    "Skipping realtime transcription because buffer is too small: "
-                    f"{audio_array.size} samples < {min_samples} samples"
-                )
-                return None
+                if audio_array.size < min_samples:
+                    logger.debug(
+                        "Skipping realtime transcription because buffer is too small: "
+                        f"{audio_array.size} samples < {min_samples} samples"
+                    )
+                    return None
 
             logger.debug(f"Current realtime buffer size: {audio_array.size}")
 
@@ -2802,6 +2803,17 @@ class AudioToTextRecorder:
                 return None
 
             return audio_array
+
+        def _count_frame_samples(frames_snapshot):
+            sample_count = 0
+            for frame in frames_snapshot or ():
+                if frame is None:
+                    continue
+                try:
+                    sample_count += len(frame) // 2
+                except Exception:
+                    continue
+            return sample_count
 
         def _extract_text_and_language(transcription_result):
             if transcription_result is None:
@@ -2885,6 +2897,168 @@ class AudioToTextRecorder:
 
             except Exception as e:
                 logger.warning(f"Realtime transcription skipped: {e}", exc_info=True)
+                return None
+
+        streaming_session = None
+        streaming_session_recording_id = None
+        streaming_session_frame_count = 0
+
+        def _streaming_realtime_target():
+            if self.use_main_model_for_realtime:
+                return None
+
+            if self._uses_external_realtime_transcription_executor:
+                target = getattr(self, "realtime_transcription_executor", None)
+            else:
+                target = getattr(self, "realtime_transcription_model", None)
+
+            if target is None:
+                return None
+
+            if not getattr(target, "supports_streaming", False):
+                return None
+
+            if not hasattr(target, "create_streaming_session"):
+                return None
+
+            return target
+
+        def _close_streaming_session():
+            nonlocal streaming_session
+            nonlocal streaming_session_recording_id
+            nonlocal streaming_session_frame_count
+
+            if streaming_session is not None and hasattr(streaming_session, "close"):
+                try:
+                    streaming_session.close()
+                except Exception as e:
+                    logger.debug(
+                        f"Could not close realtime streaming session: {e}",
+                        exc_info=True,
+                    )
+
+            streaming_session = None
+            streaming_session_recording_id = None
+            streaming_session_frame_count = 0
+
+        def _create_streaming_session(target):
+            try:
+                return target.create_streaming_session(
+                    language=self.language if self.language else None,
+                    use_prompt=True,
+                )
+            except TypeError:
+                return target.create_streaming_session()
+
+        def _ensure_streaming_session(recording_id):
+            nonlocal streaming_session
+            nonlocal streaming_session_recording_id
+            nonlocal streaming_session_frame_count
+
+            target = _streaming_realtime_target()
+            if target is None:
+                _close_streaming_session()
+                return None
+
+            if (
+                streaming_session is None
+                or streaming_session_recording_id != recording_id
+            ):
+                if streaming_session is not None:
+                    try:
+                        previous_frames = tuple(getattr(self, "last_frames", None) or ())
+                    except Exception:
+                        previous_frames = None
+                    _finish_streaming_session(previous_frames)
+                else:
+                    _close_streaming_session()
+
+                try:
+                    streaming_session = _create_streaming_session(target)
+                except Exception as e:
+                    logger.warning(
+                        f"Realtime streaming session creation failed: {e}",
+                        exc_info=True,
+                    )
+                    streaming_session = None
+                    return None
+
+                streaming_session_recording_id = recording_id
+                streaming_session_frame_count = 0
+
+            return streaming_session
+
+        def _finish_streaming_session(frames_snapshot=None):
+            nonlocal streaming_session_frame_count
+
+            if streaming_session is None:
+                return None
+
+            try:
+                if frames_snapshot:
+                    frame_count = len(frames_snapshot)
+                    if frame_count >= streaming_session_frame_count:
+                        remaining_frames = frames_snapshot[streaming_session_frame_count:frame_count]
+                        audio_array = _frames_to_audio_array(
+                            remaining_frames,
+                            enforce_min_samples=False,
+                        )
+                        if audio_array is not None:
+                            streaming_session.accept_audio(
+                                audio_array,
+                                sample_rate=_safe_get_sample_rate(),
+                            )
+                            streaming_session_frame_count = frame_count
+
+                return streaming_session.finish()
+            except Exception as e:
+                logger.debug(
+                    f"Could not finish realtime streaming session: {e}",
+                    exc_info=True,
+                )
+                return None
+            finally:
+                _close_streaming_session()
+
+        def _transcribe_with_realtime_streaming_model(
+            frames_snapshot,
+            sample_rate,
+            recording_id,
+        ):
+            nonlocal streaming_session_frame_count
+
+            session = _ensure_streaming_session(recording_id)
+            if session is None:
+                return None
+
+            frame_count = len(frames_snapshot or ())
+            if frame_count < streaming_session_frame_count:
+                _close_streaming_session()
+                session = _ensure_streaming_session(recording_id)
+                if session is None:
+                    return None
+
+            new_frames = frames_snapshot[streaming_session_frame_count:frame_count]
+            audio_array = _frames_to_audio_array(
+                new_frames,
+                enforce_min_samples=False,
+            )
+
+            if audio_array is None:
+                logger.debug("Skipping realtime streaming decode because no new audio is available")
+                return None
+
+            try:
+                session.accept_audio(audio_array, sample_rate=sample_rate)
+                session.decode()
+                streaming_session_frame_count = frame_count
+                return session.get_result()
+            except Exception as e:
+                logger.warning(
+                    f"Realtime streaming transcription skipped: {e}",
+                    exc_info=True,
+                )
+                _close_streaming_session()
                 return None
 
         def _safe_realtime_callback(callback, *args):
@@ -3015,11 +3189,39 @@ class AudioToTextRecorder:
             last_transcription_time = time.time()
 
             frames_snapshot = _snapshot_frames()
-            audio_array = _frames_to_audio_array(frames_snapshot)
+            created_at_monotonic = time.monotonic()
+            sample_rate = _safe_get_sample_rate()
+            recording_id = getattr(self, "realtime_recording_id", 0)
+            streaming_target = _streaming_realtime_target()
 
-            if audio_array is None:
-                logger.debug("Skipping realtime transcription because audio buffer is empty")
-                return False
+            if streaming_target is not None:
+                if not frames_snapshot:
+                    logger.debug("Skipping realtime streaming decode because audio buffer is empty")
+                    return False
+
+                frame_count = len(frames_snapshot or ())
+                sample_count = _count_frame_samples(frames_snapshot)
+                transcription_result = _transcribe_with_realtime_streaming_model(
+                    frames_snapshot,
+                    sample_rate,
+                    recording_id,
+                )
+                if transcription_result is None:
+                    return False
+            else:
+                audio_array = _frames_to_audio_array(frames_snapshot)
+
+                if audio_array is None:
+                    logger.debug("Skipping realtime transcription because audio buffer is empty")
+                    return False
+
+                sample_count = int(audio_array.size)
+                frame_count = len(frames_snapshot or ())
+
+                if self.use_main_model_for_realtime:
+                    transcription_result = _transcribe_with_main_model(audio_array)
+                else:
+                    transcription_result = _transcribe_with_realtime_model(audio_array)
 
             self.realtime_transcription_count += 1
             self.realtime_transcription_trigger_counts[trigger_reason] = (
@@ -3031,22 +3233,12 @@ class AudioToTextRecorder:
                 getattr(self, "realtime_observation_sequence", 0) + 1
             )
             observation_sequence = self.realtime_observation_sequence
-            created_at_monotonic = time.monotonic()
-            sample_rate = _safe_get_sample_rate()
-            sample_count = int(audio_array.size)
-            frame_count = len(frames_snapshot or ())
-            recording_id = getattr(self, "realtime_recording_id", 0)
             recording_started_at_monotonic = getattr(
                 self,
                 "recording_start_monotonic",
                 None,
             )
             recording_start_time = getattr(self, "recording_start_time", None)
-
-            if self.use_main_model_for_realtime:
-                transcription_result = _transcribe_with_main_model(audio_array)
-            else:
-                transcription_result = _transcribe_with_realtime_model(audio_array)
 
             completed_at_monotonic = time.monotonic()
             completed_at_wall_time = time.time()
@@ -3239,6 +3431,15 @@ class AudioToTextRecorder:
         while self.is_running:
             try:
                 if not self.is_recording:
+                    if streaming_session is not None:
+                        try:
+                            finished_frames = tuple(getattr(self, "last_frames", None) or ())
+                        except Exception:
+                            finished_frames = None
+                        if not finished_frames:
+                            finished_frames = _snapshot_frames()
+                        _finish_streaming_session(finished_frames)
+
                     # Important:
                     # Reset timer while idle so the worker does not instantly
                     # transcribe an empty startup buffer when recording begins.
@@ -3283,6 +3484,9 @@ class AudioToTextRecorder:
                 # It must never kill the recorder/session.
                 logger.error(f"Unhandled exception in _realtime_worker loop: {e}", exc_info=True)
                 time.sleep(TIME_SLEEP)
+
+        if streaming_session is not None:
+            _finish_streaming_session(_snapshot_frames())
 
         logger.debug("Realtime worker stopped")
 
