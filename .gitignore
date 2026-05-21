@@ -7,7 +7,9 @@ docs_private/
 docs/development/
 dev/
 dev-log/
+dev-logs/
 roadmap/
+AGENTS.md
 env_realtimestt/
 example_rvc/assets/
 server/
