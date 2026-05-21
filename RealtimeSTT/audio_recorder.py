@@ -39,6 +39,8 @@ from .realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )
+from .preroll import PrerollFrameMetadata, select_preroll_frames
+from .silero_vad import create_silero_vad_model
 from .transcription_engines import (
     TranscriptionEngineConfig,
     create_transcription_engine,
@@ -89,6 +91,7 @@ ALLOWED_LATENCY_LIMIT = 100
 TIME_SLEEP = 0.02
 SAMPLE_RATE = 16000
 BUFFER_SIZE = 512
+DEACTIVITY_SILENCE_CONFIRMATION_DURATION = 0.16
 INT16_MAX_ABS_VALUE = 32768.0
 
 INIT_HANDLE_BUFFER_OVERFLOW = False
@@ -314,7 +317,7 @@ class AudioToTextRecorder:
 
                  # Voice activation parameters
                  silero_sensitivity: float = INIT_SILERO_SENSITIVITY,
-                 silero_use_onnx: bool = False,
+                 silero_use_onnx: Optional[bool] = None,
                  silero_deactivity_detection: bool = False,
                  webrtc_sensitivity: int = INIT_WEBRTC_SENSITIVITY,
                  warmup_vad: bool = True,
@@ -330,6 +333,7 @@ class AudioToTextRecorder:
                  pre_recording_buffer_duration: float = (
                      INIT_PRE_RECORDING_BUFFER_DURATION
                  ),
+                 pre_recording_buffer_trim_config: Optional[dict] = None,
                  on_vad_start=None,
                  on_vad_stop=None,
                  on_vad_detect_start=None,
@@ -379,6 +383,9 @@ class AudioToTextRecorder:
                  transcription_executor: Optional[Callable] = None,
                  realtime_transcription_executor: Optional[Callable] = None,
                  on_realtime_text_stabilization_update=None,
+                 silero_backend: str = "auto",
+                 silero_onnx_model_path: Optional[str] = None,
+                 silero_onnx_threads: int = 2,
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -479,10 +486,24 @@ class AudioToTextRecorder:
         - silero_sensitivity (float, default=SILERO_SENSITIVITY): Sensitivity
             for the Silero Voice Activity Detection model ranging from 0
             (least sensitive) to 1 (most sensitive). Default is 0.5.
-        - silero_use_onnx (bool, default=False): Enables usage of the
-            pre-trained model from Silero in the ONNX (Open Neural Network
-            Exchange) format instead of the PyTorch format. This is
-            recommended for faster performance.
+        - silero_use_onnx (bool, default=None): Legacy Silero backend switch.
+            If True, keeps the previous torch.hub ONNX path. If False, keeps
+            the previous torch.hub PyTorch path. If None, silero_backend
+            controls backend selection and defaults to the fastest accurate
+            option available.
+        - silero_backend (str, default="auto"): Silero VAD runtime backend.
+            "auto" prefers raw CPU ONNX Runtime with
+            silero_vad_op18_ifless.onnx, then raw silero_vad.onnx, then
+            PyTorch CPU. Other options include "legacy", "pytorch_cpu",
+            "pytorch_cuda", "official_onnx", "raw_onnx", and
+            "raw_onnx_ifless". CUDA remains available but is not automatic,
+            because launch overhead is slower than CPU ONNX for single-stream
+            32 ms chunks.
+        - silero_onnx_model_path (str, default=None): Optional explicit ONNX
+            model path for "official_onnx", "raw_onnx", or
+            "raw_onnx_ifless" backends.
+        - silero_onnx_threads (int, default=2): ONNX Runtime intra-op thread
+            count for raw ONNX Silero backends. Inter-op threads stay at 1.
         - silero_deactivity_detection (bool, default=False): Enables the Silero
             model for end-of-speech detection. More robust against background
             noise. Utilizes additional GPU resources but improves accuracy in
@@ -508,6 +529,10 @@ class AudioToTextRecorder:
         - pre_recording_buffer_duration (float, default=0.2): Duration in
             seconds for the audio buffer to maintain pre-roll audio
             (compensates speech activity detection latency)
+        - pre_recording_buffer_trim_config (dict, default=None): Optional
+            conservative pre-roll trimming settings. Set ``enabled`` to True
+            to trim only clear dead air before speech while preserving a
+            configured minimum pre-roll tail.
         - on_vad_start (callable, default=None): Callback function to be called
             when the system detected the start of voice activity presence.
         - on_vad_stop (callable, default=None): Callback function to be called
@@ -666,6 +691,9 @@ class AudioToTextRecorder:
         self.min_gap_between_recordings = min_gap_between_recordings
         self.min_length_of_recording = min_length_of_recording
         self.pre_recording_buffer_duration = pre_recording_buffer_duration
+        self.pre_recording_buffer_trim_config = dict(
+            pre_recording_buffer_trim_config or {}
+        )
         self.post_speech_silence_duration = post_speech_silence_duration
         self.on_recording_start = on_recording_start
         self.on_recording_stop = on_recording_stop
@@ -730,9 +758,17 @@ class AudioToTextRecorder:
         self.wake_word_detect_time = 0
         self.silero_check_time = 0
         self.silero_working = False
+        self.silero_vad_lock = threading.Lock()
+        self._silero_vad_generation = 0
         self.speech_end_silence_start = 0
+        self.speech_end_silence_candidate_start = 0
         self.silero_sensitivity = silero_sensitivity
+        self.silero_use_onnx = silero_use_onnx
+        self.silero_backend = silero_backend
+        self.silero_onnx_model_path = silero_onnx_model_path
+        self.silero_onnx_threads = silero_onnx_threads
         self.silero_deactivity_detection = silero_deactivity_detection
+        self.webrtc_sensitivity = webrtc_sensitivity
         self.warmup_vad = warmup_vad
         self.listen_start = 0
         self.spinner = spinner
@@ -766,6 +802,9 @@ class AudioToTextRecorder:
         self.continuous_listening = False
         self.last_transcription_bytes = None
         self.last_transcription_bytes_b64 = None
+        self.last_transcription_metadata = None
+        self.last_preroll_selection = None
+        self._pending_preroll_selection = None
         self.initial_prompt = initial_prompt
         self.initial_prompt_realtime = initial_prompt_realtime
         self.suppress_tokens = suppress_tokens
@@ -1078,11 +1117,14 @@ class AudioToTextRecorder:
 
         # Setup voice activity detection model Silero VAD
         try:
-            self.silero_vad_model, _ = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad",
-                model="silero_vad",
-                verbose=False,
-                onnx=silero_use_onnx
+            self.silero_vad_model = create_silero_vad_model(
+                backend=silero_backend,
+                silero_use_onnx=silero_use_onnx,
+                onnx_model_path=silero_onnx_model_path,
+                onnx_threads=silero_onnx_threads,
+                sample_rate=self.sample_rate,
+                chunk_samples=self.buffer_size,
+                logger=logger,
             )
 
         except Exception as e:
@@ -1091,9 +1133,11 @@ class AudioToTextRecorder:
                               )
             raise
 
-        logger.debug("Silero VAD voice activity detection "
-                      "engine initialized successfully"
-                      )
+        logger.debug(
+            "Silero VAD voice activity detection engine initialized "
+            "successfully with backend %s",
+            getattr(self.silero_vad_model, "backend", silero_backend),
+        )
 
         if self.warmup_vad:
             self._warmup_voice_activity_detectors()
@@ -1101,6 +1145,9 @@ class AudioToTextRecorder:
         self.audio_buffer = collections.deque(
             maxlen=int((self.sample_rate // self.buffer_size) *
                        self.pre_recording_buffer_duration)
+        )
+        self.audio_buffer_metadata = collections.deque(
+            maxlen=self.audio_buffer.maxlen
         )
         self.last_words_buffer = collections.deque(
             maxlen=int((self.sample_rate // self.buffer_size) *
@@ -1634,6 +1681,7 @@ class AudioToTextRecorder:
             # If not yet started recording, wait for voice activity to initiate.
             if queued_recording is None and not self.is_recording and not self.frames:
                 self._set_state("listening")
+                self._reset_silero_vad_state()
                 self.start_recording_on_voice_activity = True
                 armed_for_voice_activity = True
 
@@ -1694,6 +1742,7 @@ class AudioToTextRecorder:
                     and not self.interrupt_stop_event.is_set()
                     and not self.is_shut_down):
                 self.continuous_listening = True
+                self._reset_silero_vad_state()
                 self.start_recording_on_voice_activity = True
                 self.stop_recording_on_voice_deactivity = True
 
@@ -1778,6 +1827,12 @@ class AudioToTextRecorder:
     def has_pending_recordings(self):
         return not self.recorded_audio_queue.empty()
 
+    def _set_state_after_transcription(self):
+        if self.is_recording:
+            self._set_state("recording")
+        else:
+            self._set_state("inactive")
+
     def flush_buffered_audio(self, min_abs_level=50):
         if self.is_recording:
             self.stop()
@@ -1795,7 +1850,7 @@ class AudioToTextRecorder:
             return False
 
         self._queue_recorded_audio(frames)
-        self.audio_buffer.clear()
+        self._clear_pre_recording_buffer()
         return True
 
 
@@ -1826,14 +1881,14 @@ class AudioToTextRecorder:
                     if response is None: # check if transcription done
                         if self.interrupt_stop_event.is_set(): # check if interrupted
                             self.was_interrupted.set()
-                            self._set_state("inactive")
+                            self._set_state_after_transcription()
                             return "" # return empty string if interrupted
                         continue
                     status, result = response
                     self.transcribe_count -= 1
 
                 self.allowed_to_early_transcribe = True
-                self._set_state("inactive")
+                self._set_state_after_transcription()
                 if status == 'success':
                     self.detected_language = (
                         result.info.language if result.info.language_probability > 0 else None
@@ -1841,6 +1896,7 @@ class AudioToTextRecorder:
                     self.detected_language_probability = result.info.language_probability
                     self.last_transcription_bytes = copy.deepcopy(audio_bytes)
                     self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
+                    self.last_transcription_metadata = getattr(result, "metadata", None)
                     transcription = self._preprocess_output(result.text)
                     end_time = time.time()  # End timing
                     transcription_time = end_time - start_time
@@ -2001,6 +2057,8 @@ class AudioToTextRecorder:
             logger.info("Attempted to start recording "
                          "too soon after stopping."
                          )
+            self._pending_preroll_selection = None
+            self.last_preroll_selection = None
             return self
 
         logger.info("recording started")
@@ -2011,6 +2069,12 @@ class AudioToTextRecorder:
         self.realtime_observation_sequence = 0
         self.realtime_recording_id = getattr(self, "realtime_recording_id", 0) + 1
         self.recording_start_monotonic = time.monotonic()
+        self.last_preroll_selection = getattr(
+            self,
+            "_pending_preroll_selection",
+            None,
+        )
+        self._pending_preroll_selection = None
         self.wakeword_detected = False
         self.wake_word_detect_time = 0
         self.frames = []
@@ -2018,6 +2082,7 @@ class AudioToTextRecorder:
             self.frames = frames
 
         self.recording_start_time = time.time()
+        self.speech_end_silence_candidate_start = 0
         realtime_text_stabilizer = getattr(
             self,
             "realtime_text_stabilizer",
@@ -2031,8 +2096,8 @@ class AudioToTextRecorder:
             started_at_monotonic=self.recording_start_monotonic,
             started_at_wall_time=self.recording_start_time,
         )
+        self._reset_silero_vad_state()
         self.is_recording = True
-        self.is_silero_speech_active = False
         self.is_webrtc_speech_active = False
         self.stop_recording_event.clear()
         self.start_recording_event.set()
@@ -2086,7 +2151,7 @@ class AudioToTextRecorder:
         )
         if realtime_text_stabilizer is not None:
             realtime_text_stabilizer.finalize()
-        self.is_silero_speech_active = False
+        self._reset_silero_vad_state()
         self.is_webrtc_speech_active = False
         self.silero_check_time = 0
         self.start_recording_event.clear()
@@ -2109,6 +2174,7 @@ class AudioToTextRecorder:
         """
         self.listen_start = time.time()
         self._set_state("listening")
+        self._reset_silero_vad_state()
         self.start_recording_on_voice_activity = True
 
     def feed_audio(self, chunk, original_sample_rate=16000):
@@ -2422,6 +2488,7 @@ class AudioToTextRecorder:
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Starting recording')
+                            pre_recording_frames = self._selected_pre_recording_buffer_frames()
                             self.start()
 
                             self.start_recording_on_voice_activity = False
@@ -2430,12 +2497,12 @@ class AudioToTextRecorder:
                                 logger.debug('Debug: Adding buffered audio to frames')
                             # Add the buffered audio
                             # to the recording frames
-                            self.frames.extend(list(self.audio_buffer))
-                            self.audio_buffer.clear()
+                            self.frames.extend(pre_recording_frames)
+                            self._clear_pre_recording_buffer()
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Resetting Silero VAD model states')
-                            self.silero_vad_model.reset_states()
+                            self._reset_silero_vad_state()
                         else:
                             if self.use_extended_logging:
                                 logger.debug('Debug: Checking voice activity')
@@ -2483,8 +2550,19 @@ class AudioToTextRecorder:
                             logger.debug('Debug: Determining if speech is detected')
                         is_speech = (
                             self._is_silero_speech(data) if self.silero_deactivity_detection
-                            else self._is_webrtc_speech(data, True)
+                            else self._is_webrtc_speech(data)
                         )
+                        if is_speech:
+                            self.speech_end_silence_candidate_start = 0
+                        elif not self.speech_end_silence_start:
+                            now = time.time()
+                            if not self.speech_end_silence_candidate_start:
+                                self.speech_end_silence_candidate_start = now
+                            if (
+                                now - self.speech_end_silence_candidate_start
+                                < DEACTIVITY_SILENCE_CONFIRMATION_DURATION
+                            ):
+                                is_speech = True
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Formatting speech_end_silence_start')
@@ -2506,6 +2584,7 @@ class AudioToTextRecorder:
                                 (time.time() - self.recording_start_time > self.min_length_of_recording):
 
                                 self.speech_end_silence_start = time.time()
+                                self.speech_end_silence_candidate_start = 0
                                 self.awaiting_speech_end = True
                                 if self.on_turn_detection_start:
                                     if self.use_extended_logging:
@@ -2607,7 +2686,7 @@ class AudioToTextRecorder:
                         self.stop_recording_on_voice_deactivity = True
                     else:
                         self.stop_recording_on_voice_deactivity = False
-                    self.audio_buffer.clear()
+                    self._clear_pre_recording_buffer()
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking Silero time')
@@ -2644,7 +2723,7 @@ class AudioToTextRecorder:
                 if not self.is_recording or self.speech_end_silence_start:
                     if self.use_extended_logging:
                         logger.debug('Debug: Appending data to audio buffer')
-                    self.audio_buffer.append(data)
+                    self._append_to_pre_recording_buffer(data)
 
         except Exception as e:
             logger.debug('Debug: Caught exception in main try block')
@@ -3189,10 +3268,10 @@ class AudioToTextRecorder:
             last_transcription_time = time.time()
 
             frames_snapshot = _snapshot_frames()
-            created_at_monotonic = time.monotonic()
             sample_rate = _safe_get_sample_rate()
             recording_id = getattr(self, "realtime_recording_id", 0)
             streaming_target = _streaming_realtime_target()
+            created_at_monotonic = time.monotonic()
 
             if streaming_target is not None:
                 if not frames_snapshot:
@@ -3663,6 +3742,42 @@ class AudioToTextRecorder:
     #         logger.error(f"Unhandled exeption in _realtime_worker: {e}", exc_info=True)
     #         raise
 
+    def _silero_vad_probability(self, audio_chunk):
+        result = self.silero_vad_model(audio_chunk, SAMPLE_RATE)
+        if isinstance(result, (float, int)):
+            return float(result)
+        if hasattr(result, "item"):
+            return float(result.item())
+        return float(np.asarray(result).reshape(-1)[0])
+
+    def _reset_silero_vad_state(self):
+        """
+        Reset Silero's recurrent state and the recorder-side Silero flag.
+
+        Silero VAD keeps hidden state between chunk calls. That is useful while
+        evaluating one continuous stream, but it must not leak across warmup,
+        listening attempts, or completed recordings.
+        """
+        self._silero_vad_generation = (
+            getattr(self, "_silero_vad_generation", 0) + 1
+        )
+        reset_states = getattr(
+            getattr(self, "silero_vad_model", None),
+            "reset_states",
+            None,
+        )
+        if reset_states:
+            try:
+                lock = getattr(self, "silero_vad_lock", None)
+                if lock is None:
+                    reset_states()
+                else:
+                    with lock:
+                        reset_states()
+            except Exception:
+                logger.debug("Silero VAD state reset skipped", exc_info=True)
+        self.is_silero_speech_active = False
+
     def _warmup_voice_activity_detectors(self):
         """
         Prime VAD runtimes without changing recorder state.
@@ -3687,13 +3802,10 @@ class AudioToTextRecorder:
             tone = (0.03 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
             silence = np.zeros(sample_count, dtype=np.float32)
 
-            with torch.no_grad():
-                self.silero_vad_model(torch.from_numpy(tone), SAMPLE_RATE).item()
-                self.silero_vad_model(torch.from_numpy(silence), SAMPLE_RATE).item()
+            self._silero_vad_probability(tone)
+            self._silero_vad_probability(silence)
 
-            reset_states = getattr(self.silero_vad_model, "reset_states", None)
-            if reset_states:
-                reset_states()
+            self._reset_silero_vad_state()
         except Exception:
             logger.debug("Silero VAD warmup skipped", exc_info=True)
 
@@ -3702,7 +3814,7 @@ class AudioToTextRecorder:
         self.is_webrtc_speech_active = False
         self.last_webrtc_speech_time = 0
 
-    def _is_silero_speech(self, chunk):
+    def _is_silero_speech(self, chunk, generation=None):
         """
         Returns true if speech is detected in the provided audio data
 
@@ -3710,27 +3822,47 @@ class AudioToTextRecorder:
             data (bytes): raw bytes of audio data (1024 raw bytes with
             16000 sample rate and 16 bits per sample)
         """
-        if self.sample_rate != 16000:
-            pcm_data = np.frombuffer(chunk, dtype=np.int16)
-            data_16000 = signal.resample_poly(
-                pcm_data, 16000, self.sample_rate)
-            chunk = data_16000.astype(np.int16).tobytes()
+        if generation is None:
+            generation = getattr(self, "_silero_vad_generation", 0)
 
         self.silero_working = True
-        audio_chunk = np.frombuffer(chunk, dtype=np.int16)
-        audio_chunk = audio_chunk.astype(np.float32) / INT16_MAX_ABS_VALUE
-        vad_prob = self.silero_vad_model(
-            torch.from_numpy(audio_chunk),
-            SAMPLE_RATE).item()
-        is_silero_speech_active = vad_prob > (1 - self.silero_sensitivity)
-        if is_silero_speech_active:
-            if not self.is_silero_speech_active and self.use_extended_logging:
-                logger.info(f"{bcolors.OKGREEN}Silero VAD detected speech{bcolors.ENDC}")
-        elif self.is_silero_speech_active and self.use_extended_logging:
-            logger.info(f"{bcolors.WARNING}Silero VAD detected silence{bcolors.ENDC}")
-        self.is_silero_speech_active = is_silero_speech_active
-        self.silero_working = False
-        return is_silero_speech_active
+        try:
+            if generation != getattr(self, "_silero_vad_generation", 0):
+                return False
+
+            if self.sample_rate != 16000:
+                pcm_data = np.frombuffer(chunk, dtype=np.int16)
+                data_16000 = signal.resample_poly(
+                    pcm_data, 16000, self.sample_rate)
+                chunk = data_16000.astype(np.int16).tobytes()
+
+            if generation != getattr(self, "_silero_vad_generation", 0):
+                return False
+
+            audio_chunk = np.frombuffer(chunk, dtype=np.int16)
+            audio_chunk = audio_chunk.astype(np.float32) / INT16_MAX_ABS_VALUE
+            lock = getattr(self, "silero_vad_lock", None)
+            if lock is None:
+                vad_prob = self._silero_vad_probability(audio_chunk)
+            else:
+                with lock:
+                    if generation != getattr(self, "_silero_vad_generation", 0):
+                        return False
+                    vad_prob = self._silero_vad_probability(audio_chunk)
+
+            if generation != getattr(self, "_silero_vad_generation", 0):
+                return False
+
+            is_silero_speech_active = vad_prob > (1 - self.silero_sensitivity)
+            if is_silero_speech_active:
+                if not self.is_silero_speech_active and self.use_extended_logging:
+                    logger.info(f"{bcolors.OKGREEN}Silero VAD detected speech{bcolors.ENDC}")
+            elif self.is_silero_speech_active and self.use_extended_logging:
+                logger.info(f"{bcolors.WARNING}Silero VAD detected silence{bcolors.ENDC}")
+            self.is_silero_speech_active = is_silero_speech_active
+            return is_silero_speech_active
+        finally:
+            self.silero_working = False
 
     def _is_webrtc_speech(self, chunk, all_frames_must_be_true=False):
         """
@@ -3796,25 +3928,146 @@ class AudioToTextRecorder:
         Args:
             data: The audio data to be checked for voice activity.
         """
+        was_webrtc_speech_active = self.is_webrtc_speech_active
         self._is_webrtc_speech(data)
 
         # First quick performing check for voice activity using WebRTC
         if self.is_webrtc_speech_active:
 
             if not self.silero_working:
+                if not was_webrtc_speech_active:
+                    self._reset_silero_vad_state()
                 self.silero_working = True
+                silero_generation = getattr(self, "_silero_vad_generation", 0)
 
                 # Run the intensive check in a separate thread
                 threading.Thread(
                     target=self._is_silero_speech,
-                    args=(data,)).start()
+                    args=(data, silero_generation)).start()
+
+    def _pre_recording_buffer_trim_enabled(self):
+        config = getattr(self, "pre_recording_buffer_trim_config", None) or {}
+        return bool(config.get("enabled", False))
+
+    def _append_to_pre_recording_buffer(self, data):
+        self.audio_buffer.append(data)
+        metadata_buffer = getattr(self, "audio_buffer_metadata", None)
+        if metadata_buffer is not None:
+            metadata_buffer.append(self._preroll_frame_metadata(data))
+
+    def _clear_pre_recording_buffer(self):
+        self.audio_buffer.clear()
+        metadata_buffer = getattr(self, "audio_buffer_metadata", None)
+        if metadata_buffer is not None:
+            metadata_buffer.clear()
+
+    def _selected_pre_recording_buffer_frames(self):
+        frames = list(self.audio_buffer)
+        self._pending_preroll_selection = None
+        if not frames:
+            return frames
+
+        if not self._pre_recording_buffer_trim_enabled():
+            return frames
+
+        metadata = list(getattr(self, "audio_buffer_metadata", ()))
+        if len(metadata) != len(frames):
+            metadata = [self._metadata_for_frame_without_vad(frame) for frame in frames]
+
+        config = getattr(self, "pre_recording_buffer_trim_config", None) or {}
+        selection = select_preroll_frames(
+            metadata,
+            int(getattr(self, "sample_rate", SAMPLE_RATE) or SAMPLE_RATE),
+            min_silence_ms=config.get("min_silence_ms", 200.0),
+            guard_ms=config.get("guard_ms", 160.0),
+            max_gap_ms=config.get("max_gap_ms", 80.0),
+            min_included_ms=config.get("min_included_ms", 600.0),
+            energy_silence_rms=config.get("energy_silence_rms"),
+            noise_floor_multiplier=config.get("noise_floor_multiplier", 2.5),
+            energy_margin_rms=config.get("energy_margin_rms", 25.0),
+        )
+        selection.diagnostics.update(self._webrtc_replay_preroll_diagnostics(frames))
+        self._pending_preroll_selection = selection
+        return frames[selection.start_index:]
+
+    def _preroll_frame_metadata(self, data):
+        sample_count = max(0, len(data) // 2)
+        rms = self._frame_rms(data)
+        webrtc_is_speech = bool(getattr(self, "is_webrtc_speech_active", False))
+        silero_is_speech = bool(getattr(self, "is_silero_speech_active", False))
+        is_speech = webrtc_is_speech or silero_is_speech
+        return PrerollFrameMetadata(
+            sample_count=sample_count,
+            is_speech=is_speech,
+            rms=rms,
+            webrtc_is_speech=webrtc_is_speech,
+            silero_is_speech=silero_is_speech,
+        )
+
+    def _metadata_for_frame_without_vad(self, frame):
+        return PrerollFrameMetadata(
+            sample_count=max(0, len(frame) // 2),
+            is_speech=None,
+            rms=self._frame_rms(frame),
+        )
+
+    def _frame_rms(self, data):
+        if not data:
+            return None
+        try:
+            samples = np.frombuffer(data, dtype=np.int16)
+            if samples.size == 0:
+                return None
+            audio = samples.astype(np.float32)
+            return float(np.sqrt(np.mean(audio * audio)))
+        except Exception:
+            logger.debug("Could not calculate pre-roll frame RMS", exc_info=True)
+            return None
+
+    def _webrtc_replay_preroll_diagnostics(self, frames):
+        speech_sample_count = 0
+        analyzed_sample_count = 0
+        frame_length = int(16000 * 0.01)
+        sample_rate = int(getattr(self, "sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
+
+        try:
+            vad_model = webrtcvad.Vad(int(getattr(self, "webrtc_sensitivity", 3)))
+            for chunk in list(frames or ()):
+                replay_chunk = chunk
+                if sample_rate != 16000:
+                    pcm_data = np.frombuffer(replay_chunk, dtype=np.int16)
+                    data_16000 = signal.resample_poly(
+                        pcm_data,
+                        16000,
+                        sample_rate,
+                    )
+                    replay_chunk = data_16000.astype(np.int16).tobytes()
+
+                num_frames = int(len(replay_chunk) / (2 * frame_length))
+                for index in range(num_frames):
+                    start_byte = index * frame_length * 2
+                    end_byte = start_byte + frame_length * 2
+                    frame = replay_chunk[start_byte:end_byte]
+                    analyzed_sample_count += frame_length
+                    if vad_model.is_speech(frame, 16000):
+                        speech_sample_count += frame_length
+        except Exception as exc:
+            logger.debug("Could not replay WebRTC VAD over pre-roll", exc_info=True)
+            return {"webrtcReplayError": str(exc)}
+
+        return {
+            "webrtcReplaySpeechSampleCount": speech_sample_count,
+            "webrtcReplayAnalyzedSampleCount": analyzed_sample_count,
+            "webrtcReplaySpeechSeconds": speech_sample_count / 16000.0,
+            "webrtcReplayAnalyzedSeconds": analyzed_sample_count / 16000.0,
+        }
 
     def clear_audio_queue(self):
         """
         Safely empties the audio queue to ensure no remaining audio 
         fragments get processed e.g. after waking up the recorder.
         """
-        self.audio_buffer.clear()
+        self._clear_pre_recording_buffer()
         try:
             while True:
                 self.audio_queue.get_nowait()

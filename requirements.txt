@@ -10,3 +10,4 @@ openwakeword>=0.6.0
 websockets==16.0
 websocket-client==1.9.0
 soundfile==0.13.1
+silero-vad[onnx-cpu]>=6.2.1; python_version >= "3.8"

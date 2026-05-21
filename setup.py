@@ -14,6 +14,10 @@ want to install.
 
 Recommended default local Whisper install:
 
+    pip install "realtimestt[recommended]"
+
+Main ASR backend only, without the faster packaged Silero ONNX Runtime VAD:
+
     pip install "realtimestt[faster-whisper]"
 
 Core package only, without a transcription engine or wake-word backend:
@@ -31,6 +35,9 @@ Available extras include:
 - whisper-cpp: whisper.cpp backend through pywhispercpp
 - openai-whisper: original OpenAI Whisper Python backend
 - sherpa-onnx: sherpa-onnx CPU backends
+- silero-vad: packaged Silero model assets and PyTorch wrapper
+- silero-onnx/silero-onnx-cpu: fastest Silero VAD CPU ONNX Runtime backend
+- silero-onnx-gpu: installs Silero's ONNX GPU runtime extra for experiments
 - parakeet: NVIDIA NeMo Parakeet backend
 - transformers: shared Transformers dependency for Moonshine, Granite, and Cohere
 - moonshine, granite, cohere: aliases for the Transformers dependency set
@@ -40,11 +47,13 @@ Available extras include:
 - porcupine: Porcupine wake-word backend
 - openwakeword: OpenWakeWord wake-word backend
 - wakewords: both wake-word backends
-- recommended/default: faster-whisper backend
+- recommended/default: faster-whisper backend plus fast Silero CPU ONNX VAD
 - all: all PyPI-installable optional backends
 
-The WebRTC VAD and Silero VAD dependencies are still part of the core install
-because AudioToTextRecorder currently initializes both VAD paths.
+The WebRTC VAD and baseline Silero/PyTorch dependencies are still part of the
+core install because AudioToTextRecorder initializes both VAD paths. Install
+the recommended/default or silero-onnx extra for the faster raw CPU ONNX
+Runtime Silero backend.
 
 For live Kroko-ONNX usage, install the builder helper and then build Kroko in
 the same Python environment:
@@ -121,6 +130,15 @@ faster_whisper_requirements = [requirement("faster-whisper")]
 whisper_cpp_requirements = ["pywhispercpp"]
 openai_whisper_requirements = ["openai-whisper"]
 sherpa_onnx_requirements = ["sherpa-onnx"]
+silero_vad_requirements = [
+    "silero-vad>=6.2.1; python_version >= '3.8'",
+]
+silero_onnx_requirements = [
+    "silero-vad[onnx-cpu]>=6.2.1; python_version >= '3.8'",
+]
+silero_onnx_gpu_requirements = [
+    "silero-vad[onnx-gpu]>=6.2.1; python_version >= '3.8'",
+]
 transformers_requirements = ["transformers"]
 parakeet_requirements = ["nemo_toolkit[asr]"]
 qwen_requirements = ["qwen-asr"]
@@ -134,6 +152,7 @@ all_optional_requirements = unique_requirements(
     + whisper_cpp_requirements
     + openai_whisper_requirements
     + sherpa_onnx_requirements
+    + silero_onnx_requirements
     + transformers_requirements
     + parakeet_requirements
     + qwen_requirements
@@ -149,6 +168,13 @@ extras_require = {
     "openai-whisper": openai_whisper_requirements,
     "sherpa-onnx": sherpa_onnx_requirements,
     "sherpa": sherpa_onnx_requirements,
+    "silero-vad": silero_vad_requirements,
+    "silero": silero_vad_requirements,
+    "silero-onnx": silero_onnx_requirements,
+    "silero-onnx-cpu": silero_onnx_requirements,
+    "vad-onnx": silero_onnx_requirements,
+    "silero-onnx-gpu": silero_onnx_gpu_requirements,
+    "vad-onnx-gpu": silero_onnx_gpu_requirements,
     "transformers": transformers_requirements,
     "moonshine": transformers_requirements,
     "granite": transformers_requirements,
@@ -170,8 +196,12 @@ extras_require = {
     "wake-words": unique_requirements(
         porcupine_requirements + openwakeword_requirements
     ),
-    "recommended": unique_requirements(faster_whisper_requirements),
-    "default": unique_requirements(faster_whisper_requirements),
+    "recommended": unique_requirements(
+        faster_whisper_requirements + silero_onnx_requirements
+    ),
+    "default": unique_requirements(
+        faster_whisper_requirements + silero_onnx_requirements
+    ),
     "all": all_optional_requirements,
 }
 
