@@ -39,6 +39,7 @@ Available extras include:
 - silero-onnx/silero-onnx-cpu: fastest Silero VAD CPU ONNX Runtime backend
 - silero-onnx-gpu: installs Silero's ONNX GPU runtime extra for experiments
 - parakeet: NVIDIA NeMo Parakeet backend
+- omnilingual-asr: Meta Omnilingual ASR backend for Linux/WSL2
 - transformers: shared Transformers dependency for Moonshine, Granite, and Cohere
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend
@@ -141,6 +142,12 @@ silero_onnx_gpu_requirements = [
 ]
 transformers_requirements = ["transformers"]
 parakeet_requirements = ["nemo_toolkit[asr]"]
+omnilingual_asr_requirements = [
+    (
+        "omnilingual-asr; python_version >= '3.10' "
+        "and python_version <= '3.12' and platform_system != 'Windows'"
+    )
+]
 qwen_requirements = ["qwen-asr"]
 qwen_vllm_requirements = ["qwen-asr[vllm]"]
 kroko_builder_requirements = []
@@ -155,6 +162,7 @@ all_optional_requirements = unique_requirements(
     + silero_onnx_requirements
     + transformers_requirements
     + parakeet_requirements
+    + omnilingual_asr_requirements
     + qwen_requirements
     + porcupine_requirements
     + openwakeword_requirements
@@ -181,6 +189,9 @@ extras_require = {
     "cohere": transformers_requirements,
     "parakeet": parakeet_requirements,
     "nvidia-parakeet": parakeet_requirements,
+    "omnilingual-asr": omnilingual_asr_requirements,
+    "omnilingual": omnilingual_asr_requirements,
+    "meta-omnilingual-asr": omnilingual_asr_requirements,
     "qwen": qwen_requirements,
     "qwen3-asr": qwen_requirements,
     "qwen-vllm": qwen_vllm_requirements,
