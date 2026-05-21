@@ -133,6 +133,8 @@ audio, logging, and executor injection.
   protocol, metrics, and deployment notes.
 - [Troubleshooting](docs/troubleshooting.md): common install, audio, CUDA,
   model, dependency, and runtime errors.
+- [Engine licenses](docs/licenses.md): license notes for optional engine
+  runtimes and model families.
 
 Engine-specific references:
 
@@ -144,7 +146,7 @@ Engine-specific references:
 - [Kroko-ONNX](docs/engines/kroko-onnx.md)
 - [Parakeet NeMo](docs/engines/parakeet-nemo.md)
 - [Meta Omnilingual ASR](docs/engines/omnilingual-asr.md)
-- [Transformers engines](docs/engines/hf-transformers.md)
+- [Granite/Qwen Transformers engines](docs/engines/hf-transformers.md)
 - [Cohere Transcribe](docs/engines/cohere.md)
 
 ## Server Example

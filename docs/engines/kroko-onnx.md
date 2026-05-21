@@ -2,8 +2,12 @@
 
 `kroko_onnx` uses the optional
 [kroko-ai/kroko-onnx](https://github.com/kroko-ai/kroko-onnx) runtime with
-Kroko/Banafo streaming `.data` models. The adapter is lazy-loaded, so normal
-RealtimeSTT installs and tests do not require Kroko-ONNX.
+Kroko/Banafo streaming `.data` models. It is useful when you want low-latency
+streaming previews from Kroko models while keeping the default RealtimeSTT
+install free of Kroko-specific native dependencies.
+
+The adapter is lazy-loaded. A normal RealtimeSTT install can import and use
+other engines without `kroko_onnx` installed.
 
 ## Engine Names
 
@@ -16,8 +20,8 @@ the generic engine-name normalization.
 
 ## Install
 
-Kroko-ONNX is not installed by default. RealtimeSTT exposes a small builder
-helper:
+Kroko-ONNX is not installed by default. Install RealtimeSTT's builder helper,
+then build Kroko-ONNX for the active Python environment:
 
 ```bash
 python -m pip install "RealtimeSTT[kroko-builder]"
@@ -26,8 +30,8 @@ stt-install-kroko --build
 
 The helper uses Kroko's `cross-platform-builds` branch. On Windows it builds a
 CPython 3.12 `win_amd64` wheel with Docker Desktop, then installs that wheel.
-On Linux it patches the checkout and installs from source. Add `--skip-install`
-to build without installing into the active Python environment.
+On Linux it patches the checkout and installs from source. Use `--skip-install`
+when you only want to produce the package artifact.
 
 Windows requirements:
 
@@ -41,7 +45,7 @@ Linux requirements:
 - CMake
 - A working C/C++ build toolchain
 
-Use `--variant pro` when you need licensed Pro models:
+For licensed Pro models, build the Pro variant:
 
 ```bash
 stt-install-kroko --build --variant pro
@@ -51,15 +55,25 @@ The `free` variant is for public Community models. The `pro` variant is for
 licensed Pro/private models and may need network access for Kroko's license
 check.
 
-## Models
+## Model Behavior
 
-Public Community models are available from
+Known public Community model files are available from
 [Banafo/Kroko-ASR](https://huggingface.co/Banafo/Kroko-ASR). RealtimeSTT can
-download known public Community `.data` files automatically when
-`auto_download_model` is enabled. Bare Kroko filenames are cached under
-`~/.cache/realtimestt/kroko-onnx` unless `download_root` points somewhere else.
+download known Community `.data` files automatically when
+`auto_download_model` is enabled, which is the default.
 
-You can also pre-download models into a project-local ignored cache:
+Bare Kroko filenames are cached under `~/.cache/realtimestt/kroko-onnx` unless
+`download_root` points somewhere else:
+
+```python
+recorder = AudioToTextRecorder(
+    transcription_engine="kroko_onnx",
+    model="Kroko-EN-Community-64-L-Streaming-001.data",
+    download_root="models/kroko-onnx",
+)
+```
+
+You can also pre-download models into an ignored project-local cache:
 
 ```powershell
 New-Item -ItemType Directory -Path test-model-cache\kroko-onnx -Force
@@ -67,10 +81,11 @@ python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id=
 ```
 
 Pro/private models are not assumed to be public. Pass an existing `.data` path,
-`model_download_url`, or explicit Hugging Face repo/token options. Pass Pro keys
-through environment/config or CLI options only; do not commit keys.
+`model_download_url`, or explicit Hugging Face repo/token options. Keep license
+keys and tokens in environment variables, trusted local config, or CLI/runtime
+options. Do not commit them.
 
-## Python Usage
+## Basic Use
 
 ```python
 from RealtimeSTT import AudioToTextRecorder
@@ -87,8 +102,40 @@ recorder = AudioToTextRecorder(
 )
 ```
 
-For realtime previews, Kroko uses a persistent native stream and receives only
-new audio frames. Final transcription still uses one full-utterance call.
+For an existing model file:
+
+```python
+recorder = AudioToTextRecorder(
+    transcription_engine="kroko_onnx",
+    model="models/kroko-onnx/Kroko-EN-Community-64-L-Streaming-001.data",
+    device="cpu",
+    language="en",
+)
+```
+
+## Realtime Suggestions
+
+Kroko supports a persistent streaming session for realtime previews. RealtimeSTT
+feeds only new audio frames to the realtime engine, while final transcription
+still uses a full-utterance pass.
+
+```python
+recorder = AudioToTextRecorder(
+    transcription_engine="kroko_onnx",
+    model="Kroko-EN-Community-128-L-Streaming-001.data",
+    enable_realtime_transcription=True,
+    realtime_transcription_engine="kroko_onnx",
+    realtime_model_type="Kroko-EN-Community-64-L-Streaming-001.data",
+    realtime_processing_pause=0.05,
+    realtime_transcription_engine_options={
+        "provider": "cpu",
+        "num_threads": 1,
+        "suppress_native_output": True,
+    },
+)
+```
+
+For Pro access, a small realtime model can improve visible partial cadence:
 
 ```python
 recorder = AudioToTextRecorder(
@@ -106,45 +153,39 @@ recorder = AudioToTextRecorder(
 )
 ```
 
-`Pro-16-L` is the fastest measured partial-cadence option when Pro access is
-available. Kroko model names encode native streaming cadence as
-`number * 20 ms`, so `16` is about `320 ms`, `32` is about `640 ms`, and `64`
-is about `1280 ms`. Feeding smaller chunks does not force Kroko to emit
-partials faster; it only avoids extra scheduling and buffer latency.
+Kroko model names encode the native streaming cadence as `number * 20 ms`.
+For example, `16` is about `320 ms`, `32` is about `640 ms`, and `64` is about
+`1280 ms`. Feeding smaller chunks does not force the native model to emit
+partials faster; it only avoids extra scheduling and buffering delay.
 
-## Options
+## Common Options
 
 | Option | Meaning |
 | --- | --- |
 | `model_path` | Explicit `.data` model file. Overrides `model`. |
-| `model_dir` | Directory containing a single `.data` file, or the default English Community filename. |
+| `model_dir` | Directory containing a single `.data` file, or the default Community filename. |
 | `model_filename` | File name to use inside `model_dir`. |
-| `auto_download_model` / `download_model` | Download missing public Community model files. Defaults to `True`. |
-| `model_download_url` | Direct download URL for a missing `.data` file. Useful for Pro/private models. |
-| `model_repo_id`, `model_revision`, `hf_token` | Optional Hugging Face download settings. |
+| `auto_download_model`, `download_model` | Download missing public Community models. Defaults to `True`. |
+| `model_download_url` | Direct URL for a missing `.data` file. Useful for private model hosting. |
+| `model_repo_id`, `model_revision`, `hf_token` | Hugging Face download settings. |
+| `provider` | `cpu`, `cuda`, or `coreml`. Defaults from `device`. |
+| `num_threads` | Kroko runtime thread count. Defaults to `1`. |
+| `sample_rate` | Input sample rate for Kroko. Defaults to `16000`. |
 | `key` | License key for Pro models. |
 | `referralcode` | Optional Kroko referral code. |
-| `provider` | `cpu`, `cuda`, or `coreml`. Defaults from `device`. |
-| `num_threads` | Runtime thread count. Defaults to `1`. |
-| `sample_rate` | Kroko recognizer sample rate. Defaults to `16000`. |
-| `feature_dim` | Feature dimension. Defaults to `80`. |
-| `decoding_method` | `greedy_search` or `modified_beam_search`. |
+| `decoding_method` | Kroko decoding method, commonly `greedy_search` or `modified_beam_search`. |
 | `max_active_paths` | Beam paths for modified beam search. |
 | `hotwords_file`, `hotwords_score` | Optional hotword biasing inputs. |
 | `blank_penalty` | Blank-symbol penalty during decoding. |
-| `enable_endpoint_detection` | Enables Kroko endpoint detection. |
-| `rule1_min_trailing_silence`, `rule2_min_trailing_silence`, `rule3_min_utterance_length` | Endpoint rule values. |
-| `tail_padding_seconds` / `finalization_padding_seconds` | Final silence padding before one-shot decoding. Defaults to `auto`, inferred from model cadence plus a small margin. |
-| `suppress_native_output` | Redirect Kroko native stdout/stderr during recognizer calls and set `KROKO_ONNX_SUPPRESS_LICENSE_OUTPUT=1`. Aliases: `suppress_output`, `quiet`, `silent`. |
+| `tail_padding_seconds`, `finalization_padding_seconds` | Final silence padding before one-shot decoding. Defaults to `auto`. |
+| `suppress_native_output` | Redirects native stdout/stderr during recognizer calls and sets `KROKO_ONNX_SUPPRESS_LICENSE_OUTPUT=1`. |
 | `recognizer` | Extra dictionary merged into `OnlineRecognizer.from_transducer(...)`. |
 
-`suppress_native_output` is a Python-side mitigation plus an environment flag.
-Reliable suppression of asynchronous Pro license refresh messages such as
-`Remaining seconds updated: ...` requires a Kroko wheel built with RealtimeSTT's
-native patch. Older/unpatched Kroko wheels may still print background license
-messages.
+`suppress_native_output` also accepts the aliases `suppress_output`, `quiet`,
+and `silent`. Reliable suppression of asynchronous Pro license refresh messages
+requires a Kroko wheel built with RealtimeSTT's native quiet-output patch.
 
-## FastAPI Example
+## FastAPI Recipe
 
 ```powershell
 $model = "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data"
@@ -164,7 +205,7 @@ python example_fastapi_server\server.py `
 ## Tests
 
 Fast contract tests use fake Kroko runtime objects and do not require the
-optional dependency:
+optional native dependency:
 
 ```powershell
 python -m unittest -v tests.unit.test_kroko_onnx_engine
@@ -186,12 +227,12 @@ and generated reports.
 
 ## Troubleshooting
 
-- Missing dependency errors mean `kroko_onnx` is not importable in the active
-  environment. Install Kroko-ONNX in that same environment.
-- Missing model errors name the exact `.data` file path RealtimeSTT tried.
+- If import fails, install Kroko-ONNX in the same environment that runs
+  RealtimeSTT.
+- Missing model errors name the exact `.data` path RealtimeSTT tried.
 - Free Kroko wheels cannot load Pro `.data` models; the native error can look
   like a payload parsing or block-size mismatch.
-- CUDA runs require both CUDA-capable hardware and a Kroko-ONNX build with CUDA
+- CUDA runs require CUDA-capable hardware and a Kroko-ONNX build with CUDA
   provider support.
-- On Windows, prefer the helper's `cross-platform-builds` wheel workflow over a
-  direct native source build.
+- On Windows, prefer `stt-install-kroko --build` over a direct native source
+  build.

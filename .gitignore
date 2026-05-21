@@ -35,6 +35,7 @@ tests/realtimestt_kroko_test*.out.txt
 tests/unit/audio/voice_corpus/
 
 # Local backup/copy files
+backup_realtimestt_code.bat
 * - Kopie*.py
 *.bak
 *.tmp

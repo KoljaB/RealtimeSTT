@@ -15,7 +15,7 @@ Manual demos, regression harnesses, and legacy experiments directly under
 From the repository root:
 
 ```powershell
-python -m unittest -v tests.unit.test_audio_fixtures tests.unit.test_whisper_cpp_engine tests.unit.test_openai_whisper_engine tests.unit.test_additional_transcription_engines tests.unit.test_cohere_transcribe_engine tests.unit.test_granite_speech_engine tests.unit.test_moonshine_engine tests.unit.test_sherpa_onnx_engine tests.unit.test_kroko_onnx_engine tests.unit.test_realtime_streaming_transcription tests.unit.test_fastapi_server_protocol tests.unit.test_fastapi_server_multi_user
+python -m unittest -v tests.unit.test_audio_fixtures tests.unit.test_whisper_cpp_engine tests.unit.test_openai_whisper_engine tests.unit.test_additional_transcription_engines tests.unit.test_cohere_transcribe_engine tests.unit.test_granite_speech_engine tests.unit.test_moonshine_engine tests.unit.test_sherpa_onnx_engine tests.unit.test_kroko_onnx_engine tests.unit.test_omnilingual_asr_engine tests.unit.test_realtime_streaming_transcription tests.unit.test_fastapi_server_protocol tests.unit.test_fastapi_server_multi_user
 ```
 
 Use the Python executable from your active virtual environment.
@@ -144,6 +144,16 @@ python -m unittest -v tests.unit.test_kroko_onnx_engine.KrokoOnnxGoldenTranscrip
 `REALTIMESTT_KROKO_ONNX_KEY`, `KROKO_ONNX_KEY`, or `KROKO_KEY` can be set for
 licensed Pro models. Do not store keys in command history, docs, generated
 reports, or committed files.
+
+Run the Omnilingual ASR contract tests:
+
+```powershell
+python -m unittest -v tests.unit.test_omnilingual_asr_engine
+```
+
+These tests use fake Omnilingual runtime objects and do not install or import
+Meta's Omnilingual ASR package. Real model smoke tests should run from Linux or
+WSL2; see [engines/omnilingual-asr.md](engines/omnilingual-asr.md).
 
 ## FastAPI Multi-User Load Test
 

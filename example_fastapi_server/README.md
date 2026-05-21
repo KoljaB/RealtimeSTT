@@ -45,6 +45,12 @@ python -m pip install .
 Kroko-ONNX is currently Linux/Docker-oriented upstream. If native Windows builds
 fail, use WSL2/Linux and run this server from that environment.
 
+For Meta Omnilingual ASR, use Linux or WSL2:
+
+```bash
+python -m pip install -e ".[omnilingual-asr]"
+```
+
 ## Run
 
 Default faster-whisper setup:
@@ -175,6 +181,27 @@ python example_fastapi_server/server.py \
   --language en
 ```
 
+Meta Omnilingual ASR from Linux or WSL2, using one CTC model lane for both
+realtime and final transcription:
+
+```bash
+PYTHONPATH=. python example_fastapi_server/server.py \
+  --host 0.0.0.0 \
+  --port 8010 \
+  --engine omnilingual_asr \
+  --model omniASR_CTC_1B_v2 \
+  --realtime-engine omnilingual_asr \
+  --realtime-model omniASR_CTC_1B_v2 \
+  --use-main-model-for-realtime \
+  --device cuda \
+  --compute-type float16 \
+  --language eng_Latn \
+  --engine-options '{"batch_size":1,"sample_rate":16000}'
+```
+
+Open `http://localhost:8010` from a Windows browser when WSL2 localhost
+forwarding is active. If VRAM is tight, start with `omniASR_CTC_300M_v2`.
+
 ## CPU Engine Recipes
 
 These commands are intended for Windows `cmd.exe` from the repository root,
@@ -304,6 +331,7 @@ accepted and normalized, so these work:
 - `parakeet` / `nvidia-parakeet`
 - `sherpa-onnx-parakeet`
 - `kroko-onnx` / `kroko` / `banafo-kroko`
+- `omnilingual-asr` / `omnilingual` / `meta-omnilingual-asr` / `omni-asr`
 - `cohere-transcribe`
 - `granite-speech`
 - `qwen3-asr`

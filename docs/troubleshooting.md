@@ -41,6 +41,8 @@ that backend's package:
 | `parakeet` | `nemo_toolkit[asr]`, `soundfile` |
 | `granite_speech`, `moonshine`, `cohere_transcribe` | `transformers`, `torch` |
 | `qwen3_asr` | `qwen-asr` |
+| `omnilingual_asr` | `RealtimeSTT[omnilingual-asr]` on Linux/WSL2, plus a compatible PyTorch stack |
+| `kroko_onnx` | `RealtimeSTT[kroko-builder]`, then `stt-install-kroko --build` |
 
 ## Audio Device Problems
 
