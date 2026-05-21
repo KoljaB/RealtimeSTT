@@ -58,6 +58,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `transformers` | `transformers` | Shared dependency for Transformers-based ASR engines. |
 | `moonshine`, `granite`, `cohere` | `transformers` | Aliases for the corresponding Transformers engines. |
 | `parakeet` / `nvidia-parakeet` | `nemo_toolkit[asr]` | NVIDIA NeMo Parakeet backend, best on Linux or WSL2. |
+| `omnilingual` / `omnilingual-asr` / `meta-omnilingual-asr` | `omnilingual-asr` | Meta Omnilingual ASR backend for Linux or WSL2. |
 | `qwen` / `qwen3-asr` | `qwen-asr` | Qwen ASR backend. |
 | `qwen-vllm` | `qwen-asr[vllm]` | Qwen ASR with vLLM support. |
 | `kroko-builder` | RealtimeSTT builder helper only | Builds/installs Kroko-ONNX from upstream on Windows or Linux. |
@@ -159,7 +160,7 @@ Install only the engine stack you plan to use:
 | `moonshine` | `python -m pip install "RealtimeSTT[moonshine]"` | Downloads Hugging Face model files automatically. English-only in this adapter. |
 | `sherpa_onnx_*` | `python -m pip install "RealtimeSTT[sherpa-onnx]"` | Model bundles must be downloaded and extracted manually. |
 | `parakeet` | `python -m pip install -U "RealtimeSTT[parakeet]"` | NeMo downloads from the configured model id/cache. Best on Linux or WSL2. |
-| `omnilingual_asr` | `python -m pip install "RealtimeSTT[omnilingual-asr]"` | Meta Omnilingual ASR downloads through its Linux/WSL fairseq2 cache. Native Windows installs are not supported because `fairseq2n` has no Windows wheel. |
+| [`omnilingual_asr`](engines/omnilingual-asr.md) | `python -m pip install "RealtimeSTT[omnilingual]"` | Meta Omnilingual ASR downloads through its Linux/WSL fairseq2 cache. Native Windows installs are not supported because `fairseq2n` has no Windows wheel. The `omnilingual-asr` and `meta-omnilingual-asr` extras are equivalent aliases. |
 | `granite_speech` | `python -m pip install "RealtimeSTT[granite]"` | Downloads Hugging Face model files automatically. |
 | `qwen3_asr` | `python -m pip install -U "RealtimeSTT[qwen]"` | Downloads Qwen model files through the Qwen ASR package. |
 | `cohere_transcribe` | `python -m pip install "RealtimeSTT[cohere]"` | Downloads Hugging Face model files; gated model access may be required. |

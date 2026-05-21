@@ -39,7 +39,7 @@ Available extras include:
 - silero-onnx/silero-onnx-cpu: fastest Silero VAD CPU ONNX Runtime backend
 - silero-onnx-gpu: installs Silero's ONNX GPU runtime extra for experiments
 - parakeet: NVIDIA NeMo Parakeet backend
-- omnilingual-asr: Meta Omnilingual ASR backend for Linux/WSL2
+- omnilingual/omnilingual-asr: Meta Omnilingual ASR backend for Linux/WSL2
 - transformers: shared Transformers dependency for Moonshine, Granite, and Cohere
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend

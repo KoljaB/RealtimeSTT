@@ -23,16 +23,19 @@ normalization.
 
 Use a Linux or WSL2 environment with Python 3.10 through 3.12. Install a
 CUDA-enabled PyTorch stack first when you want GPU inference, then install the
-RealtimeSTT extra:
+RealtimeSTT extra. The clean alias is `omnilingual`:
 
 ```bash
-python -m pip install "RealtimeSTT[omnilingual-asr]"
+python -m pip install "RealtimeSTT[omnilingual]"
 ```
+
+`omnilingual-asr` and `meta-omnilingual-asr` are equivalent aliases if you
+prefer the explicit package-family name.
 
 When working from a source checkout:
 
 ```bash
-python -m pip install -e ".[omnilingual-asr]"
+python -m pip install -e ".[omnilingual]"
 ```
 
 The extra is guarded with a non-Windows platform marker. On Windows, create or
@@ -160,9 +163,9 @@ PYTHONPATH=. python example_fastapi_server/server.py \
   --host 0.0.0.0 \
   --port 8010 \
   --engine omnilingual_asr \
-  --model omniASR_CTC_1B_v2 \
+  --model omniASR_CTC_300M_v2 \
   --realtime-engine omnilingual_asr \
-  --realtime-model omniASR_CTC_1B_v2 \
+  --realtime-model omniASR_CTC_300M_v2 \
   --use-main-model-for-realtime \
   --device cuda \
   --compute-type float16 \
@@ -172,7 +175,8 @@ PYTHONPATH=. python example_fastapi_server/server.py \
 
 Open `http://localhost:8010/` from a Windows browser. WSL2 forwards localhost
 for the default setup; if your WSL networking is customized, use the WSL host
-IP instead.
+IP instead. After the 300M model works, try `omniASR_CTC_1B_v2` if your GPU
+has enough VRAM.
 
 ## Tests
 
