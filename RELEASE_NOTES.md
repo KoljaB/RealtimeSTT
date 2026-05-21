@@ -4,25 +4,20 @@
 
 ### Added
 
-- Added a `kroko_onnx` transcription engine for Kroko/Banafo `.data` streaming
-  models.
 - Added a generic streaming transcription session interface so engines can
   opt in to incremental realtime decoding while existing engines keep the
   full-buffer fallback behavior.
+- Added `kroko_onnx` transcription engine for Kroko/Banafo `.data` streaming
+  models.
 - Added Kroko realtime preview support that feeds streaming engines only newly
   recorded audio frames through a persistent session.
 - Added `stt-install-kroko`, exposed through the `kroko-builder` extra, to help
   build and install Kroko-ONNX for the active Python environment.
 - Added focused Kroko and realtime streaming unit coverage plus a public manual
   `tests/realtimestt_kroko_test.py` smoke script.
-- Added an experimental `omnilingual_asr` transcription engine for Meta
+- Added `omnilingual_asr` transcription engine for Meta
   Omnilingual ASR on Linux/WSL2, with support for the published CTC and LLM
-  model cards.
-- Added the `omnilingual`, `omnilingual-asr`, and `meta-omnilingual-asr`
-  install extras. The dependency is guarded for non-Windows Python 3.10-3.12
-  because `fairseq2n` has no native Windows wheel.
-- Added focused Omnilingual ASR unit coverage using mocked runtime objects so
-  normal test runs do not need the heavy optional backend installed.
+  model cards (Linux only because `fairseq2n` has no native Windows wheel)
 - Added `docs/licenses.md` with engine and model-family license notes.
 
 ### Changed
@@ -33,19 +28,15 @@
   for realtime previews only when the realtime engine advertises streaming
   support.
 - Kroko model cadence is used to choose automatic finalization tail padding.
-- Public docs now describe Community versus Pro model handling, ignored local
-  test model caches, credential policy, and Kroko realtime recommendations.
-- Omnilingual ASR uses `omniASR_CTC_300M_v2` as the practical default when the
+- Omnilingual ASR uses `omniASR_CTC_300M_v2` as the default when the
   recorder is still configured with a Whisper default model name.
-- Omnilingual CTC models omit language hints, while LLM model cards can receive
-  Omnilingual language IDs such as `eng_Latn`.
 - Omnilingual in-memory audio is passed to the backend as predecoded waveform
   dictionaries to avoid the upstream package treating raw float arrays as
   encoded audio bytes.
 
 ### Notes
 
-- Kroko support is new and optional. Install/build Kroko-ONNX separately with
+- Install/build Kroko-ONNX separately with
   `pip install "RealtimeSTT[kroko-builder]"` followed by
   `stt-install-kroko --build`, or install a compatible Kroko-ONNX wheel in the
   same Python environment.
