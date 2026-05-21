@@ -9,6 +9,12 @@ speech into text with only a few lines of code.
 The recommended default path uses `faster_whisper`. Other engines are available
 through install extras when their optional dependencies and models are present.
 
+## Demo
+
+https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
+
+[CLI demo code (reproduces the video above)](tests/realtimestt_test.py)
+
 ## Install
 
 ```bash
