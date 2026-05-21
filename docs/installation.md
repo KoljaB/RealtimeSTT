@@ -22,6 +22,9 @@ extras.
 
 ## Python Environment
 
+Use Python 3.11 or newer. The current pinned core dependency set includes
+packages whose published wheels require Python 3.11+.
+
 Use a virtual environment when possible:
 
 ```bash
@@ -65,7 +68,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `porcupine` / `pvporcupine` / `pvp` | `pvporcupine` | Porcupine wake-word backend. |
 | `openwakeword` / `oww` | `openwakeword` | OpenWakeWord wake-word backend. |
 | `wakewords` / `wake-words` | `pvporcupine`, `openwakeword` | Both wake-word backends. |
-| `recommended` / `default` | `faster-whisper` | The default local transcription path. |
+| `recommended` / `default` | `faster-whisper`, `silero-vad[onnx-cpu]` | Default local transcription plus the faster raw CPU ONNX Silero VAD path. |
 | `all` | All PyPI-installable optional backends | Broad development or experimentation environments. |
 
 `kroko-builder` does not install Kroko-ONNX by itself; it exposes

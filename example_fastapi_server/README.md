@@ -207,9 +207,13 @@ your GPU has enough VRAM.
 
 ## CPU Engine Recipes
 
-These commands are intended for Windows `cmd.exe` from the repository root,
-for example `D:\Projekte\STT\RealtimeSTT\RealtimeSTT`. Replace the Python path
-with the active virtual environment for your checkout.
+These commands are intended for Windows `cmd.exe` from the repository root.
+Point `PYTHON_EXE` at the active virtual environment for your checkout, or use
+`python` when it already resolves to the right interpreter:
+
+```cmd
+set PYTHON_EXE=python
+```
 
 ### whisper.cpp CPU
 
@@ -217,7 +221,7 @@ This uses `tiny.en` for both realtime and final transcription. Realtime uses
 greedy decoding and single-segment/no-context settings for faster interim text.
 
 ```cmd
-D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe example_fastapi_server\server.py --host 0.0.0.0 --port 8010 --engine whisper_cpp --model tiny.en --realtime-engine whisper_cpp --realtime-model tiny.en --device cpu --beam-size 5 --beam-size-realtime 1 --download-root test-model-cache\pywhispercpp --engine-options "{\"model\":{\"n_threads\":8,\"redirect_whispercpp_logs_to\":null}}" --realtime-engine-options "{\"model\":{\"n_threads\":8,\"redirect_whispercpp_logs_to\":null},\"transcribe\":{\"single_segment\":true,\"no_context\":true,\"print_timestamps\":false}}"
+"%PYTHON_EXE%" example_fastapi_server\server.py --host 0.0.0.0 --port 8010 --engine whisper_cpp --model tiny.en --realtime-engine whisper_cpp --realtime-model tiny.en --device cpu --beam-size 5 --beam-size-realtime 1 --download-root test-model-cache\pywhispercpp --engine-options "{\"model\":{\"n_threads\":8,\"redirect_whispercpp_logs_to\":null}}" --realtime-engine-options "{\"model\":{\"n_threads\":8,\"redirect_whispercpp_logs_to\":null},\"transcribe\":{\"single_segment\":true,\"no_context\":true,\"print_timestamps\":false}}"
 ```
 
 ### sherpa-onnx Moonshine CPU
@@ -227,21 +231,21 @@ Download and extract the Tiny and Base Moonshine sherpa-onnx models once:
 ```cmd
 mkdir test-model-cache\sherpa-onnx
 curl.exe -L -o test-model-cache\sherpa-onnx\sherpa-onnx-moonshine-tiny-en-int8.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2
-D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe -c "import tarfile; tarfile.open(r'test-model-cache\sherpa-onnx\sherpa-onnx-moonshine-tiny-en-int8.tar.bz2', 'r:bz2').extractall(r'test-model-cache\sherpa-onnx')"
+"%PYTHON_EXE%" -c "import tarfile; tarfile.open(r'test-model-cache\sherpa-onnx\sherpa-onnx-moonshine-tiny-en-int8.tar.bz2', 'r:bz2').extractall(r'test-model-cache\sherpa-onnx')"
 curl.exe -L -o test-model-cache\sherpa-onnx\sherpa-onnx-moonshine-base-en-int8.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2
-D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe -c "import tarfile; tarfile.open(r'test-model-cache\sherpa-onnx\sherpa-onnx-moonshine-base-en-int8.tar.bz2', 'r:bz2').extractall(r'test-model-cache\sherpa-onnx')"
+"%PYTHON_EXE%" -c "import tarfile; tarfile.open(r'test-model-cache\sherpa-onnx\sherpa-onnx-moonshine-base-en-int8.tar.bz2', 'r:bz2').extractall(r'test-model-cache\sherpa-onnx')"
 ```
 
 Run Base for final transcription and Tiny for realtime transcription:
 
 ```cmd
-D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe example_fastapi_server\server.py --host 0.0.0.0 --port 8010 --engine sherpa_onnx_moonshine --model sherpa-onnx-moonshine-base-en-int8 --realtime-engine sherpa_onnx_moonshine --realtime-model sherpa-onnx-moonshine-tiny-en-int8 --device cpu --language en --download-root test-model-cache\sherpa-onnx --engine-options "{\"num_threads\":4,\"provider\":\"cpu\"}" --realtime-engine-options "{\"num_threads\":2,\"provider\":\"cpu\"}" --realtime-processing-pause 0.8 --realtime-use-syllable-boundaries --realtime-boundary-detector-sensitivity 0.6 --realtime-boundary-followup-delays 0.1,0.2,0.4
+"%PYTHON_EXE%" example_fastapi_server\server.py --host 0.0.0.0 --port 8010 --engine sherpa_onnx_moonshine --model sherpa-onnx-moonshine-base-en-int8 --realtime-engine sherpa_onnx_moonshine --realtime-model sherpa-onnx-moonshine-tiny-en-int8 --device cpu --language en --download-root test-model-cache\sherpa-onnx --engine-options "{\"num_threads\":4,\"provider\":\"cpu\"}" --realtime-engine-options "{\"num_threads\":2,\"provider\":\"cpu\"}" --realtime-processing-pause 0.8 --realtime-use-syllable-boundaries --realtime-boundary-detector-sensitivity 0.6 --realtime-boundary-followup-delays 0.1,0.2,0.4
 ```
 
 For lower memory usage, use Tiny for both final and realtime transcription:
 
 ```cmd
-D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe example_fastapi_server\server.py --host 0.0.0.0 --port 8010 --engine sherpa_onnx_moonshine --model sherpa-onnx-moonshine-tiny-en-int8 --realtime-engine sherpa_onnx_moonshine --realtime-model sherpa-onnx-moonshine-tiny-en-int8 --device cpu --language en --download-root test-model-cache\sherpa-onnx --engine-options "{\"num_threads\":2,\"provider\":\"cpu\"}" --realtime-engine-options "{\"num_threads\":2,\"provider\":\"cpu\"}" --realtime-processing-pause 0.8 --realtime-use-syllable-boundaries --realtime-boundary-detector-sensitivity 0.6 --realtime-boundary-followup-delays 0.1,0.2,0.4
+"%PYTHON_EXE%" example_fastapi_server\server.py --host 0.0.0.0 --port 8010 --engine sherpa_onnx_moonshine --model sherpa-onnx-moonshine-tiny-en-int8 --realtime-engine sherpa_onnx_moonshine --realtime-model sherpa-onnx-moonshine-tiny-en-int8 --device cpu --language en --download-root test-model-cache\sherpa-onnx --engine-options "{\"num_threads\":2,\"provider\":\"cpu\"}" --realtime-engine-options "{\"num_threads\":2,\"provider\":\"cpu\"}" --realtime-processing-pause 0.8 --realtime-use-syllable-boundaries --realtime-boundary-detector-sensitivity 0.6 --realtime-boundary-followup-delays 0.1,0.2,0.4
 ```
 
 ### Kroko-ONNX CPU

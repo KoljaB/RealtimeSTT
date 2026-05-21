@@ -243,7 +243,7 @@ setuptools.setup(
     #     "Programming Language :: Python :: 3",
     #     "Operating System :: OS Independent",
     # ],
-    python_requires='>=3.6',
+    python_requires='>=3.11',
     license='MIT',
     install_requires=base_requirements,
     extras_require=extras_require,

@@ -17,6 +17,8 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ## Install
 
+Use Python 3.11 or newer for the current pinned dependency set.
+
 ```bash
 pip install "RealtimeSTT[faster-whisper]"
 ```

@@ -6,7 +6,7 @@ set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%\.." >nul
 
 if not defined PYTHON_EXE if defined VIRTUAL_ENV set "PYTHON_EXE=%VIRTUAL_ENV%\Scripts\python.exe"
-if not defined PYTHON_EXE set "PYTHON_EXE=D:\Projekte\STT\RealtimeSTT\test_env\Scripts\python.exe"
+if not defined PYTHON_EXE set "PYTHON_EXE=python"
 
 if not defined REALTIMESTT_RUN_FASTAPI_MULTI_USER_PERF set "REALTIMESTT_RUN_FASTAPI_MULTI_USER_PERF=1"
 if not defined REALTIMESTT_FASTAPI_ASR_CLIENTS set "REALTIMESTT_FASTAPI_ASR_CLIENTS=4"
