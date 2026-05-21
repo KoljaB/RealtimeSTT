@@ -141,7 +141,9 @@ Engine-specific references:
 - [OpenAI Whisper](docs/engines/openai-whisper.md)
 - [Moonshine](docs/engines/moonshine.md)
 - [sherpa-onnx](docs/engines/sherpa-onnx.md)
+- [Kroko-ONNX](docs/engines/kroko-onnx.md)
 - [Parakeet NeMo](docs/engines/parakeet-nemo.md)
+- [Meta Omnilingual ASR](docs/engines/omnilingual-asr.md)
 - [Transformers engines](docs/engines/hf-transformers.md)
 - [Cohere Transcribe](docs/engines/cohere.md)
 
