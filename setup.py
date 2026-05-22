@@ -5,7 +5,7 @@ import setuptools
 from setuptools.command.build_py import build_py as _build_py
 
 
-current_version = "1.0.1"
+current_version = "1.0.1.post3"
 
 
 INSTALL_GUIDE = """
@@ -29,11 +29,6 @@ Install multiple extras by separating them with commas:
     pip install "realtimestt[faster-whisper,porcupine]"
     pip install "realtimestt[whisper-cpp,openwakeword]"
 
-When validating RealtimeSTT release candidates from TestPyPI, keep the
-RealtimeSTT package on TestPyPI and let PyPI resolve third-party dependencies:
-
-    pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "RealtimeSTT[omnilingual]==1.0.1.post1"
-
 Available extras include:
 
 - faster-whisper: default CTranslate2 Whisper backend
@@ -44,7 +39,7 @@ Available extras include:
 - silero-onnx/silero-onnx-cpu: fastest Silero VAD CPU ONNX Runtime backend
 - silero-onnx-gpu: installs Silero's ONNX GPU runtime extra for experiments
 - parakeet: NVIDIA NeMo Parakeet backend
-- omnilingual/omnilingual-asr: Meta Omnilingual ASR backend for Linux/WSL2; uses omnilingual-asr>=0.2.0 with matching torch/torchaudio builds
+- omnilingual/omnilingual-asr: Meta Omnilingual ASR backend for Linux/WSL2 with Python 3.11.x only; uses omnilingual-asr>=0.2.0 with matching torch/torchaudio builds
 - transformers: shared Transformers dependency for Moonshine, Granite, and Cohere
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend
@@ -61,6 +56,12 @@ core install because AudioToTextRecorder initializes both VAD paths. Install
 the recommended/default or silero-onnx extra for the faster raw CPU ONNX
 Runtime Silero backend.
 
+Meta Omnilingual ASR install note: use Linux or WSL2 with Python 3.11.x.
+Native Windows cannot run the Omnilingual runtime because fairseq2n has no
+Windows wheel, and Python 3.12.x currently cannot resolve omnilingual-asr>=0.2.0
+from PyPI because the upstream package metadata excludes normal 3.12 patch
+releases.
+
 For live Kroko-ONNX usage, install the builder helper and then build Kroko in
 the same Python environment:
 
@@ -73,6 +74,9 @@ builder. Check that Docker's Linux engine is available with:
     python --version
     git --version
     docker version
+
+`docker version` must show a Server section. `docker --version` only checks
+that the Docker CLI is installed.
 
 If the default builder cache is not writable, use a project-local work
 directory:
@@ -166,7 +170,7 @@ silero_onnx_gpu_requirements = [
 transformers_requirements = ["transformers"]
 parakeet_requirements = ["nemo_toolkit[asr]"]
 omnilingual_asr_marker = (
-    "python_version >= '3.10' and python_version <= '3.12' "
+    "python_version >= '3.10' and python_version < '3.12' "
     "and platform_system != 'Windows'"
 )
 omnilingual_asr_requirements = [

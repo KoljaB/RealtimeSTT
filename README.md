@@ -20,10 +20,8 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 RealtimeSTT 1.0.1 adds native support for `kroko_onnx`, the local streaming ASR
 engine from the Kroko/Banafo team.
 
-This integration has been on my wishlist for a long time. After finally spending
-some time with the model, I am happy to highlight it here: Kroko is a strong fit
-for RealtimeSTT's goals: fast local speech recognition and low-latency realtime
-partials.
+This integration has been on my wishlist for a long time. Kroko is a strong fit
+for RealtimeSTT's goals: fast, accurate local speech recognition.
 
 Start with the public Community models for local testing, or see Kroko/Banafo's
 commercial model options if you need production licensing and higher-end models.

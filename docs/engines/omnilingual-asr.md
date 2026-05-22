@@ -5,8 +5,10 @@
 imports and installs do not require the Omnilingual runtime until this engine
 is selected.
 
-This backend is intended for Linux or WSL2. Native Windows installs skip the
-actual `omnilingual-asr` dependency because `fairseq2n` has no Windows wheel.
+Current install target: Linux or WSL2 with Python 3.11.x. Native Windows cannot
+run the Omnilingual runtime because `fairseq2n` has no Windows wheel, and
+Python 3.12.x currently cannot resolve `omnilingual-asr>=0.2.0` from PyPI
+because the upstream package metadata excludes normal 3.12 patch releases.
 
 ## Engine Names
 
@@ -21,7 +23,7 @@ normalization.
 
 ## Install
 
-Use a Linux or WSL2 environment with Python 3.11 or 3.12. The clean alias is
+Use a Linux or WSL2 environment with Python 3.11.x. The clean alias is
 `omnilingual`:
 
 ```bash
@@ -31,19 +33,6 @@ python -m pip install "RealtimeSTT[omnilingual]"
 `omnilingual-asr` and `meta-omnilingual-asr` are equivalent aliases if you
 prefer the explicit package-family name.
 
-For a TestPyPI validation install, keep RealtimeSTT on TestPyPI and use PyPI as
-the dependency fallback:
-
-```bash
-python -m pip install --no-cache-dir \
-  --index-url https://test.pypi.org/simple/ \
-  --extra-index-url https://pypi.org/simple/ \
-  "RealtimeSTT[omnilingual]==1.0.1.post1"
-```
-
-TestPyPI does not mirror dependencies such as `PyAudio`, `torch`,
-`torchaudio`, `fairseq2`, `fairseq2n`, or `omnilingual-asr`.
-
 The Omnilingual extra requires `omnilingual-asr>=0.2.0` and constrains
 matching `torch==2.8.0` / `torchaudio==2.8.0` builds on Linux/WSL2. If you
 install a CUDA-enabled PyTorch stack separately, keep `torch` and `torchaudio`
@@ -51,8 +40,10 @@ on matching releases. A mismatched pair can pass `python -m pip check` but
 fail while importing `omnilingual_asr`, for example with a missing
 `libcudart.so` shared-library error.
 
-The repository also includes `requirements-omnilingual-wsl-known-good.txt` for
-release-candidate validation from WSL2/Linux.
+Do not use native Windows or Python 3.12.x for the Omnilingual runtime. Native
+Windows installs intentionally skip the runtime dependency, and
+`omnilingual-asr==0.2.0` currently declares `Requires-Python: <=3.12,>=3.10`,
+which makes normal Python 3.12 patch releases fail dependency resolution.
 
 When working from a source checkout:
 
@@ -61,7 +52,7 @@ python -m pip install -e ".[omnilingual]"
 ```
 
 The extra is guarded with a non-Windows platform marker. On Windows, create or
-reuse a WSL2 environment and run the Omnilingual process there.
+reuse a Python 3.11.x WSL2 environment and run the Omnilingual process there.
 
 ## Basic Use
 
@@ -280,6 +271,9 @@ runtime installed. Start with `omniASR_CTC_1B_v2`.
   `fairseq2n` is not importable in the active Linux/WSL environment.
 - Native Windows installs skip the Omnilingual runtime because `fairseq2n`
   currently has no Windows wheel. Run the Omnilingual runtime in WSL2 or Linux.
+- Python 3.12.x currently fails Omnilingual dependency resolution because
+  upstream `omnilingual-asr==0.2.0` declares `Requires-Python: <=3.12,>=3.10`.
+  Use Python 3.11.x until upstream metadata changes.
 - CUDA shared-library import errors such as missing `libcudart.so` often mean
   `torch` and `torchaudio` were resolved from incompatible builds. Install
   matching versions in the same environment.

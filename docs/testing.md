@@ -157,10 +157,10 @@ expected to work from a clean pip install unless the source tree and tests are
 present. For a pip-installed environment, use the file-based smoke test in
 [engines/omnilingual-asr.md](engines/omnilingual-asr.md).
 
-Real model smoke tests should run from Linux or WSL2 with matching `torch` and
-`torchaudio` builds. Start with `omniASR_CTC_1B_v2`; treat unknown `_v2` model
-cards as an Omnilingual dependency mismatch instead of falling back to older
-non-v2 cards.
+Real model smoke tests should run from Linux or WSL2 with Python 3.11.x and
+matching `torch` and `torchaudio` builds. Start with `omniASR_CTC_1B_v2`;
+treat unknown `_v2` model cards as an Omnilingual dependency mismatch instead
+of falling back to older non-v2 cards.
 
 ## FastAPI Multi-User Load Test
 

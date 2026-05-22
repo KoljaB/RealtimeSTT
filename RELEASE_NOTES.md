@@ -16,8 +16,10 @@
 - Added focused Kroko and realtime streaming unit coverage plus a public manual
   `tests/realtimestt_kroko_test.py` smoke script.
 - Added `omnilingual_asr` transcription engine for Meta
-  Omnilingual ASR on Linux/WSL2, with support for the published CTC and LLM
-  model cards (Linux only because `fairseq2n` has no native Windows wheel)
+  Omnilingual ASR on Linux/WSL2 with Python 3.11.x, with support for the
+  published CTC and LLM model cards. Native Windows is not supported because
+  `fairseq2n` has no Windows wheel; Python 3.12.x is blocked by upstream
+  `omnilingual-asr` package metadata.
 - Added `docs/licenses.md` with engine and model-family license notes.
 
 ### Changed
@@ -28,7 +30,7 @@
   for realtime previews only when the realtime engine advertises streaming
   support.
 - Kroko model cadence is used to choose automatic finalization tail padding.
-- Omnilingual ASR uses `omniASR_CTC_300M_v2` as the default when the
+- Omnilingual ASR uses `omniASR_CTC_1B_v2` as the default when the
   recorder is still configured with a Whisper default model name.
 - Omnilingual in-memory audio is passed to the backend as predecoded waveform
   dictionaries to avoid the upstream package treating raw float arrays as
@@ -51,8 +53,9 @@
   suppression of asynchronous Pro license refresh messages requires a Kroko
   wheel rebuilt with RealtimeSTT's native quiet-output patch; older Kroko wheels
   may still print background license status text.
-- Omnilingual ASR support is optional and Linux/WSL2-oriented. Native Windows
-  installs are not supported by the upstream dependency stack at this time.
-- `omniASR_CTC_300M_v2` is the recommended Omnilingual starting point for local
-  realtime tests. Larger CTC and LLM models are exposed through model-card
-  plumbing but may exceed typical desktop GPU memory.
+- Omnilingual ASR support is optional and Linux/WSL2 Python 3.11.x-oriented.
+  Native Windows installs are not supported by the upstream dependency stack at
+  this time, and Python 3.12.x cannot resolve the current upstream package.
+- `omniASR_CTC_1B_v2` is the recommended Omnilingual starting point for local
+  realtime tests in this release. Smaller/larger CTC and LLM models are exposed
+  through model-card plumbing but require their own quality and memory checks.

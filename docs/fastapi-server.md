@@ -239,8 +239,8 @@ python example_fastapi_server/server.py \
   --language en
 ```
 
-Meta Omnilingual ASR from Linux or WSL2, using one CTC model lane for both
-realtime and final transcription:
+Meta Omnilingual ASR from Linux or WSL2 with Python 3.11.x, using one CTC
+model lane for both realtime and final transcription:
 
 ```bash
 PYTHONPATH=. python example_fastapi_server/server.py \
@@ -391,8 +391,9 @@ More test details are in [testing.md](testing.md).
 
 ## Deployment Notes
 
-- Use Linux or WSL2 for CUDA-heavy engines such as Parakeet, Omnilingual ASR,
-  Qwen vLLM, and larger Transformers models.
+- Use Linux or WSL2 for CUDA-heavy engines such as Parakeet, Qwen vLLM, and
+  larger Transformers models. Omnilingual ASR currently needs Linux/WSL2 with
+  Python 3.11.x.
 - Install Kroko-ONNX with `RealtimeSTT[kroko-builder]` and
   `stt-install-kroko --build` before selecting `kroko_onnx`. On Windows, use
   Python 3.12 x64 and start Docker Desktop first.

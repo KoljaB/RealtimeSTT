@@ -18,7 +18,7 @@ The compatibility default is `faster_whisper`.
 | CPU Parakeet without NeMo runtime | `sherpa_onnx_parakeet` | Offline CPU INT8 Parakeet through sherpa-onnx. |
 | Kroko/Banafo `.data` streaming models | `kroko_onnx` | Optional Kroko-ONNX runtime with Community or licensed Pro models and realtime streaming previews. |
 | NVIDIA Parakeet on Linux/WSL2 | `parakeet` | Uses NVIDIA NeMo ASR for the Parakeet checkpoint. |
-| Meta Omnilingual ASR on Linux/WSL2 | `omnilingual_asr` | Uses Meta's Omnilingual ASR package; CTC v2 models are the practical realtime path when the installed dependency ships those cards. |
+| Meta Omnilingual ASR on Linux/WSL2 Python 3.11.x | `omnilingual_asr` | Uses Meta's Omnilingual ASR package; native Windows and Python 3.12.x are not practical install targets for the current upstream dependency stack. |
 | Hugging Face speech-language models | `granite_speech`, `qwen3_asr`, `moonshine`, `cohere_transcribe` | Thin adapters around model-family packages and Transformers. |
 
 ## Supported Engine Names
@@ -36,7 +36,7 @@ CLI-style names work where listed.
 | `kroko_onnx`, `kroko`, `banafo_kroko` | Optional Kroko-ONNX backend | [engines/kroko-onnx.md](engines/kroko-onnx.md) |
 | `parakeet`, `nvidia_parakeet` | Experimental NVIDIA NeMo backend | [engines/parakeet-nemo.md](engines/parakeet-nemo.md) |
 | `sherpa_onnx_parakeet`, `sherpa_parakeet`, `parakeet_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
-| `omnilingual_asr`, `omnilingual`, `meta_omnilingual_asr`, `omni_asr` | Experimental Meta Omnilingual ASR backend for Linux/WSL2 | [engines/omnilingual-asr.md](engines/omnilingual-asr.md) |
+| `omnilingual_asr`, `omnilingual`, `meta_omnilingual_asr`, `omni_asr` | Experimental Meta Omnilingual ASR backend for Linux/WSL2 Python 3.11.x | [engines/omnilingual-asr.md](engines/omnilingual-asr.md) |
 | `granite_speech`, `granite` | Experimental Transformers backend | [engines/hf-transformers.md](engines/hf-transformers.md) |
 | `qwen3_asr`, `qwen_asr` | Experimental Qwen ASR backend | [engines/hf-transformers.md](engines/hf-transformers.md) |
 | `cohere_transcribe`, `cohere` | Experimental Transformers backend, requires language | [engines/cohere.md](engines/cohere.md) |
@@ -108,7 +108,7 @@ meaningful for one engine may be ignored or invalid for another.
 | `openai_whisper` | Yes, through `openai-whisper`. | Local model names/paths supported by that package. |
 | `moonshine`, `granite_speech`, `qwen3_asr`, `cohere_transcribe` | Yes, through Hugging Face or the engine package, subject to access. | `download_root` maps to cache options where supported. |
 | `parakeet` NeMo | Yes, through NeMo model loading. | NeMo cache/model options may be passed in `transcription_engine_options`. |
-| `omnilingual_asr` | Yes, through Omnilingual/fairseq2/Hugging Face cache paths in Linux or WSL2. | Pass an Omnilingual model card such as `omniASR_CTC_1B_v2`; RealtimeSTT does not move or delete downloaded assets. Unknown v2 cards are a dependency mismatch, not a signal to fall back to older non-v2 cards. |
+| `omnilingual_asr` | Yes, through Omnilingual/fairseq2/Hugging Face cache paths in Linux or WSL2 with Python 3.11.x. | Pass an Omnilingual model card such as `omniASR_CTC_1B_v2`; RealtimeSTT does not move or delete downloaded assets. Unknown v2 cards are a dependency mismatch, not a signal to fall back to older non-v2 cards. |
 | `sherpa_onnx_*` | No. | Download and extract the sherpa-onnx model bundle, then pass the extracted directory. |
 | `kroko_onnx` | Yes, for known public Community `.data` files when enabled. | Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
 
