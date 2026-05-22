@@ -51,10 +51,9 @@ Available extras include:
 - recommended/default: faster-whisper backend plus fast Silero CPU ONNX VAD
 - all: all PyPI-installable optional backends
 
-The WebRTC VAD and baseline Silero/PyTorch dependencies are still part of the
-core install because AudioToTextRecorder initializes both VAD paths. Install
-the recommended/default or silero-onnx extra for the faster raw CPU ONNX
-Runtime Silero backend.
+WebRTC VAD is installed with the core package. AudioToTextRecorder also
+initializes a Silero VAD path. Install the recommended/default or
+silero-onnx-cpu extra for a self-contained local Silero ONNX Runtime backend.
 
 Meta Omnilingual ASR install note: use Linux or WSL2 with Python 3.11.x.
 Native Windows cannot run the Omnilingual runtime because fairseq2n has no
@@ -65,8 +64,12 @@ releases.
 For live Kroko-ONNX usage, install the builder helper and then build Kroko in
 the same Python environment:
 
-    pip install "realtimestt[kroko-builder]"
+    pip install "realtimestt[kroko-builder,silero-onnx-cpu]"
     stt-install-kroko --build
+
+The silero-onnx-cpu extra is not needed to build Kroko-ONNX itself, but
+recorder-based Kroko smoke tests and live AudioToTextRecorder use need a local
+VAD backend.
 
 On Windows, use Python 3.12 x64 and start Docker Desktop before running the
 builder. Check that Docker's Linux engine is available with:

@@ -39,9 +39,10 @@
 ### Notes
 
 - Install/build Kroko-ONNX separately with
-  `pip install "RealtimeSTT[kroko-builder]"` followed by
+  `pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"` followed by
   `stt-install-kroko --build`, or install a compatible Kroko-ONNX wheel in the
-  same Python environment.
+  same Python environment. The `silero-onnx-cpu` extra provides the local VAD
+  backend used by recorder-based Kroko smoke tests and live microphone use.
 - Licensed Pro models require a Pro-capable Kroko wheel and a key supplied at
   runtime through configuration, CLI, or environment variables. Do not commit
   keys, Pro models, generated logs, local wheels, or local cache contents.

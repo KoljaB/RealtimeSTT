@@ -86,11 +86,30 @@ def check_kroko_runtime():
     except ImportError:
         print(
             "This test requires kroko_onnx in the active Python environment.\n"
+            "Recorder-based Kroko smoke tests also need a local VAD backend.\n"
             "Install it with:\n\n"
-            '  python -m pip install "RealtimeSTT[kroko-builder]"\n'
+            '  python -m pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"\n'
             "  stt-install-kroko --build\n"
         )
         raise SystemExit(1)
+
+
+def check_recorder_vad_runtime():
+    import importlib.util
+
+    if importlib.util.find_spec("silero_vad") is not None:
+        return
+
+    print(
+        "This recorder-based Kroko smoke test needs a local Silero VAD backend.\n"
+        "Install it in the active Python environment with:\n\n"
+        '  python -m pip install "RealtimeSTT[silero-onnx-cpu]"\n'
+        "\n"
+        "For a fresh Kroko recorder environment, install both extras up front:\n\n"
+        '  python -m pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"\n'
+        "  stt-install-kroko --build\n"
+    )
+    raise SystemExit(1)
 
 
 if __name__ == "__main__":
@@ -261,6 +280,7 @@ if __name__ == "__main__":
         packages.append({"import_name": "pyautogui"})
     check_and_install_packages(packages)
     check_kroko_runtime()
+    check_recorder_vad_runtime()
 
     if EXTENDED_LOGGING or args.debug:
         logging.basicConfig(level=logging.DEBUG)

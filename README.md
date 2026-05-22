@@ -27,9 +27,12 @@ Start with the public Community models for local testing, or see Kroko/Banafo's
 commercial model options if you need production licensing and higher-end models.
 
 ```bash
-pip install "RealtimeSTT[kroko-builder]"
+pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"
 stt-install-kroko --build
 ```
+
+The `silero-onnx-cpu` extra gives `AudioToTextRecorder` a local VAD backend for
+recorder-based smoke tests and live microphone use.
 
 See the [Kroko-ONNX engine guide](docs/engines/kroko-onnx.md),
 [Kroko ASR docs](https://docs.kroko.ai/on-premise/), and

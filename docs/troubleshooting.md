@@ -42,7 +42,7 @@ that backend's package:
 | `granite_speech`, `moonshine`, `cohere_transcribe` | `transformers`, `torch` |
 | `qwen3_asr` | `qwen-asr` |
 | `omnilingual_asr` | `RealtimeSTT[omnilingual]` on Linux/WSL2 with Python 3.11.x, plus a compatible PyTorch stack |
-| `kroko_onnx` | `RealtimeSTT[kroko-builder]`, then `stt-install-kroko --build` |
+| `kroko_onnx` | `RealtimeSTT[kroko-builder,silero-onnx-cpu]`, then `stt-install-kroko --build` for recorder-based smoke tests and live microphone use |
 
 ## Audio Device Problems
 

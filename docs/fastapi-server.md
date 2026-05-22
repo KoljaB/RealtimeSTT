@@ -400,9 +400,9 @@ More test details are in [testing.md](testing.md).
 - Use Linux or WSL2 for CUDA-heavy engines such as Parakeet, Qwen vLLM, and
   larger Transformers models. Omnilingual ASR currently needs Linux/WSL2 with
   Python 3.11.x.
-- Install Kroko-ONNX with `RealtimeSTT[kroko-builder]` and
-  `stt-install-kroko --build` before selecting `kroko_onnx`. On Windows, use
-  Python 3.12 x64 and start Docker Desktop first.
+- Install Kroko-ONNX with `RealtimeSTT[kroko-builder,silero-onnx-cpu]` and
+  `stt-install-kroko --build` before selecting `kroko_onnx` for recorder-based
+  server use. On Windows, use Python 3.12 x64 and start Docker Desktop first.
 - Keep model caches on persistent storage so restarts do not redownload models.
 - Put the server behind a reverse proxy when exposing it beyond localhost.
 - Size `--max-sessions`, `--max-active-speakers`, queue depths, and model lanes

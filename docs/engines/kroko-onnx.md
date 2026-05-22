@@ -20,9 +20,14 @@ Kroko-ONNX is not installed by default. RealtimeSTT exposes a small builder
 helper:
 
 ```bash
-python -m pip install "RealtimeSTT[kroko-builder]"
+python -m pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"
 stt-install-kroko --build
 ```
+
+The `kroko-builder` extra builds and installs Kroko-ONNX. The
+`silero-onnx-cpu` extra gives `AudioToTextRecorder` a local VAD backend for the
+standalone recorder smoke test and live microphone use. If you only need to
+build the Kroko-ONNX wheel, `kroko-builder` alone is enough.
 
 On Windows, start Docker Desktop before running the build command. The Docker
 Desktop Linux engine must be available, not just the Docker CLI. You can verify
@@ -233,6 +238,10 @@ run its init-only mode:
 python -m pip install rich
 python .\realtimestt_kroko_test.py --model "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data" --realtime-model "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data" --provider cpu --no-keyboard --init-only
 ```
+
+This script constructs `AudioToTextRecorder`, so it needs both Kroko-ONNX and a
+working recorder VAD backend in the same environment. The install command above
+includes `silero-onnx-cpu` for that reason.
 
 `REALTIMESTT_KROKO_ONNX_KEY`, `KROKO_ONNX_KEY`, or `KROKO_KEY` may be used for
 licensed Pro-only checks. Keep those values out of committed files, shell logs,

@@ -15,10 +15,11 @@ Core package only, without a transcription engine or wake-word backend:
 python -m pip install RealtimeSTT
 ```
 
-The core install includes microphone/audio support, WebRTC VAD, Silero VAD,
-websocket client/server dependencies, and shared audio utilities. It does not
-install `faster-whisper`, Porcupine, or OpenWakeWord unless you request those
-extras.
+The core install includes microphone/audio support, WebRTC VAD, recorder VAD
+logic, websocket client/server dependencies, and shared audio utilities. For a
+self-contained local Silero VAD backend, install `recommended`, `default`, or
+`silero-onnx-cpu`. It does not install `faster-whisper`, Porcupine, or
+OpenWakeWord unless you request those extras.
 
 ## Python Environment
 
@@ -72,7 +73,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `omnilingual` / `omnilingual-asr` / `meta-omnilingual-asr` | `omnilingual-asr>=0.2.0`, matching `torch==2.8.0` / `torchaudio==2.8.0` on Linux/WSL2 Python 3.11.x | Meta Omnilingual ASR backend. Native Windows installs skip the actual Omnilingual runtime by package marker, and Python 3.12.x is not a practical install target until upstream dependency metadata changes. |
 | `qwen` / `qwen3-asr` | `qwen-asr` | Qwen ASR backend. |
 | `qwen-vllm` | `qwen-asr[vllm]` | Qwen ASR with vLLM support. |
-| `kroko-builder` | RealtimeSTT builder helper, `huggingface_hub` | Builds/installs Kroko-ONNX from upstream and downloads public Community models. On Windows, the builder currently requires CPython 3.12 x64. |
+| `kroko-builder` | RealtimeSTT builder helper, `huggingface_hub` | Builds/installs Kroko-ONNX from upstream and downloads public Community models. On Windows, the builder currently requires CPython 3.12 x64. For `AudioToTextRecorder` smoke tests or live microphone use, combine it with `silero-onnx-cpu`. |
 | `porcupine` / `pvporcupine` / `pvp` | `pvporcupine` | Porcupine wake-word backend. |
 | `openwakeword` / `oww` | `openwakeword` | OpenWakeWord wake-word backend. |
 | `wakewords` / `wake-words` | `pvporcupine`, `openwakeword` | Both wake-word backends. |
@@ -83,9 +84,13 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 `stt-install-kroko`, which builds and installs Kroko-ONNX from upstream:
 
 ```bash
-python -m pip install "RealtimeSTT[kroko-builder]"
+python -m pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"
 stt-install-kroko --build
 ```
+
+The `silero-onnx-cpu` extra is not needed to build Kroko-ONNX itself, but
+recorder-based Kroko smoke tests and live `AudioToTextRecorder` usage need a
+local VAD backend.
 
 On Windows, use Python 3.12 x64 and start Docker Desktop first. The Docker
 Desktop Linux engine must be running before the builder starts:
@@ -119,10 +124,10 @@ See [engines/kroko-onnx.md](engines/kroko-onnx.md).
 
 ## VAD Dependencies
 
-WebRTC VAD and Silero VAD are still core dependencies. The recorder currently
-initializes both `webrtcvad` and the Silero/PyTorch path, so they cannot be
-split into independent extras without changing the recorder's VAD selection
-logic.
+WebRTC VAD is installed with the core package. The recorder also initializes a
+Silero VAD path. If you want a self-contained local Silero backend without
+depending on Torch Hub caches or downloads at runtime, install `recommended`,
+`default`, or `silero-onnx-cpu`.
 
 Wake-word dependencies are optional. If you do not use wake words, install no
 wake-word extra. If you set `wake_words` without a `wakeword_backend`,
@@ -208,7 +213,7 @@ Install only the engine stack you plan to use:
 | `granite_speech` | `python -m pip install "RealtimeSTT[granite]"` | Downloads Hugging Face model files automatically. |
 | `qwen3_asr` | `python -m pip install -U "RealtimeSTT[qwen]"` | Downloads Qwen model files through the Qwen ASR package. |
 | `cohere_transcribe` | `python -m pip install "RealtimeSTT[cohere]"` | Downloads Hugging Face model files; gated model access may be required. |
-| `kroko_onnx` | `python -m pip install "RealtimeSTT[kroko-builder]"`, then `stt-install-kroko --build` | Public Community models can auto-download or be downloaded with `huggingface_hub`; Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
+| `kroko_onnx` | `python -m pip install "RealtimeSTT[kroko-builder,silero-onnx-cpu]"`, then `stt-install-kroko --build` | Public Community models can auto-download or be downloaded with `huggingface_hub`; Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. `silero-onnx-cpu` provides the local VAD backend needed by recorder-based smoke tests and live microphone use. |
 
 Per-engine setup lives in [transcription-engines.md](transcription-engines.md)
 and the `docs/engines/` pages.
