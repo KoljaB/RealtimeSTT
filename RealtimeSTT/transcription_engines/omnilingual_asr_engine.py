@@ -10,25 +10,38 @@ from .base import (
 )
 
 
-DEFAULT_OMNILINGUAL_ASR_MODEL = "omniASR_CTC_300M_v2"
+DEFAULT_OMNILINGUAL_ASR_MODEL = "omniASR_CTC_1B_v2"
 
 KNOWN_OMNILINGUAL_ASR_MODELS = (
-    "omniASR_CTC_300M_v2",
-    "omniASR_CTC_1B_v2",
-    "omniASR_LLM_1B_v2",
+    "omniASR_CTC_300M",
+    "omniASR_CTC_1B",
     "omniASR_CTC_3B",
     "omniASR_CTC_7B",
+    "omniASR_LLM_300M",
+    "omniASR_LLM_1B",
     "omniASR_LLM_3B",
     "omniASR_LLM_7B",
     "omniASR_LLM_7B_ZS",
-)
-
-OPTIONAL_OMNILINGUAL_ASR_V2_MODEL_NAMES = (
+    "omniASR_CTC_300M_v2",
+    "omniASR_CTC_1B_v2",
     "omniASR_CTC_3B_v2",
     "omniASR_CTC_7B_v2",
+    "omniASR_LLM_300M_v2",
+    "omniASR_LLM_1B_v2",
     "omniASR_LLM_3B_v2",
     "omniASR_LLM_7B_v2",
     "omniASR_LLM_7B_ZS_v2",
+    "omniASR_LLM_Unlimited_300M_v2",
+    "omniASR_LLM_Unlimited_1B_v2",
+    "omniASR_LLM_Unlimited_3B_v2",
+    "omniASR_LLM_Unlimited_7B_v2",
+)
+
+OPTIONAL_OMNILINGUAL_ASR_V2_MODEL_NAMES = (
+    "omniASR_LLM_Unlimited_300M_v2",
+    "omniASR_LLM_Unlimited_1B_v2",
+    "omniASR_LLM_Unlimited_3B_v2",
+    "omniASR_LLM_Unlimited_7B_v2",
 )
 
 _WHISPER_DEFAULT_MODEL_NAMES = {"tiny", "tiny.en"}
@@ -58,7 +71,10 @@ def _dependency_error_message():
         "The 'omnilingual_asr' transcription engine requires Meta's "
         "'omnilingual-asr' package, PyTorch, fairseq2, and fairseq2n. "
         "Install and run it from Linux or WSL2; native Windows installs "
-        "currently fail because fairseq2n has no Windows wheel."
+        "skip the Omnilingual runtime because fairseq2n has no Windows "
+        "wheel. If importing omnilingual_asr fails with a CUDA shared-library "
+        "error such as 'libcudart.so', install matching torch and torchaudio "
+        "builds in the same environment."
     )
 
 
@@ -137,6 +153,21 @@ def _normalize_language_code(language, aliases):
     return aliases.get(language.lower().replace("-", "_"), language)
 
 
+def _is_model_not_known_error(exc):
+    return exc.__class__.__name__ == "ModelNotKnownError"
+
+
+def _model_not_known_error_message(model_card):
+    return (
+        "Meta Omnilingual ASR does not know model card '%s'. RealtimeSTT "
+        "keeps the requested model card instead of silently falling back to "
+        "an older non-v2 card. Install an omnilingual-asr release that ships "
+        "this card. If you requested a v2 card such as '%s', use "
+        "omnilingual-asr>=0.2.0."
+        % (model_card, DEFAULT_OMNILINGUAL_ASR_MODEL)
+    )
+
+
 class OmnilingualASRBackend:
     def __init__(
         self,
@@ -173,7 +204,7 @@ class OmnilingualASRBackend:
     def _load_pipeline_cls():
         try:
             module = import_module("omnilingual_asr.models.inference.pipeline")
-        except ImportError as exc:
+        except (ImportError, OSError) as exc:
             raise TranscriptionEngineError(_dependency_error_message()) from exc
         return module.ASRInferencePipeline
 
@@ -181,7 +212,7 @@ class OmnilingualASRBackend:
     def _load_torch():
         try:
             return import_module("torch")
-        except ImportError as exc:
+        except (ImportError, OSError) as exc:
             raise TranscriptionEngineError(_dependency_error_message()) from exc
 
     @staticmethod
@@ -242,6 +273,14 @@ class OmnilingualASRBackend:
             self.pipeline = pipeline_cls(model_card=self.model_card, **options)
         except ImportError as exc:
             raise TranscriptionEngineError(_dependency_error_message()) from exc
+        except OSError as exc:
+            raise TranscriptionEngineError(_dependency_error_message()) from exc
+        except Exception as exc:
+            if _is_model_not_known_error(exc):
+                raise TranscriptionEngineError(
+                    _model_not_known_error_message(self.model_card)
+                ) from exc
+            raise
         return self.pipeline
 
     def _numpy(self):

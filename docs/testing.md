@@ -152,8 +152,15 @@ python -m unittest -v tests.unit.test_omnilingual_asr_engine
 ```
 
 These tests use fake Omnilingual runtime objects and do not install or import
-Meta's Omnilingual ASR package. Real model smoke tests should run from Linux or
-WSL2; see [engines/omnilingual-asr.md](engines/omnilingual-asr.md).
+Meta's Omnilingual ASR package. This is a source-checkout command; it is not
+expected to work from a clean pip install unless the source tree and tests are
+present. For a pip-installed environment, use the file-based smoke test in
+[engines/omnilingual-asr.md](engines/omnilingual-asr.md).
+
+Real model smoke tests should run from Linux or WSL2 with matching `torch` and
+`torchaudio` builds. Start with `omniASR_CTC_1B_v2`; treat unknown `_v2` model
+cards as an Omnilingual dependency mismatch instead of falling back to older
+non-v2 cards.
 
 ## FastAPI Multi-User Load Test
 

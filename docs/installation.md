@@ -61,7 +61,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `transformers` | `transformers` | Shared dependency for Transformers-based ASR engines. |
 | `moonshine`, `granite`, `cohere` | `transformers` | Aliases for the corresponding Transformers engines. |
 | `parakeet` / `nvidia-parakeet` | `nemo_toolkit[asr]` | NVIDIA NeMo Parakeet backend, best on Linux or WSL2. |
-| `omnilingual` / `omnilingual-asr` / `meta-omnilingual-asr` | `omnilingual-asr` | Meta Omnilingual ASR backend for Linux or WSL2. |
+| `omnilingual` / `omnilingual-asr` / `meta-omnilingual-asr` | `omnilingual-asr>=0.2.0`, matching `torch==2.8.0` / `torchaudio==2.8.0` on Linux/WSL2 | Meta Omnilingual ASR backend. Native Windows installs skip the actual Omnilingual runtime by package marker. |
 | `qwen` / `qwen3-asr` | `qwen-asr` | Qwen ASR backend. |
 | `qwen-vllm` | `qwen-asr[vllm]` | Qwen ASR with vLLM support. |
 | `kroko-builder` | RealtimeSTT builder helper, `huggingface_hub` | Builds/installs Kroko-ONNX from upstream and downloads public Community models. |
@@ -158,6 +158,28 @@ If a dependency needs a compiler on your machine, install the relevant wheel
 package first when one is available. `webrtcvad-wheels` is used by the project
 to avoid the older source-only WebRTC VAD install path.
 
+Meta Omnilingual ASR is not available for native Windows inference. The
+`omnilingual` extra is guarded by a non-Windows package marker because
+`fairseq2n`, one of Meta Omnilingual ASR's dependencies, does not provide a
+Windows wheel. Use Linux or WSL2 when selecting `omnilingual_asr`.
+
+### TestPyPI Release Candidates
+
+When validating a RealtimeSTT release candidate from TestPyPI, use PyPI as a
+fallback for third-party dependencies. TestPyPI does not mirror dependencies
+such as `PyAudio`, `torch`, `torchaudio`, `fairseq2`, `fairseq2n`, or
+`omnilingual-asr`.
+
+```bash
+python -m pip install --no-cache-dir \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple/ \
+  "RealtimeSTT[omnilingual]==1.0.1.post1"
+```
+
+The RealtimeSTT version in that command is fetched from TestPyPI. The fallback
+index lets pip resolve normal third-party dependencies from PyPI.
+
 ## CUDA Notes
 
 RealtimeSTT can run on CPU with small models, but CUDA is strongly preferred
@@ -188,7 +210,7 @@ Install only the engine stack you plan to use:
 | `moonshine` | `python -m pip install "RealtimeSTT[moonshine]"` | Downloads Hugging Face model files automatically. English-only in this adapter. |
 | `sherpa_onnx_*` | `python -m pip install "RealtimeSTT[sherpa-onnx]"` | Model bundles must be downloaded and extracted manually. |
 | `parakeet` | `python -m pip install -U "RealtimeSTT[parakeet]"` | NeMo downloads from the configured model id/cache. Best on Linux or WSL2. |
-| [`omnilingual_asr`](engines/omnilingual-asr.md) | `python -m pip install "RealtimeSTT[omnilingual]"` | Meta Omnilingual ASR downloads through its Linux/WSL fairseq2 cache. Native Windows installs are not supported because `fairseq2n` has no Windows wheel. The `omnilingual-asr` and `meta-omnilingual-asr` extras are equivalent aliases. |
+| [`omnilingual_asr`](engines/omnilingual-asr.md) | `python -m pip install "RealtimeSTT[omnilingual]"` | Meta Omnilingual ASR downloads through its Linux/WSL fairseq2 cache. The extra requires `omnilingual-asr>=0.2.0` for v2 model cards and constrains matching `torch`/`torchaudio` builds. Native Windows installs are not supported because `fairseq2n` has no Windows wheel. |
 | `granite_speech` | `python -m pip install "RealtimeSTT[granite]"` | Downloads Hugging Face model files automatically. |
 | `qwen3_asr` | `python -m pip install -U "RealtimeSTT[qwen]"` | Downloads Qwen model files through the Qwen ASR package. |
 | `cohere_transcribe` | `python -m pip install "RealtimeSTT[cohere]"` | Downloads Hugging Face model files; gated model access may be required. |
@@ -196,6 +218,32 @@ Install only the engine stack you plan to use:
 
 Per-engine setup lives in [transcription-engines.md](transcription-engines.md)
 and the `docs/engines/` pages.
+
+## Meta Omnilingual ASR Notes
+
+Use a Linux or WSL2 virtual environment with Python 3.11 or 3.12:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip setuptools wheel
+python -m pip install "RealtimeSTT[omnilingual]"
+```
+
+If you install a CUDA-enabled PyTorch stack separately, make sure `torch` and
+`torchaudio` come from matching builds. A mismatched pair can pass
+`python -m pip check` but fail later while importing `omnilingual_asr`, for
+example with a missing `libcudart.so` shared-library error.
+
+For release-candidate validation, the root
+`requirements-omnilingual-wsl-known-good.txt` file keeps RealtimeSTT on
+TestPyPI, uses PyPI as the dependency fallback, and pins a matching
+`torch==2.8.0` / `torchaudio==2.8.0` pair.
+
+The default Omnilingual model is `omniASR_CTC_1B_v2`. If the installed
+`omnilingual-asr` package does not know that card, treat it as a dependency
+version mismatch. Do not silently fall back to older non-v2 cards unless they
+pass your own language and quality smoke tests.
 
 ## Wake Word Dependencies
 

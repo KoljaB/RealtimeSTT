@@ -247,19 +247,22 @@ PYTHONPATH=. python example_fastapi_server/server.py \
   --host 0.0.0.0 \
   --port 8010 \
   --engine omnilingual_asr \
-  --model omniASR_CTC_300M_v2 \
+  --model omniASR_CTC_1B_v2 \
   --realtime-engine omnilingual_asr \
-  --realtime-model omniASR_CTC_300M_v2 \
+  --realtime-model omniASR_CTC_1B_v2 \
   --use-main-model-for-realtime \
   --device cuda \
   --compute-type float16 \
-  --language eng_Latn \
+  --realtime-processing-pause 0.05 \
   --engine-options '{"batch_size":1,"sample_rate":16000}'
 ```
 
 Open `http://localhost:8010` from a Windows browser when WSL2 localhost
-forwarding is active. After the 300M model works, try `omniASR_CTC_1B_v2` if
-your GPU has enough VRAM.
+forwarding is active.
+
+This recipe targets `example_fastapi_server/server.py` from a source checkout,
+not the installed `stt-server` console script. Check `stt-server --help`
+separately for the installed CLI's supported options.
 
 Wake word mode with Porcupine:
 

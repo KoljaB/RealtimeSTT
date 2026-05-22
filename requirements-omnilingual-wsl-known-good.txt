@@ -1,0 +1,24 @@
+# Known-good clean-room install constraints for RealtimeSTT release candidates
+# with Meta Omnilingual ASR on Linux/WSL2.
+#
+# Usage:
+#   python -m pip install --no-cache-dir -r requirements-omnilingual-wsl-known-good.txt
+#
+# RealtimeSTT 1.0.1.post1 is intentionally fetched from TestPyPI. PyPI is
+# required as a fallback because TestPyPI does not mirror dependencies such as
+# PyAudio, torch, torchaudio, fairseq2, fairseq2n, and omnilingual-asr.
+
+--index-url https://test.pypi.org/simple/
+--extra-index-url https://pypi.org/simple/
+
+RealtimeSTT[omnilingual]==1.0.1.post1
+
+# Keep PyTorch and torchaudio on the same release. An unconstrained WSL solve
+# selected torch 2.8.0 with torchaudio 2.11.0; pip check passed, but the
+# Omnilingual import failed later with a missing libcudart.so shared library.
+torch==2.8.0
+torchaudio==2.8.0
+
+# v2 model cards such as omniASR_CTC_1B_v2 require a public Omnilingual ASR
+# package that ships those cards. Version 0.1.0 only knew older non-v2 cards.
+omnilingual-asr>=0.2.0

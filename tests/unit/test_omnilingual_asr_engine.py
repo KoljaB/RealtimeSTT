@@ -86,6 +86,15 @@ class FakeBackend:
         return "eng_Latn" if language == "en" else language
 
 
+class ModelNotKnownError(Exception):
+    pass
+
+
+class UnknownModelPipeline:
+    def __init__(self, **kwargs):
+        raise ModelNotKnownError(kwargs.get("model_card"))
+
+
 class OmnilingualASREngineTests(unittest.TestCase):
     def tearDown(self):
         FakePipeline.instances.clear()
@@ -100,6 +109,9 @@ class OmnilingualASREngineTests(unittest.TestCase):
             "omni_asr",
         ):
             self.assertIn(name, engines)
+
+    def test_default_model_prefers_validated_public_v2_card(self):
+        self.assertEqual(DEFAULT_OMNILINGUAL_ASR_MODEL, "omniASR_CTC_1B_v2")
 
     def test_factory_creates_omnilingual_engine_with_mocked_backend(self):
         for engine_name in (
@@ -246,6 +258,36 @@ class OmnilingualASREngineTests(unittest.TestCase):
             backend = OmnilingualASRBackend(config)
             with self.assertRaisesRegex(TranscriptionEngineError, "WSL2"):
                 backend.transcribe(AudioVector([0.0]))
+
+    def test_pipeline_import_oserror_reports_torch_torchaudio_guidance(self):
+        config = TranscriptionEngineConfig(model="omniASR_CTC_300M_v2")
+
+        with patch(
+            "RealtimeSTT.transcription_engines.omnilingual_asr_engine.import_module",
+            side_effect=OSError("libcudart.so.13"),
+        ):
+            backend = OmnilingualASRBackend(config, torch_module=FakeTorch)
+            with self.assertRaisesRegex(
+                TranscriptionEngineError,
+                "matching torch and torchaudio",
+            ):
+                backend.transcribe(AudioVector([0.0]))
+
+    def test_model_not_known_reports_dependency_blocker_without_fallback(self):
+        config = TranscriptionEngineConfig(model="omniASR_CTC_1B_v2")
+        backend = OmnilingualASRBackend(
+            config,
+            pipeline_cls=UnknownModelPipeline,
+            torch_module=FakeTorch,
+        )
+
+        with self.assertRaises(TranscriptionEngineError) as caught:
+            backend.transcribe({"waveform": FakeArray([0.0]), "sample_rate": 16000})
+
+        message = str(caught.exception)
+        self.assertIn("omniASR_CTC_1B_v2", message)
+        self.assertIn("instead of silently falling back", message)
+        self.assertIn("omnilingual-asr>=0.2.0", message)
 
 
 if __name__ == "__main__":
