@@ -25,10 +25,13 @@ extras.
 Use Python 3.11 or newer. The current pinned core dependency set includes
 packages whose published wheels require Python 3.11+.
 
-The Meta Omnilingual ASR extra is narrower than the core package: use Linux or
-WSL2 with Python 3.11.x. Native Windows cannot run the Omnilingual runtime, and
-Python 3.12.x currently cannot resolve the upstream `omnilingual-asr>=0.2.0`
-package from PyPI because its metadata excludes normal 3.12 patch releases.
+Some optional engines have narrower platform targets than the core package:
+
+| Feature | Practical install target |
+| --- | --- |
+| Core RealtimeSTT | Python 3.11 or newer. |
+| Meta Omnilingual ASR | Linux or WSL2 with Python 3.11.x. Native Windows cannot run the Omnilingual runtime, and Python 3.12.x currently cannot resolve the upstream `omnilingual-asr>=0.2.0` package from PyPI because its metadata excludes normal 3.12 patch releases. |
+| Kroko-ONNX Windows builder | Windows x64 with CPython 3.12.x for `stt-install-kroko --build`. The core package may install on Python 3.11+, but the current Kroko Windows wheel builder does not. |
 
 Use a virtual environment when possible:
 
@@ -69,7 +72,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `omnilingual` / `omnilingual-asr` / `meta-omnilingual-asr` | `omnilingual-asr>=0.2.0`, matching `torch==2.8.0` / `torchaudio==2.8.0` on Linux/WSL2 Python 3.11.x | Meta Omnilingual ASR backend. Native Windows installs skip the actual Omnilingual runtime by package marker, and Python 3.12.x is not a practical install target until upstream dependency metadata changes. |
 | `qwen` / `qwen3-asr` | `qwen-asr` | Qwen ASR backend. |
 | `qwen-vllm` | `qwen-asr[vllm]` | Qwen ASR with vLLM support. |
-| `kroko-builder` | RealtimeSTT builder helper, `huggingface_hub` | Builds/installs Kroko-ONNX from upstream and downloads public Community models. |
+| `kroko-builder` | RealtimeSTT builder helper, `huggingface_hub` | Builds/installs Kroko-ONNX from upstream and downloads public Community models. On Windows, the builder currently requires CPython 3.12 x64. |
 | `porcupine` / `pvporcupine` / `pvp` | `pvporcupine` | Porcupine wake-word backend. |
 | `openwakeword` / `oww` | `openwakeword` | OpenWakeWord wake-word backend. |
 | `wakewords` / `wake-words` | `pvporcupine`, `openwakeword` | Both wake-word backends. |

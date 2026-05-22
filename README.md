@@ -173,12 +173,18 @@ Engine-specific references:
 
 ## Server Example
 
-The browser server lives in `example_fastapi_server`:
+The browser FastAPI reference server lives in `example_fastapi_server` and is
+intended for source checkouts. It is not installed by the PyPI wheel; keeping it
+source-only keeps the wheel lean and avoids adding web-server dependencies for
+users who only need the recorder/API library.
 
 ```bash
 python -m pip install -r example_fastapi_server/requirements.txt
 python example_fastapi_server/server.py --host 0.0.0.0 --port 8010
 ```
+
+For pip-only installs, use the Python recorder/API examples instead. If you
+want the FastAPI reference server, clone the repository or install from Git.
 
 Open `http://localhost:8010`. See [docs/fastapi-server.md](docs/fastapi-server.md)
 for engine recipes, websocket protocol details, health checks, and metrics.

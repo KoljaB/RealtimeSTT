@@ -26,6 +26,7 @@ the default fast unit test suite.
 | `tests/simple_test.py` | Minimal demo | Smallest microphone transcription smoke script. |
 | `tests/realtimestt_test.py` | Full interactive demo | Rich console demo with realtime transcription, final text, and optional keyboard typing. |
 | `tests/realtimestt_test_whispercpp.py` | Engine demo | whisper.cpp version of the interactive demo with CPU profiles. |
+| `tests/realtimestt_omnilingual_test.py` | Engine smoke/demo | Linux/WSL2 Omnilingual ASR script with deterministic file smoke, init-only check, and interactive microphone mode. |
 | `tests/feed_audio.py` | External-audio demo | Opens a PyAudio stream manually and feeds chunks through `feed_audio()` with `use_microphone=False`. |
 | `tests/openwakeword_test.py` | Wake word demo | OpenWakeWord demo using local sample wake word models in the `tests/` folder. |
 | `tests/realtime_loop_test.py` | Realtime demo | Exercises realtime transcription in a loop. |

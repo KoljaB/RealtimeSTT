@@ -132,40 +132,34 @@ can be supplied through `transcription_engine_options["language_aliases"]`.
 ## File Smoke Test
 
 A pip-installed environment can test the engine without a source checkout by
-constructing the engine directly and passing a short WAV file:
-
-```python
-from RealtimeSTT.transcription_engines.base import TranscriptionEngineConfig
-from RealtimeSTT.transcription_engines.factory import create_transcription_engine
-
-audio = "path/to/short-english.wav"
-config = TranscriptionEngineConfig(
-    model="omniASR_CTC_1B_v2",
-    device="cuda",
-    compute_type="float16",
-    engine_options={"batch_size": 1, "sample_rate": 16000},
-)
-
-engine = create_transcription_engine("omnilingual_asr", config)
-result = engine.transcribe(audio, language="en")
-print(result.text)
-```
-
-Use a short file, ideally under 40 seconds. If the expected English text is not
-recognizable with `omniASR_CTC_1B_v2`, treat the install as a runtime/model
-blocker before documenting or shipping a release recommendation.
-
-To keep model downloads isolated during testing, set cache-related environment
-variables before running the smoke:
+downloading the standalone Omnilingual smoke script. Run it from Linux or WSL2
+with Python 3.11.x:
 
 ```bash
-HOME="$PWD/.home-omnilingual-smoke" \
-XDG_CACHE_HOME="$PWD/.home-omnilingual-smoke/.cache" \
-python smoke_omnilingual.py
+curl -L https://raw.githubusercontent.com/KoljaB/RealtimeSTT/release/v1.0.1/tests/realtimestt_omnilingual_test.py -o realtimestt_omnilingual_test.py
+python realtimestt_omnilingual_test.py --file-smoke --device cuda --cache-home .home-omnilingual-smoke
+```
+
+The script downloads the small public-domain LJ Speech fixture
+`tests/unit/audio/LJ001-0002.wav` from the release branch and expects the
+recognized text to contain `in being`. If that text is not recognizable with
+`omniASR_CTC_1B_v2`, treat the install as a runtime/model blocker before
+documenting or shipping a release recommendation.
+
+From a source checkout, run the same script directly:
+
+```bash
+python tests/realtimestt_omnilingual_test.py --file-smoke --device cuda
 ```
 
 Omnilingual model assets are large. The 1B-family smoke can download several
 GiB of model/cache files.
+
+For an interactive microphone check after the file smoke passes:
+
+```bash
+python realtimestt_omnilingual_test.py --microphone --device cuda
+```
 
 ## Model Cache Behavior
 
@@ -225,7 +219,11 @@ validate VRAM headroom before increasing model size.
 ## FastAPI Recipe
 
 Run the FastAPI server from a source checkout in WSL2/Linux when using
-Omnilingual:
+Omnilingual. The `example_fastapi_server` reference app is not installed by the
+PyPI wheel; keeping it source-only keeps the wheel lean and avoids adding
+web-server dependencies for users who only need the recorder/API library. For
+pip-only installs, use the Python recorder/API smoke path above instead. If you
+want the FastAPI reference server, clone the repository or install from Git.
 
 ```bash
 PYTHONPATH=. python example_fastapi_server/server.py \
@@ -246,6 +244,9 @@ Open `http://localhost:8010/` from a Windows browser. WSL2 forwards localhost
 for the default setup; if your WSL networking is customized, use the WSL host
 IP instead.
 
+For a browser on another device, connect to the Windows host's LAN address and
+make sure the firewall and WSL networking allow the selected port.
+
 This recipe targets `example_fastapi_server/server.py`, not the installed
 `stt-server` console script. Check `stt-server --help` separately for the
 installed CLI's supported options.
@@ -263,7 +264,14 @@ That command is not expected to work from a clean pip install unless the source
 tree and tests are present.
 
 Real model smoke tests should run inside WSL2/Linux with the Omnilingual
-runtime installed. Start with `omniASR_CTC_1B_v2`.
+runtime installed. Pip-only users can download the standalone script:
+
+```bash
+curl -L https://raw.githubusercontent.com/KoljaB/RealtimeSTT/release/v1.0.1/tests/realtimestt_omnilingual_test.py -o realtimestt_omnilingual_test.py
+python realtimestt_omnilingual_test.py --file-smoke --device cuda
+```
+
+Start with `omniASR_CTC_1B_v2`.
 
 ## Troubleshooting
 

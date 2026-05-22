@@ -27,10 +27,19 @@ class KrokoInstallError(RuntimeError):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="stt-install-kroko",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Build and install Kroko-ONNX for the active Python environment. "
             "Windows builds a wheel with Kroko's Docker workflow; Linux installs "
             "from the upstream source checkout."
+        ),
+        epilog=(
+            "Platform note:\n"
+            "  RealtimeSTT core supports Python 3.11+.\n"
+            "  On Windows, stt-install-kroko --build currently requires "
+            "CPython 3.12 x64.\n"
+            "  Use the same Python 3.12 x64 environment for the builder and "
+            "Kroko runtime."
         ),
     )
     parser.add_argument(
@@ -445,13 +454,26 @@ def prepare_windows_checkout(repo_dir):
 def ensure_windows_host():
     if sys.version_info[:2] != (3, 12):
         raise KrokoInstallError(
-            "Kroko's current Windows wheel build targets CPython 3.12. "
-            "Run this command from a Python 3.12 x64 environment."
+            "Kroko's current Windows wheel build targets CPython 3.12 x64.\n"
+            "Your active Python is {0}.{1}.{2} ({3}-bit).\n"
+            "RealtimeSTT core supports Python 3.11+, but this Kroko Windows "
+            "builder path does not.\n"
+            "Create and activate a Python 3.12 x64 environment, install "
+            "RealtimeSTT[kroko-builder] there, then rerun:\n"
+            "    stt-install-kroko --build".format(
+                sys.version_info.major,
+                sys.version_info.minor,
+                sys.version_info.micro,
+                64 if sys.maxsize > 2 ** 32 else 32,
+            )
         )
     if sys.maxsize <= 2 ** 32:
         raise KrokoInstallError(
-            "Kroko's current Windows wheel build targets 64-bit Python. "
-            "Run this command from a Python 3.12 x64 environment."
+            "Kroko's current Windows wheel build targets CPython 3.12 x64.\n"
+            "Your active Python is 32-bit.\n"
+            "Create and activate a 64-bit Python 3.12 environment, install "
+            "RealtimeSTT[kroko-builder] there, then rerun:\n"
+            "    stt-install-kroko --build"
         )
     machine = platform.machine().lower()
     if machine not in ("amd64", "x86_64"):

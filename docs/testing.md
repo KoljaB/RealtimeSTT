@@ -162,6 +162,15 @@ matching `torch` and `torchaudio` builds. Start with `omniASR_CTC_1B_v2`;
 treat unknown `_v2` model cards as an Omnilingual dependency mismatch instead
 of falling back to older non-v2 cards.
 
+From a source checkout:
+
+```bash
+python tests/realtimestt_omnilingual_test.py --file-smoke --device cuda
+```
+
+From a pip install, download the standalone script from the matching release
+branch as shown in [engines/omnilingual-asr.md](engines/omnilingual-asr.md).
+
 ## FastAPI Multi-User Load Test
 
 The FastAPI browser server has fast fake-scheduler tests for session isolation,

@@ -222,11 +222,14 @@ python -m unittest -v tests.unit.test_kroko_onnx_engine.KrokoOnnxGoldenTranscrip
 ```
 
 Pip-only users usually do not have the repository's `tests.unit` package. For a
-standalone install smoke test, download the public Kroko test script and run its
-init-only mode:
+standalone install smoke test, use the Kroko test script from the same branch or
+tag as the docs you are reading:
+[tests/realtimestt_kroko_test.py](../../tests/realtimestt_kroko_test.py).
+
+Save that file as `realtimestt_kroko_test.py` in your current directory, then
+run its init-only mode:
 
 ```powershell
-curl.exe -L https://raw.githubusercontent.com/KoljaB/RealtimeSTT/master/tests/realtimestt_kroko_test.py -o realtimestt_kroko_test.py
 python -m pip install rich
 python .\realtimestt_kroko_test.py --model "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data" --realtime-model "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data" --provider cpu --no-keyboard --init-only
 ```
