@@ -58,7 +58,11 @@ def parse_args(argv=None):
         "--work-dir",
         type=Path,
         default=None,
-        help="Directory used for the Kroko-ONNX checkout and build artifacts.",
+        help=(
+            "Directory used for the Kroko-ONNX checkout and build artifacts. "
+            "If omitted and the default cache is not writable, a project-local "
+            "kroko-builder-work directory is used."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -115,6 +119,57 @@ def default_work_dir():
     return Path(tempfile.gettempdir()) / "realtimestt-kroko-builder"
 
 
+def resolve_work_dir(args):
+    if args.work_dir is not None:
+        return args.work_dir.expanduser().resolve()
+
+    work_dir = default_work_dir().expanduser().resolve()
+    try:
+        ensure_work_dir_writable(work_dir)
+        return work_dir
+    except KrokoInstallError as exc:
+        fallback = (Path.cwd() / "kroko-builder-work").resolve()
+        print(
+            "Default Kroko builder cache is not writable; using project-local "
+            "work directory instead:\n"
+            "    {0}\n"
+            "Use --work-dir to choose a different location.\n"
+            "Original error: {1}".format(fallback, exc),
+            file=sys.stderr,
+        )
+        ensure_work_dir_writable(fallback)
+        return fallback
+
+
+def ensure_work_dir_writable(work_dir):
+    try:
+        work_dir.mkdir(parents=True, exist_ok=True)
+        probe = work_dir / ".realtimestt-kroko-write-test"
+        with probe.open("w", encoding="utf-8") as handle:
+            handle.write("ok")
+        probe.unlink()
+    except OSError as exc:
+        raise KrokoInstallError(
+            "Kroko builder work directory is not writable: {0}\n"
+            "Choose a writable directory with:\n"
+            "    stt-install-kroko --build --work-dir .\\kroko-builder-work\n"
+            "Original error: {1}".format(work_dir, exc)
+        )
+
+
+def preflight_build(args):
+    ensure_program("git", "Git is required to download Kroko-ONNX.")
+    work_dir = resolve_work_dir(args)
+    ensure_work_dir_writable(work_dir)
+
+    if os.name == "nt":
+        ensure_windows_host()
+    elif sys.platform.startswith("linux"):
+        ensure_program("cmake", "CMake is required to build Kroko-ONNX from source on Linux.")
+
+    return work_dir
+
+
 def remove_tree_inside(path, root):
     path = path.resolve()
     root = root.resolve()
@@ -128,12 +183,10 @@ def remove_tree_inside(path, root):
     shutil.rmtree(str(path), onerror=clear_readonly)
 
 
-def prepare_checkout(args):
-    ensure_program("git", "Git is required to download Kroko-ONNX.")
-
-    work_dir = (args.work_dir or default_work_dir()).expanduser().resolve()
+def prepare_checkout(args, work_dir=None):
+    work_dir = work_dir or resolve_work_dir(args)
     repo_dir = work_dir / "kroko-onnx"
-    work_dir.mkdir(parents=True, exist_ok=True)
+    ensure_work_dir_writable(work_dir)
 
     if args.force and repo_dir.exists():
         print("Removing existing Kroko-ONNX checkout: {0}".format(repo_dir))
@@ -395,19 +448,32 @@ def ensure_windows_host():
             "Kroko's current Windows wheel build targets CPython 3.12. "
             "Run this command from a Python 3.12 x64 environment."
         )
+    if sys.maxsize <= 2 ** 32:
+        raise KrokoInstallError(
+            "Kroko's current Windows wheel build targets 64-bit Python. "
+            "Run this command from a Python 3.12 x64 environment."
+        )
     machine = platform.machine().lower()
     if machine not in ("amd64", "x86_64"):
         raise KrokoInstallError(
             "Kroko's current Windows wheel build targets win_amd64; "
             "this machine reports {0}.".format(platform.machine())
         )
-    ensure_program("docker", "Docker Desktop is required on Windows. Start Docker Desktop and try again.")
+    ensure_program(
+        "docker",
+        "Docker Desktop is required on Windows. Install Docker Desktop, start it "
+        "with the WSL2 backend enabled, then retry.",
+    )
     try:
         run(["docker", "version"])
     except KrokoInstallError:
         raise KrokoInstallError(
-            "Docker Desktop must be running on Windows before building Kroko. "
-            "Start Docker Desktop with the WSL2 backend enabled, then retry."
+            "Docker Desktop is not running or its Linux engine is unavailable.\n"
+            "Start Docker Desktop, wait until it reports that Docker is running, "
+            "then retry:\n"
+            "    stt-install-kroko --build\n"
+            "You can verify it manually with:\n"
+            "    docker version"
         )
 
 
@@ -479,7 +545,8 @@ def main(argv=None):
         raise SystemExit("Pass --build to build and install Kroko-ONNX.")
 
     try:
-        repo_dir = prepare_checkout(args)
+        work_dir = preflight_build(args)
+        repo_dir = prepare_checkout(args, work_dir)
         if os.name == "nt":
             install_windows(args, repo_dir)
         elif sys.platform.startswith("linux"):

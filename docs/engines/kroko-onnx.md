@@ -28,6 +28,20 @@ python -m pip install "RealtimeSTT[kroko-builder]"
 stt-install-kroko --build
 ```
 
+On Windows, start Docker Desktop before running the build command. The Docker
+Desktop Linux engine must be available, not just the Docker CLI. You can verify
+the local prerequisites with:
+
+```powershell
+python --version
+git --version
+docker version
+```
+
+`docker version` should print both a `Client` and a `Server` section. If it
+prints only client information and an engine connection error, start Docker
+Desktop, wait until it reports that Docker is running, and retry.
+
 The helper uses Kroko's `cross-platform-builds` branch. On Windows it builds a
 CPython 3.12 `win_amd64` wheel with Docker Desktop, then installs that wheel.
 On Linux it patches the checkout and installs from source. Use `--skip-install`
@@ -39,13 +53,31 @@ Windows requirements:
 - Git
 - Docker Desktop running with the WSL2 backend
 
+If the default builder cache is not writable, use a project-local work
+directory:
+
+```powershell
+stt-install-kroko --build --work-dir .\kroko-builder-work
+```
+
+If the default builder cache is not writable and `--work-dir` is not set, the
+helper falls back to `.\kroko-builder-work` automatically and prints the path it
+selected.
+
 Linux requirements:
 
 - Git
 - CMake
 - A working C/C++ build toolchain
 
-For licensed Pro models, build the Pro variant:
+After the builder finishes, download a public Community model:
+
+```powershell
+New-Item -ItemType Directory -Path test-model-cache\kroko-onnx -Force
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Banafo/Kroko-ASR', filename='Kroko-EN-Community-64-L-Streaming-001.data', local_dir='test-model-cache/kroko-onnx')"
+```
+
+Use `--variant pro` when you need licensed Pro models:
 
 ```bash
 stt-install-kroko --build --variant pro
@@ -78,6 +110,13 @@ You can also pre-download models into an ignored project-local cache:
 ```powershell
 New-Item -ItemType Directory -Path test-model-cache\kroko-onnx -Force
 python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Banafo/Kroko-ASR', filename='Kroko-EN-Community-64-L-Streaming-001.data', local_dir='test-model-cache/kroko-onnx')"
+```
+
+The `kroko-builder` extra installs `huggingface_hub` for this download command.
+If you installed RealtimeSTT without that extra, install it first:
+
+```powershell
+python -m pip install huggingface_hub
 ```
 
 Pro/private models are not assumed to be public. Pass an existing `.data` path,
@@ -219,6 +258,16 @@ $env:REALTIMESTT_KROKO_ONNX_MODEL = "test-model-cache\kroko-onnx\Kroko-EN-Commun
 $env:REALTIMESTT_KROKO_ONNX_PROVIDER = "cpu"
 $env:REALTIMESTT_KROKO_ONNX_NUM_THREADS = "1"
 python -m unittest -v tests.unit.test_kroko_onnx_engine.KrokoOnnxGoldenTranscriptionTests
+```
+
+Pip-only users usually do not have the repository's `tests.unit` package. For a
+standalone install smoke test, download the public Kroko test script and run its
+init-only mode:
+
+```powershell
+curl.exe -L https://raw.githubusercontent.com/KoljaB/RealtimeSTT/master/tests/realtimestt_kroko_test.py -o realtimestt_kroko_test.py
+python -m pip install rich
+python .\realtimestt_kroko_test.py --model "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data" --realtime-model "test-model-cache\kroko-onnx\Kroko-EN-Community-64-L-Streaming-001.data" --provider cpu --no-keyboard --init-only
 ```
 
 `REALTIMESTT_KROKO_ONNX_KEY`, `KROKO_ONNX_KEY`, or `KROKO_KEY` may be used for

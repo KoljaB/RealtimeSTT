@@ -64,7 +64,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `omnilingual` / `omnilingual-asr` / `meta-omnilingual-asr` | `omnilingual-asr` | Meta Omnilingual ASR backend for Linux or WSL2. |
 | `qwen` / `qwen3-asr` | `qwen-asr` | Qwen ASR backend. |
 | `qwen-vllm` | `qwen-asr[vllm]` | Qwen ASR with vLLM support. |
-| `kroko-builder` | RealtimeSTT builder helper only | Builds/installs Kroko-ONNX from upstream on Windows or Linux. |
+| `kroko-builder` | RealtimeSTT builder helper, `huggingface_hub` | Builds/installs Kroko-ONNX from upstream and downloads public Community models. |
 | `porcupine` / `pvporcupine` / `pvp` | `pvporcupine` | Porcupine wake-word backend. |
 | `openwakeword` / `oww` | `openwakeword` | OpenWakeWord wake-word backend. |
 | `wakewords` / `wake-words` | `pvporcupine`, `openwakeword` | Both wake-word backends. |
@@ -79,8 +79,33 @@ python -m pip install "RealtimeSTT[kroko-builder]"
 stt-install-kroko --build
 ```
 
-On Windows, use Python 3.12 x64 and start Docker Desktop first. See
-[engines/kroko-onnx.md](engines/kroko-onnx.md).
+On Windows, use Python 3.12 x64 and start Docker Desktop first. The Docker
+Desktop Linux engine must be running before the builder starts:
+
+```powershell
+python --version
+git --version
+docker version
+```
+
+`docker version` should show both `Client` and `Server` sections. If the default
+builder cache is not writable, use a project-local work directory:
+
+```powershell
+stt-install-kroko --build --work-dir .\kroko-builder-work
+```
+
+If the default builder cache is not writable and `--work-dir` is not set, the
+helper falls back to `.\kroko-builder-work` automatically.
+
+Download a public Community model after the builder finishes:
+
+```powershell
+New-Item -ItemType Directory -Path test-model-cache\kroko-onnx -Force
+python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Banafo/Kroko-ASR', filename='Kroko-EN-Community-64-L-Streaming-001.data', local_dir='test-model-cache/kroko-onnx')"
+```
+
+See [engines/kroko-onnx.md](engines/kroko-onnx.md).
 
 ## VAD Dependencies
 
@@ -167,7 +192,7 @@ Install only the engine stack you plan to use:
 | `granite_speech` | `python -m pip install "RealtimeSTT[granite]"` | Downloads Hugging Face model files automatically. |
 | `qwen3_asr` | `python -m pip install -U "RealtimeSTT[qwen]"` | Downloads Qwen model files through the Qwen ASR package. |
 | `cohere_transcribe` | `python -m pip install "RealtimeSTT[cohere]"` | Downloads Hugging Face model files; gated model access may be required. |
-| `kroko_onnx` | `python -m pip install "RealtimeSTT[kroko-builder]"`, then `stt-install-kroko --build` | Public Community models can auto-download; Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
+| `kroko_onnx` | `python -m pip install "RealtimeSTT[kroko-builder]"`, then `stt-install-kroko --build` | Public Community models can auto-download or be downloaded with `huggingface_hub`; Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
 
 Per-engine setup lives in [transcription-engines.md](transcription-engines.md)
 and the `docs/engines/` pages.

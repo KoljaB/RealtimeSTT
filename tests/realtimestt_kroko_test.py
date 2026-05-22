@@ -31,15 +31,16 @@ def first_env_value(names):
 def default_model_path(filename):
     import os
 
-    return os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "..",
-            "test-model-cache",
-            "kroko-onnx",
-            filename,
-        )
-    )
+    script_dir = os.path.abspath(os.path.dirname(__file__))
+    candidates = [
+        os.path.join(os.getcwd(), "test-model-cache", "kroko-onnx", filename),
+        os.path.join(script_dir, "test-model-cache", "kroko-onnx", filename),
+        os.path.join(script_dir, "..", "test-model-cache", "kroko-onnx", filename),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return os.path.abspath(candidate)
+    return os.path.abspath(candidates[0])
 
 
 def install_repo_on_path():
@@ -47,8 +48,36 @@ def install_repo_on_path():
     import sys
 
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if repo_root not in sys.path:
+    if os.path.isdir(os.path.join(repo_root, "RealtimeSTT")) and repo_root not in sys.path:
         sys.path.insert(0, repo_root)
+
+
+def check_and_install_packages(packages):
+    try:
+        from install_packages import check_and_install_packages as repo_helper
+    except ImportError:
+        repo_helper = None
+
+    if repo_helper is not None:
+        repo_helper(packages)
+        return
+
+    import importlib.util
+
+    missing = []
+    for package in packages:
+        import_name = package.get("import_name") or package.get("module_name")
+        install_name = package.get("install_name") or import_name
+        if importlib.util.find_spec(import_name) is None:
+            missing.append(install_name)
+
+    if missing:
+        print(
+            "This standalone Kroko test requires one or more extra packages.\n"
+            "Install them with:\n\n"
+            "  python -m pip install %s\n" % " ".join(missing)
+        )
+        raise SystemExit(1)
 
 
 def check_kroko_runtime():
@@ -226,8 +255,6 @@ if __name__ == "__main__":
     install_repo_on_path()
 
     keyboard_interval = 0 if args.no_keyboard else args.keyboard_interval
-
-    from install_packages import check_and_install_packages
 
     packages = [{"import_name": "rich"}]
     if keyboard_interval:

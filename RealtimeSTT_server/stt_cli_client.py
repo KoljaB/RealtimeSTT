@@ -60,8 +60,10 @@ def main():
                         help="Call a recorder method with optional arguments")
     parser.add_argument("-g", "--get", nargs=1, metavar='PARAM', action='append',
                         help="Get a recorder parameter's value (can be used multiple times)")
-    parser.add_argument("-c", "--continous", action="store_true",
+    parser.add_argument("-c", "--continuous", action="store_true", dest="continuous",
                         help="Continuously transcribe speech without exiting")
+    parser.add_argument("--continous", action="store_true", dest="continuous",
+                        help=argparse.SUPPRESS)
     parser.add_argument("-L", "--list", action="store_true",
                         help="List available audio input devices and exit")
     parser.add_argument("--control", "--control_url", default=DEFAULT_CONTROL_URL,
@@ -266,12 +268,12 @@ def main():
                 else:
                     print('\r\033[K', end="", flush=True)
                     print(f'{text}', end="", flush=True)
-                if not args.continous:
+                if not args.continuous:
                     break
             else:
                 time.sleep(0.1)
             
-            if args.continous:
+            if args.continuous:
                 print()
             prev_text = ""
     except KeyboardInterrupt:

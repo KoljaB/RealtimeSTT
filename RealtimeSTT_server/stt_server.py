@@ -144,8 +144,6 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-print(f"{bcolors.BOLD}{bcolors.OKCYAN}Starting server, please wait...{bcolors.ENDC}")
-
 # Initialize colorama
 from colorama import init, Fore, Style
 init()
@@ -791,6 +789,7 @@ async def main_async():
     global stop_recorder, recorder_config, global_args
     args = parse_arguments()
     global_args = args
+    print(f"{bcolors.BOLD}{bcolors.OKCYAN}Starting server, please wait...{bcolors.ENDC}")
 
     # Get the event loop here and pass it to the recorder thread
     loop = asyncio.get_event_loop()

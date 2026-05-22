@@ -328,7 +328,7 @@ The client connects to the STT server's control and data WebSocket URLs to facil
 - **Action**: `append`
 - **Description**: Get the value of a recorder parameter.
 
-#### `-c`, `--continous`
+#### `-c`, `--continuous`
 - **Action**: `store_true`
 - **Description**: Run in continuous mode, transcribing speech without exiting.
 

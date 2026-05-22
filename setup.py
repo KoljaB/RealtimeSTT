@@ -44,7 +44,7 @@ Available extras include:
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend
 - qwen-vllm: Qwen ASR with vLLM extras
-- kroko-builder: helper command for building/installing Kroko-ONNX
+- kroko-builder: helper command for building/installing Kroko-ONNX plus Hugging Face model downloads
 - porcupine: Porcupine wake-word backend
 - openwakeword: OpenWakeWord wake-word backend
 - wakewords: both wake-word backends
@@ -61,6 +61,24 @@ the same Python environment:
 
     pip install "realtimestt[kroko-builder]"
     stt-install-kroko --build
+
+On Windows, use Python 3.12 x64 and start Docker Desktop before running the
+builder. Check that Docker's Linux engine is available with:
+
+    python --version
+    git --version
+    docker version
+
+If the default builder cache is not writable, use a project-local work
+directory:
+
+    stt-install-kroko --build --work-dir .\\kroko-builder-work
+
+The kroko-builder extra includes huggingface_hub. Download a public Community
+model after the builder finishes:
+
+    mkdir test-model-cache\\kroko-onnx
+    python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Banafo/Kroko-ASR', filename='Kroko-EN-Community-64-L-Streaming-001.data', local_dir='test-model-cache/kroko-onnx')"
 
 """
 
@@ -150,7 +168,7 @@ omnilingual_asr_requirements = [
 ]
 qwen_requirements = ["qwen-asr"]
 qwen_vllm_requirements = ["qwen-asr[vllm]"]
-kroko_builder_requirements = []
+kroko_builder_requirements = ["huggingface_hub"]
 porcupine_requirements = [requirement("pvporcupine")]
 openwakeword_requirements = [requirement("openwakeword")]
 
@@ -164,6 +182,7 @@ all_optional_requirements = unique_requirements(
     + parakeet_requirements
     + omnilingual_asr_requirements
     + qwen_requirements
+    + kroko_builder_requirements
     + porcupine_requirements
     + openwakeword_requirements
 )
