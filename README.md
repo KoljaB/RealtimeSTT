@@ -9,9 +9,9 @@ speech into text with only a few lines of code.
 The recommended default path uses `faster_whisper`. Other engines are available
 through install extras when their optional dependencies and models are present.
 
-### Support RealtimeSTT
+### Support RealtimeSTT ⭐
 
-If RealtimeSTT saved you time, one GitHub star is a simple way to help make it
+If RealtimeSTT saved you time, a GitHub star is a simple way to help make it
 more stable.
 
 Stars improve visibility, and visibility brings more users, more real-world
