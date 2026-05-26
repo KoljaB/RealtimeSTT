@@ -16,21 +16,22 @@ import unicodedata
 
 @dataclass(frozen=True)
 class RealtimeTextStabilizationConfig:
-    min_char_confirmations: int = 3
+    min_char_confirmations: int = 2
     min_char_evidence_span_seconds: float = 0.60
-    max_char_evidence_window_seconds: float = 1.50
+    max_char_evidence_window_seconds: float = 8.00
     space_min_confirmations: int = 4
     space_min_evidence_span_seconds: float = 0.75
     space_requires_stable_right_context: bool = True
     space_right_context_min_chars: int = 2
     punctuation_min_confirmations: int = 4
     punctuation_requires_stable_right_context: bool = True
-    initial_prefix_min_confirmations: int = 3
+    initial_prefix_min_confirmations: int = 2
     initial_prefix_min_evidence_span_seconds: float = 0.80
     outlier_similarity_threshold: float = 0.35
     max_single_outlier_gap: int = 1
     max_recent_observations: int = 128
     language_mode: str = "space-tokenized"
+    require_audio_progress_for_evidence: bool = True
 
 
 @dataclass(frozen=True)
@@ -621,6 +622,13 @@ class RealtimeTextStabilizer:
             key = (offset, char)
             points = self._evidence.setdefault(key, [])
             if points and points[-1].sequence == observation.sequence:
+                continue
+            if (
+                self.config.require_audio_progress_for_evidence
+                and points
+                and observation.audio_end_sample_exclusive
+                <= max(point.audio_end_sample_exclusive for point in points)
+            ):
                 continue
             points.append(
                 _EvidencePoint(

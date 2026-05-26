@@ -45,6 +45,13 @@ from .transcription_engines import (
     TranscriptionEngineConfig,
     create_transcription_engine,
 )
+from .wakeword_dependencies import (
+    OPENWAKEWORD_BACKENDS,
+    PORCUPINE_WAKEWORD_BACKENDS,
+    _load_openwakeword_modules as _wakeword_load_openwakeword_modules,
+    _load_porcupine_module as _wakeword_load_porcupine_module,
+    _normalize_wakeword_backend as _wakeword_normalize_backend,
+)
 import soundfile as sf
 import collections
 import numpy as np
@@ -98,45 +105,16 @@ INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
 
-PORCUPINE_WAKEWORD_BACKENDS = {"pvp", "pvporcupine", "porcupine"}
-OPENWAKEWORD_BACKENDS = {
-    "oww",
-    "openwakeword",
-    "openwakewords",
-    "open_wakeword",
-    "open_wakewords",
-}
-
-
 def _normalize_wakeword_backend(wakeword_backend, wake_words):
-    backend = (wakeword_backend or "").strip().lower().replace("-", "_")
-    if not backend and wake_words:
-        return "pvporcupine"
-    return backend
+    return _wakeword_normalize_backend(wakeword_backend, wake_words)
 
 
 def _load_porcupine_module():
-    try:
-        return import_module("pvporcupine")
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "Porcupine wake word detection requires the optional "
-            "'pvporcupine' package. Install it with "
-            "'pip install \"RealtimeSTT[porcupine]\"'."
-        ) from exc
+    return _wakeword_load_porcupine_module(importer=import_module)
 
 
 def _load_openwakeword_modules():
-    try:
-        openwakeword_module = import_module("openwakeword")
-        model_module = import_module("openwakeword.model")
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "OpenWakeWord wake word detection requires the optional "
-            "'openwakeword' package. Install it with "
-            "'pip install \"RealtimeSTT[openwakeword]\"'."
-        ) from exc
-    return openwakeword_module, model_module.Model
+    return _wakeword_load_openwakeword_modules(importer=import_module)
 
 
 class TranscriptionWorker:

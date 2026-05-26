@@ -88,6 +88,38 @@ class RealtimeTextStabilizerTests(unittest.TestCase):
         self.assertEqual(early.unstable_text, "hello")
         self.assertEqual(later.stable_delta, "hello")
 
+    def test_repeats_without_audio_progress_do_not_add_stability_evidence(self):
+        first = self.observe(
+            "set the timer for six seconds",
+            1,
+            completed_at=0.00,
+            audio_end_sample_exclusive=16000,
+        )
+        second = self.observe(
+            "set the timer for six seconds",
+            2,
+            completed_at=0.40,
+            audio_end_sample_exclusive=16000,
+        )
+        third = self.observe(
+            "set the timer for six seconds",
+            3,
+            completed_at=0.85,
+            audio_end_sample_exclusive=16000,
+        )
+        progressed = self.observe(
+            "set the timer for six seconds",
+            4,
+            completed_at=1.30,
+            audio_end_sample_exclusive=32000,
+        )
+
+        self.assertEqual(first.stable_text, "")
+        self.assertEqual(second.stable_text, "")
+        self.assertEqual(third.stable_text, "")
+        self.assertEqual(progressed.stable_delta, "set")
+        self.assertEqual(progressed.evidence.contributing_sequence_ids, (1, 4))
+
     def test_wrong_initial_prefix_is_not_committed_before_correction_arrives(self):
         events = [
             self.observe("M now talking", 1, completed_at=0.00),
