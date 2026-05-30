@@ -3,7 +3,7 @@ import unittest
 
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
-    from RealtimeSTT.preroll import PrerollFrameMetadata
+    from RealtimeSTT.core.preroll import PrerollFrameMetadata
 except Exception as exc:  # pragma: no cover - optional runtime deps may be absent
     AudioToTextRecorder = None
     IMPORT_ERROR = exc

@@ -41,11 +41,11 @@ engines, wake-word backends, and model runtimes are loaded lazily so importing
 | --- | --- | --- | --- |
 | `RealtimeSTT/audio_recorder.py` | Recorder state machine, audio queue consumption, VAD/wake-word gates, recording lifecycle, realtime workers, final transcription dispatch, callbacks, and shutdown. | Threads/processes, queues, callbacks, logging, model worker IPC, microphone coordination. | `tests/unit/test_audio_recorder_preroll_integration.py`, `tests/unit/test_slow_final_transcription_audio_gap.py`, `tests/unit/test_realtime_streaming_transcription.py`. |
 | `RealtimeSTT/audio_input.py` | PyAudio device selection, microphone stream setup, chunk reads, and resampling helpers for capture. | Device enumeration, microphone I/O, stream lifecycle. | Covered mostly through recorder/client integration and manual scripts. Add characterization tests before moving device logic. |
-| `RealtimeSTT/preroll.py` | Pure pre-recording buffer selection and conservative speech-onset trimming. | None intended; pure helper. | `tests/unit/test_preroll.py`, `tests/unit/test_audio_recorder_preroll_integration.py`. |
-| `RealtimeSTT/realtime_boundary_detector.py` | Low-cost acoustic boundary events for realtime transcription scheduling. | None intended; pure-ish signal analysis state. | `tests/unit/test_realtime_boundary_detector.py`. |
-| `RealtimeSTT/realtime_text_stabilizer.py` | Pure stabilization of partial ASR observations into stable deltas, previews, diagnostics, and final events. | None intended; timestamp/order dependent. | `tests/unit/test_realtime_text_stabilizer.py`. |
-| `RealtimeSTT/silero_vad.py` | Silero backend normalization, model discovery/loading, ONNX/PyTorch wrapper behavior, and callable VAD adaptation. | Optional dependency imports, model file lookup, torch/onnx runtime loading. | `tests/unit/test_silero_vad_backend.py`. |
-| `RealtimeSTT/safepipe.py` | Safer multiprocessing pipe wrapper used by recorder worker communication. | Multiprocessing pipe/process communication. | Covered indirectly by recorder paths; add targeted tests before changing IPC behavior. |
+| `RealtimeSTT/core/preroll.py` | Pure pre-recording buffer selection and conservative speech-onset trimming. | None intended; pure helper. | `tests/unit/test_preroll.py`, `tests/unit/test_audio_recorder_preroll_integration.py`. |
+| `RealtimeSTT/core/realtime_boundary_detector.py` | Low-cost acoustic boundary events for realtime transcription scheduling. | None intended; pure-ish signal analysis state. | `tests/unit/test_realtime_boundary_detector.py`. |
+| `RealtimeSTT/core/realtime_text_stabilizer.py` | Pure stabilization of partial ASR observations into stable deltas, previews, diagnostics, and final events. | None intended; timestamp/order dependent. | `tests/unit/test_realtime_text_stabilizer.py`. |
+| `RealtimeSTT/core/silero_vad.py` | Silero backend normalization, model discovery/loading, ONNX/PyTorch wrapper behavior, and callable VAD adaptation. | Optional dependency imports, model file lookup, torch/onnx runtime loading. | `tests/unit/test_silero_vad_backend.py`. |
+| `RealtimeSTT/core/safepipe.py` | Safer multiprocessing pipe wrapper used by recorder worker communication. | Multiprocessing pipe/process communication. | Covered indirectly by recorder paths; add targeted tests before changing IPC behavior. |
 | `RealtimeSTT/install_kroko.py` | Kroko-ONNX installer CLI, checkout preparation, patching, build/install helpers. | Filesystem writes, subprocesses, downloads/build tools. | Covered by install-matrix and smoke scripts; treat as tooling, not runtime pipeline code. |
 
 ## Transcription Engine Layer
@@ -97,8 +97,8 @@ examples / servers / clients
   -> optional third-party runtimes
 ```
 
-Pure helpers such as `preroll.py`, `realtime_boundary_detector.py`, and
-`realtime_text_stabilizer.py` should not depend on servers, devices, or model
+Pure helpers such as `core/preroll.py`, `core/realtime_boundary_detector.py`, and
+`core/realtime_text_stabilizer.py` should not depend on servers, devices, or model
 runtimes. Engine adapters should depend on `base.py`, not on recorder internals.
 Servers may construct recorders and inject executors; recorders should not depend
 on server modules.
@@ -110,7 +110,7 @@ on server modules.
 | `RealtimeSTT/audio_recorder.py` | Central state machine with callbacks, worker lifecycle, VAD, wake words, realtime ASR, final ASR, logging, and public constructor behavior. | Extract or harden pure helpers first; keep `AudioToTextRecorder` as facade/orchestrator. |
 | `example_fastapi_server/server.py` | Single file owns settings, API app, queues, workers, sessions, metrics, protocol use, and CLI. | Split data-only settings/protocol helpers before session or scheduler behavior. |
 | `RealtimeSTT/transcription_engines/kroko_onnx_engine.py` | Combines model discovery/download helpers, backend setup, native-output control, batch transcription, and streaming sessions. | Add tests around option parsing and streaming session behavior before extraction. |
-| `RealtimeSTT/silero_vad.py` | Runtime backend fallback logic depends on optional packages and model files. | Keep resolver behavior characterized before changing backend selection. |
+| `RealtimeSTT/core/silero_vad.py` | Runtime backend fallback logic depends on optional packages and model files. | Keep resolver behavior characterized before changing backend selection. |
 | `RealtimeSTT_server/stt_server.py` | Legacy protocol, callbacks, recorder thread, websocket handlers, CLI flags, and shutdown live together. | Treat as compatibility surface; isolate only after old protocol tests exist. |
 
 ## Suggested Move-Only Milestones

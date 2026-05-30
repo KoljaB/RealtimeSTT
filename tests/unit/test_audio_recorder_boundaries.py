@@ -4,7 +4,7 @@ import unittest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-INTERNAL_RECORDER_DIR = PROJECT_ROOT / "RealtimeSTT" / "_audio_recorder"
+INTERNAL_RECORDER_DIR = PROJECT_ROOT / "RealtimeSTT" / "core"
 
 
 class AudioRecorderBoundaryTests(unittest.TestCase):

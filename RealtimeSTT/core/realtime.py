@@ -5,8 +5,8 @@ import time
 
 import numpy as np
 
-from ..realtime_boundary_detector import RealtimeSpeechBoundaryDetector
-from ..realtime_text_stabilizer import (
+from .realtime_boundary_detector import RealtimeSpeechBoundaryDetector
+from .realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )

@@ -31,21 +31,21 @@ import torch.multiprocessing as mp
 from scipy.signal import resample
 import signal as system_signal
 from scipy import signal
-from .realtime_text_stabilizer import RealtimeTextStabilizer
-from ._audio_recorder.initialization import initialize_recorder
-from ._audio_recorder.recording import run_recording_worker
-from ._audio_recorder.realtime import run_realtime_worker
-from ._audio_recorder.transcription import (
+from .core.realtime_text_stabilizer import RealtimeTextStabilizer
+from .core.initialization import initialize_recorder
+from .core.recording import run_recording_worker
+from .core.realtime import run_realtime_worker
+from .core.transcription import (
     TranscriptionWorker,
     receive_transcription_result,
     submit_transcription_request,
 )
-from .wakeword_dependencies import (
+from .core.wakeword import (
     _load_openwakeword_modules,
     _load_porcupine_module,
     _normalize_wakeword_backend,
 )
-from ._audio_recorder.voice_activity import (
+from .core.voice_activity import (
     check_voice_activity,
     clear_pre_recording_buffer,
     is_silero_speech,

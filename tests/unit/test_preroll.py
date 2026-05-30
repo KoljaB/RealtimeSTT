@@ -1,6 +1,6 @@
 import unittest
 
-from RealtimeSTT.preroll import (
+from RealtimeSTT.core.preroll import (
     REASON_BELOW_MINIMUM,
     REASON_EMPTY_BUFFER,
     REASON_FALLBACK_FULL_PREROLL,

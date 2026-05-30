@@ -5,7 +5,7 @@ from unittest import mock
 
 import numpy as np
 
-from RealtimeSTT import silero_vad
+from RealtimeSTT.core import silero_vad
 
 try:
     from RealtimeSTT.audio_recorder import (
@@ -55,7 +55,7 @@ class SileroVadBackendSelectionTests(unittest.TestCase):
             return marker
 
         with mock.patch(
-            "RealtimeSTT.silero_vad._create_raw_onnx_vad",
+            "RealtimeSTT.core.silero_vad._create_raw_onnx_vad",
             side_effect=fake_raw,
         ):
             model = silero_vad.create_silero_vad_model()
@@ -82,7 +82,7 @@ class SileroVadBackendSelectionTests(unittest.TestCase):
             return marker
 
         with mock.patch(
-            "RealtimeSTT.silero_vad._create_raw_onnx_vad",
+            "RealtimeSTT.core.silero_vad._create_raw_onnx_vad",
             side_effect=fake_raw,
         ):
             model = silero_vad.create_silero_vad_model()
@@ -106,10 +106,10 @@ class SileroVadBackendSelectionTests(unittest.TestCase):
         marker = object()
 
         with mock.patch(
-            "RealtimeSTT.silero_vad._create_raw_onnx_vad",
+            "RealtimeSTT.core.silero_vad._create_raw_onnx_vad",
             side_effect=silero_vad.SileroVadError("onnx missing"),
         ), mock.patch(
-            "RealtimeSTT.silero_vad._create_pytorch_vad",
+            "RealtimeSTT.core.silero_vad._create_pytorch_vad",
             return_value=marker,
         ) as pytorch_vad:
             model = silero_vad.create_silero_vad_model()
@@ -120,7 +120,7 @@ class SileroVadBackendSelectionTests(unittest.TestCase):
     def test_explicit_legacy_false_uses_old_torch_hub_pytorch_path(self):
         marker = object()
         with mock.patch(
-            "RealtimeSTT.silero_vad._create_legacy_vad",
+            "RealtimeSTT.core.silero_vad._create_legacy_vad",
             return_value=marker,
         ) as legacy_vad:
             model = silero_vad.create_silero_vad_model(silero_use_onnx=False)
@@ -131,7 +131,7 @@ class SileroVadBackendSelectionTests(unittest.TestCase):
     def test_explicit_legacy_true_uses_old_torch_hub_onnx_path(self):
         marker = object()
         with mock.patch(
-            "RealtimeSTT.silero_vad._create_legacy_vad",
+            "RealtimeSTT.core.silero_vad._create_legacy_vad",
             return_value=marker,
         ) as legacy_vad:
             model = silero_vad.create_silero_vad_model(silero_use_onnx=True)

@@ -9,7 +9,7 @@ except ModuleNotFoundError:
 
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
-    from RealtimeSTT.realtime_text_stabilizer import RealtimeTextStabilizer
+    from RealtimeSTT.core.realtime_text_stabilizer import RealtimeTextStabilizer
     from RealtimeSTT.transcription_engines import (
         TranscriptionInfo,
         TranscriptionResult,

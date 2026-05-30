@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from RealtimeSTT.realtime_boundary_detector import RealtimeSpeechBoundaryDetector
+from RealtimeSTT.core.realtime_boundary_detector import RealtimeSpeechBoundaryDetector
 
 
 class RealtimeSpeechBoundaryDetectorTest(unittest.TestCase):

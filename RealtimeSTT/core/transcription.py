@@ -97,7 +97,7 @@ class TranscriptionWorker:
             # Run a warm-up transcription
             current_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
             warmup_audio_path = os.path.join(
-                current_dir, "warmup_audio.wav"
+                current_dir, "assets", "warmup_audio.wav"
             )
             warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
             engine.warmup(warmup_audio_data)

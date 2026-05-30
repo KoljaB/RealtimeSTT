@@ -22,15 +22,15 @@ def __getattr__(name):
 
         return AudioInput
     if name == "RealtimeSpeechBoundaryDetector":
-        from .realtime_boundary_detector import RealtimeSpeechBoundaryDetector
+        from .core.realtime_boundary_detector import RealtimeSpeechBoundaryDetector
 
         return RealtimeSpeechBoundaryDetector
     if name == "SpeechBoundaryEvent":
-        from .realtime_boundary_detector import SpeechBoundaryEvent
+        from .core.realtime_boundary_detector import SpeechBoundaryEvent
 
         return SpeechBoundaryEvent
     if name == "SpeechBoundaryResult":
-        from .realtime_boundary_detector import SpeechBoundaryResult
+        from .core.realtime_boundary_detector import SpeechBoundaryResult
 
         return SpeechBoundaryResult
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -10,7 +10,7 @@ import numpy as np
 from scipy import signal
 import webrtcvad
 
-from ..preroll import PrerollFrameMetadata, select_preroll_frames
+from .preroll import PrerollFrameMetadata, select_preroll_frames
 
 
 logger = logging.getLogger("realtimestt")

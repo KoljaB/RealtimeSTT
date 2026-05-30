@@ -2,7 +2,7 @@
 
 RealtimeSTT is a recorder-centered, low-latency speech-to-text pipeline. Audio is normalized into short 16 kHz mono PCM chunks, turn detection decides which chunks form an utterance, and pluggable ASR engines produce realtime and final text through a small project-level adapter contract. The core recorder owns stream state, VAD, wake-word handling, pre-roll, realtime updates, finalization, callbacks, and shutdown. Server layers sit on top of that recorder instead of replacing it.
 
-The design goal is simple: keep the public recorder API stable while moving heavy model runtimes, optional dependencies, protocol handling, and multi-user scheduling behind focused boundaries. Importing `RealtimeSTT` should not import every ASR runtime or wake-word stack. New code should follow the smaller, testable patterns in `transcription_engines/`, `realtime_boundary_detector.py`, `realtime_text_stabilizer.py`, and `example_fastapi_server/protocol.py`, not the accumulated size of `audio_recorder.py`.
+The design goal is simple: keep the public recorder API stable while moving heavy model runtimes, optional dependencies, protocol handling, and multi-user scheduling behind focused boundaries. Importing `RealtimeSTT` should not import every ASR runtime or wake-word stack. New code should follow the smaller, testable patterns in `transcription_engines/`, `core/realtime_boundary_detector.py`, `core/realtime_text_stabilizer.py`, and `example_fastapi_server/protocol.py`, not the accumulated size of `audio_recorder.py`.
 
 ## Repository Map
 
@@ -11,9 +11,9 @@ The design goal is simple: keep the public recorder API stable while moving heav
 | Public API | `RealtimeSTT/__init__.py` | Lazy exports for `AudioToTextRecorder`, `AudioToTextRecorderClient`, `AudioInput`, and realtime boundary types. |
 | Recorder state machine | `RealtimeSTT/audio_recorder.py` | `AudioToTextRecorder`, `TranscriptionWorker`, audio queue consumption, VAD, wake words, pre-roll, recording lifecycle, realtime updates, final transcription, callbacks, and shutdown. |
 | Audio input | `RealtimeSTT/audio_input.py` | PyAudio device selection, microphone stream setup, raw chunk reads, client-side capture, and resampling helpers. |
-| Worker communication | `RealtimeSTT/safepipe.py` | Thread-safe wrapper around the parent end of `multiprocessing.Pipe`, so multiple recorder threads can safely send, receive, and poll. |
-| VAD and turn helpers | `RealtimeSTT/silero_vad.py`, `RealtimeSTT/preroll.py`, `RealtimeSTT/realtime_boundary_detector.py` | Silero backend selection, conservative pre-recording buffer trimming, and low-cost acoustic boundary detection. |
-| Realtime text stabilization | `RealtimeSTT/realtime_text_stabilizer.py` | Pure, timestamp-driven stabilization of partial ASR text into stable deltas, unstable preview text, and diagnostics. |
+| Worker communication | `RealtimeSTT/core/safepipe.py` | Thread-safe wrapper around the parent end of `multiprocessing.Pipe`, so multiple recorder threads can safely send, receive, and poll. |
+| VAD and turn helpers | `RealtimeSTT/core/silero_vad.py`, `RealtimeSTT/core/preroll.py`, `RealtimeSTT/core/realtime_boundary_detector.py` | Silero backend selection, conservative pre-recording buffer trimming, and low-cost acoustic boundary detection. |
+| Realtime text stabilization | `RealtimeSTT/core/realtime_text_stabilizer.py` | Pure, timestamp-driven stabilization of partial ASR text into stable deltas, unstable preview text, and diagnostics. |
 | ASR engines | `RealtimeSTT/transcription_engines/base.py`, `factory.py`, and adapter modules | Project transcription contracts, engine config/result objects, lazy engine loading, backend-specific adapters, and optional streaming sessions. |
 | Legacy websocket path | `RealtimeSTT_server/stt_server.py`, `RealtimeSTT/audio_recorder_client.py` | Single-user dual-port websocket server and a thin client that mirrors the local recorder API. |
 | Browser reference server | `example_fastapi_server/server.py`, `protocol.py`, `static/index.html` | Source-only FastAPI browser streaming reference application with session admission, shared inference scheduling, packet validation, metrics, limits, and websocket publishing. |
@@ -142,7 +142,7 @@ Recurrent VAD state must reset at recording boundaries. One utterance must not c
 
 ## Final Transcription Path
 
-The final path is optimized for correctness and isolation from recorder state. The internal worker creates the selected engine through `create_transcription_engine()`, warms it with `warmup_audio.wav`, then receives `(audio, language, use_prompt)` requests through `SafePipe`.
+The final path is optimized for correctness and isolation from recorder state. The internal worker creates the selected engine through `create_transcription_engine()`, warms it with `assets/warmup_audio.wav`, then receives `(audio, language, use_prompt)` requests through `SafePipe`.
 
 For each request, the worker calls:
 
@@ -340,7 +340,7 @@ Golden tests and real-model tests should be opt-in. Use them when reviewing actu
 - Keep optional engine, VAD, and wake-word dependencies lazy. Importing `RealtimeSTT` should not import every model runtime.
 - Treat 16 kHz mono PCM as the recorder's internal audio currency. Resample at boundaries and keep WebRTC/Silero assumptions explicit.
 - Reset recurrent VAD and streaming ASR state at recording boundaries.
-- Keep pure helpers pure. `preroll.py`, `realtime_boundary_detector.py`, `realtime_text_stabilizer.py`, and protocol helpers should remain testable without devices, model downloads, threads, or servers.
+- Keep pure helpers pure. `core/preroll.py`, `core/realtime_boundary_detector.py`, `core/realtime_text_stabilizer.py`, and protocol helpers should remain testable without devices, model downloads, threads, or servers.
 - Return project result objects from project-facing code. Do not leak raw third-party objects through recorder, engine, boundary, or server APIs.
 - Keep server-only scheduling, metrics, admission, runtime settings, and websocket publishing out of `AudioToTextRecorder`.
 - Prefer small base interfaces, factories/registries, and backend adapters for new subsystems.

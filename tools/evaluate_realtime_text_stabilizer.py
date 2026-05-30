@@ -21,7 +21,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from RealtimeSTT.realtime_text_stabilizer import (
+from RealtimeSTT.core.realtime_text_stabilizer import (
     RealtimeTextFinalObservation,
     RealtimeTextObservation,
     RealtimeTextStabilizationConfig,
@@ -974,7 +974,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     results = [evaluate_scenario(scenario) for scenario in scenarios]
     report = {
         "kind": "realtime_text_stabilizer_replay_evaluation",
-        "stabilizer": "RealtimeSTT.realtime_text_stabilizer.RealtimeTextStabilizer",
+        "stabilizer": "RealtimeSTT.core.realtime_text_stabilizer.RealtimeTextStabilizer",
         "config": RealtimeTextStabilizationConfig().__dict__,
         "metrics": {
             "falseCommitRate": (

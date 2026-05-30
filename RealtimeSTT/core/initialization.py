@@ -14,13 +14,13 @@ import torch
 import torch.multiprocessing as mp
 import webrtcvad
 
-from ..realtime_text_stabilizer import RealtimeTextStabilizer
-from ..safepipe import SafePipe
-from ..silero_vad import create_silero_vad_model
+from .realtime_text_stabilizer import RealtimeTextStabilizer
 from ..transcription_engines import (
     TranscriptionEngineConfig,
     create_transcription_engine,
 )
+from .silero_vad import create_silero_vad_model
+from .safepipe import SafePipe
 from .wakeword import OPENWAKEWORD_BACKENDS, setup_wakeword_detection
 from .transcription import run_transcription_worker
 from .voice_activity import warmup_voice_activity_detectors
@@ -453,7 +453,7 @@ def _initialize_realtime_transcription_model(recorder):
             # Run a warm-up transcription
             current_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
             warmup_audio_path = os.path.join(
-                current_dir, "warmup_audio.wav"
+                current_dir, "assets", "warmup_audio.wav"
             )
             warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
             recorder.realtime_transcription_model.warmup(warmup_audio_data)

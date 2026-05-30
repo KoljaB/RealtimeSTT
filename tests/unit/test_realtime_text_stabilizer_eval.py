@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from RealtimeSTT.realtime_text_stabilizer import RealtimeTextStabilizationConfig
+from RealtimeSTT.core.realtime_text_stabilizer import RealtimeTextStabilizationConfig
 
 from tools.evaluate_realtime_text_stabilizer import (
     SAMPLE_RATE,

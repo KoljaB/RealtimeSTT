@@ -36,8 +36,8 @@ class MatrixCase:
 BASE_CHECKS = (
     "dist:realtimestt",
     "module:RealtimeSTT",
-    "module:RealtimeSTT.realtime_boundary_detector",
-    "module:RealtimeSTT.realtime_text_stabilizer",
+    "module:RealtimeSTT.core.realtime_boundary_detector",
+    "module:RealtimeSTT.core.realtime_text_stabilizer",
     "module:RealtimeSTT.transcription_engines",
 )
 

@@ -282,7 +282,7 @@ setuptools.setup(
     install_requires=base_requirements,
     extras_require=extras_require,
     keywords="real-time, audio, transcription, speech-to-text, voice-activity-detection, VAD, real-time-transcription, ambient-noise-detection, microphone-input, faster_whisper, speech-recognition, voice-assistants, audio-processing, buffered-transcription, pyaudio, ambient-noise-level, voice-deactivity",
-    package_data={"RealtimeSTT": ["warmup_audio.wav"]},
+    package_data={"RealtimeSTT": ["assets/warmup_audio.wav"]},
     include_package_data=True,
     cmdclass={"build_py": build_py},
     entry_points={

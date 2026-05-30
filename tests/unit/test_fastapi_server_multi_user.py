@@ -16,7 +16,7 @@ from example_fastapi_server.server import (
     SegmentState,
     ServerSettings,
 )
-from RealtimeSTT.realtime_text_stabilizer import (
+from RealtimeSTT.core.realtime_text_stabilizer import (
     RealtimeTextEvidenceDiagnostics,
     RealtimeTextObservationTiming,
     RealtimeTextStabilizationEvent,

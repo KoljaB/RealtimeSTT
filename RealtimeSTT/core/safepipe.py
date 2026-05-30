@@ -8,7 +8,7 @@ import logging
 # Configure logging. Adjust level and formatting as needed.
 # logging.basicConfig(level=logging.DEBUG,
 #                     format='[%(asctime)s] %(levelname)s:%(name)s: %(message)s')
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("RealtimeSTT.safepipe")
 
 try:
     # Only set the start method if it hasn't been set already.

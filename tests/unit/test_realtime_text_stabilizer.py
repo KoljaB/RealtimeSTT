@@ -1,7 +1,7 @@
 import threading
 import unittest
 
-from RealtimeSTT.realtime_text_stabilizer import (
+from RealtimeSTT.core.realtime_text_stabilizer import (
     RealtimeTextFinalObservation,
     RealtimeTextObservation,
     RealtimeTextStabilizationConfig,

@@ -10,7 +10,7 @@ Target structure:
 ```text
 RealtimeSTT/
   audio_recorder.py
-  _audio_recorder/
+  core/
     __init__.py
     transcription.py
     realtime.py
@@ -18,6 +18,8 @@ RealtimeSTT/
     voice_activity.py
     wakeword.py
     initialization.py
+    safepipe.py
+    silero_vad.py
 ```
 
 `RealtimeSTT/audio_recorder.py` remains the public facade. Callers must still be
@@ -45,16 +47,15 @@ fixed 50-line chunks.
 - Preserve log statements, log levels, message text, exception types, exception
   messages, callback order, queue behavior, thread lifecycle, and timing
   defaults.
-- Keep `RealtimeSTT/wakeword_dependencies.py` import-compatible. If wake-word
-  internals move under `_audio_recorder`, this module should become a
-  compatibility facade instead of disappearing.
+- Wake-word internals live under `RealtimeSTT/core/wakeword.py`; the old
+  `RealtimeSTT/wakeword_dependencies.py` facade has been removed.
 
 ## Baseline Validation
 
 Run the smallest relevant set for each pass. Useful focused gates include:
 
 ```powershell
-python -m pytest tests\unit\test_wakeword_dependencies.py
+python -m pytest tests\unit\test_wakeword.py
 python -m pytest tests\unit\test_silero_vad_backend.py tests\unit\test_slow_final_transcription_audio_gap.py
 python -m pytest tests\unit\test_preroll.py tests\unit\test_audio_recorder_preroll_integration.py
 python -m pytest tests\unit\test_realtime_text_stabilizer.py tests\unit\test_realtime_streaming_transcription.py
@@ -91,7 +92,7 @@ Purpose: introduce the destination without changing behavior.
 
 Actions:
 
-- Add `RealtimeSTT/_audio_recorder/__init__.py`.
+- Add `RealtimeSTT/core/__init__.py`.
 - Do not move runtime behavior yet.
 - Optionally add a short internal-package note that this is not a public API.
 
@@ -105,7 +106,7 @@ python -m py_compile RealtimeSTT\audio_recorder.py
 
 Purpose: isolate final transcription process and executor plumbing.
 
-Move to `RealtimeSTT/_audio_recorder/transcription.py`:
+Move to `RealtimeSTT/core/transcription.py`:
 
 - `TranscriptionWorker`
 - process entry helpers for transcription workers
@@ -121,7 +122,7 @@ Compatibility plan:
 Validation:
 
 ```powershell
-python -m py_compile RealtimeSTT\audio_recorder.py RealtimeSTT\_audio_recorder\transcription.py
+python -m py_compile RealtimeSTT\audio_recorder.py RealtimeSTT\core\transcription.py
 python -m pytest tests\unit\test_slow_final_transcription_audio_gap.py
 ```
 
@@ -130,7 +131,7 @@ python -m pytest tests\unit\test_slow_final_transcription_audio_gap.py
 Purpose: put wake-word backend selection, optional dependency loading, setup,
 processing, and cleanup behind one boundary.
 
-Move or centralize in `RealtimeSTT/_audio_recorder/wakeword.py`:
+Move or centralize in `RealtimeSTT/core/wakeword.py`:
 
 - wake-word backend constants
 - backend normalization
@@ -140,14 +141,14 @@ Move or centralize in `RealtimeSTT/_audio_recorder/wakeword.py`:
 
 Compatibility plan:
 
-- Keep `RealtimeSTT/wakeword_dependencies.py` as a compatibility facade.
+- Import wake-word helpers directly from `RealtimeSTT.core.wakeword`.
 - Keep `AudioToTextRecorder._process_wakeword()` as a wrapper at first.
 - Preserve Porcupine/OpenWakeWord error messages and extra names.
 
 Validation:
 
 ```powershell
-python -m pytest tests\unit\test_wakeword_dependencies.py
+python -m pytest tests\unit\test_wakeword.py
 python -m pytest tests\unit\test_fastapi_server_multi_user.py
 ```
 
@@ -155,7 +156,7 @@ python -m pytest tests\unit\test_fastapi_server_multi_user.py
 
 Purpose: separate recorder-level VAD decisions from the main recorder facade.
 
-Move to `RealtimeSTT/_audio_recorder/voice_activity.py`:
+Move to `RealtimeSTT/core/voice_activity.py`:
 
 - Silero probability and state reset helpers
 - WebRTC speech checks
@@ -166,7 +167,7 @@ Move to `RealtimeSTT/_audio_recorder/voice_activity.py`:
 Compatibility plan:
 
 - Keep existing recorder method names as wrappers during the migration.
-- Do not change `RealtimeSTT/silero_vad.py` or `RealtimeSTT/preroll.py` public
+- Do not change Silero backend behavior or `RealtimeSTT/core/preroll.py` public
   behavior; this milestone only moves recorder glue.
 - Preserve async Silero generation behavior and stale-result protection.
 
@@ -182,7 +183,7 @@ python -m pytest tests\unit\test_preroll.py tests\unit\test_audio_recorder_prero
 Purpose: move the main audio queue consumption and recording state loop after
 its wake-word and VAD dependencies have stable internal boundaries.
 
-Move to `RealtimeSTT/_audio_recorder/recording.py`:
+Move to `RealtimeSTT/core/recording.py`:
 
 - `_recording_worker` loop body as `run_recording_worker(recorder)` or an
   equivalent internal class/function.
@@ -207,7 +208,7 @@ python -m pytest tests\unit\test_fastapi_server_protocol.py
 Purpose: isolate realtime transcription scheduling, streaming-session behavior,
 partial text handling, and stabilization callbacks.
 
-Move to `RealtimeSTT/_audio_recorder/realtime.py`:
+Move to `RealtimeSTT/core/realtime.py`:
 
 - `_realtime_worker` loop body
 - realtime frame snapshot and conversion helpers
@@ -234,7 +235,7 @@ python -m pytest tests\unit\test_realtime_boundary_detector.py
 Purpose: make the constructor readable only after the runtime subsystems have
 clear module boundaries.
 
-Move to `RealtimeSTT/_audio_recorder/initialization.py`:
+Move to `RealtimeSTT/core/initialization.py`:
 
 - grouped setup helpers for logging, callbacks, VAD, wake words, transcription
   engines, realtime state, queues, and worker startup.
@@ -251,7 +252,7 @@ Validation:
 ```powershell
 python -m pytest tests\unit\test_silero_vad_backend.py
 python -m pytest tests\unit\test_fastapi_server_protocol.py
-python -m py_compile RealtimeSTT\audio_recorder.py RealtimeSTT\_audio_recorder\initialization.py
+python -m py_compile RealtimeSTT\audio_recorder.py RealtimeSTT\core\initialization.py
 ```
 
 ## Milestone 8: Cleanup and Boundary Enforcement
