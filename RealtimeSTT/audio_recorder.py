@@ -61,6 +61,23 @@ from ._audio_recorder.wakeword import (
     process_wakeword,
     setup_wakeword_detection,
 )
+from ._audio_recorder.voice_activity import (
+    append_to_pre_recording_buffer,
+    check_voice_activity,
+    clear_pre_recording_buffer,
+    frame_rms,
+    is_silero_speech,
+    is_voice_active,
+    is_webrtc_speech,
+    metadata_for_frame_without_vad,
+    pre_recording_buffer_trim_enabled,
+    preroll_frame_metadata,
+    reset_silero_vad_state,
+    selected_pre_recording_buffer_frames,
+    silero_vad_probability,
+    warmup_voice_activity_detectors,
+    webrtc_replay_preroll_diagnostics,
+)
 import soundfile as sf
 import collections
 import numpy as np
@@ -3276,324 +3293,50 @@ class AudioToTextRecorder:
         logger.debug("Realtime worker stopped")
 
     def _silero_vad_probability(self, audio_chunk):
-        result = self.silero_vad_model(audio_chunk, SAMPLE_RATE)
-        if isinstance(result, (float, int)):
-            return float(result)
-        if hasattr(result, "item"):
-            return float(result.item())
-        return float(np.asarray(result).reshape(-1)[0])
+        return silero_vad_probability(self, audio_chunk)
 
     def _reset_silero_vad_state(self):
-        """
-        Reset Silero's recurrent state and the recorder-side Silero flag.
-
-        Silero VAD keeps hidden state between chunk calls. That is useful while
-        evaluating one continuous stream, but it must not leak across warmup,
-        listening attempts, or completed recordings.
-        """
-        self._silero_vad_generation = (
-            getattr(self, "_silero_vad_generation", 0) + 1
-        )
-        reset_states = getattr(
-            getattr(self, "silero_vad_model", None),
-            "reset_states",
-            None,
-        )
-        if reset_states:
-            try:
-                lock = getattr(self, "silero_vad_lock", None)
-                if lock is None:
-                    reset_states()
-                else:
-                    with lock:
-                        reset_states()
-            except Exception:
-                logger.debug("Silero VAD state reset skipped", exc_info=True)
-        self.is_silero_speech_active = False
+        return reset_silero_vad_state(self)
 
     def _warmup_voice_activity_detectors(self):
-        """
-        Prime VAD runtimes without changing recorder state.
-
-        The first Silero invocation can otherwise pay lazy Torch/JIT setup
-        costs on the first user speech chunk. That delays voice activation and
-        therefore delays the first realtime transcription, even when the ASR
-        model workers are already warmed.
-        """
-        try:
-            frame_samples = int(16000 * 0.01)
-            silence_frame = np.zeros(frame_samples, dtype=np.int16).tobytes()
-            self.webrtc_vad_model.is_speech(silence_frame, 16000)
-        except Exception:
-            logger.debug("WebRTC VAD warmup skipped", exc_info=True)
-
-        try:
-            sample_count = max(1, int(getattr(self, "buffer_size", BUFFER_SIZE)))
-            t = np.arange(sample_count, dtype=np.float32) / float(SAMPLE_RATE)
-            # A quiet tone exercises the model path without marking the
-            # recorder as actively recording or speech-active.
-            tone = (0.03 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
-            silence = np.zeros(sample_count, dtype=np.float32)
-
-            self._silero_vad_probability(tone)
-            self._silero_vad_probability(silence)
-
-            self._reset_silero_vad_state()
-        except Exception:
-            logger.debug("Silero VAD warmup skipped", exc_info=True)
-
-        self.silero_working = False
-        self.is_silero_speech_active = False
-        self.is_webrtc_speech_active = False
-        self.last_webrtc_speech_time = 0
+        return warmup_voice_activity_detectors(self)
 
     def _is_silero_speech(self, chunk, generation=None):
-        """
-        Returns true if speech is detected in the provided audio data
-
-        Args:
-            data (bytes): raw bytes of audio data (1024 raw bytes with
-            16000 sample rate and 16 bits per sample)
-        """
-        if generation is None:
-            generation = getattr(self, "_silero_vad_generation", 0)
-
-        self.silero_working = True
-        try:
-            if generation != getattr(self, "_silero_vad_generation", 0):
-                return False
-
-            if self.sample_rate != 16000:
-                pcm_data = np.frombuffer(chunk, dtype=np.int16)
-                data_16000 = signal.resample_poly(
-                    pcm_data, 16000, self.sample_rate)
-                chunk = data_16000.astype(np.int16).tobytes()
-
-            if generation != getattr(self, "_silero_vad_generation", 0):
-                return False
-
-            audio_chunk = np.frombuffer(chunk, dtype=np.int16)
-            audio_chunk = audio_chunk.astype(np.float32) / INT16_MAX_ABS_VALUE
-            lock = getattr(self, "silero_vad_lock", None)
-            if lock is None:
-                vad_prob = self._silero_vad_probability(audio_chunk)
-            else:
-                with lock:
-                    if generation != getattr(self, "_silero_vad_generation", 0):
-                        return False
-                    vad_prob = self._silero_vad_probability(audio_chunk)
-
-            if generation != getattr(self, "_silero_vad_generation", 0):
-                return False
-
-            is_silero_speech_active = vad_prob > (1 - self.silero_sensitivity)
-            if is_silero_speech_active:
-                if not self.is_silero_speech_active and self.use_extended_logging:
-                    logger.info(f"{bcolors.OKGREEN}Silero VAD detected speech{bcolors.ENDC}")
-            elif self.is_silero_speech_active and self.use_extended_logging:
-                logger.info(f"{bcolors.WARNING}Silero VAD detected silence{bcolors.ENDC}")
-            self.is_silero_speech_active = is_silero_speech_active
-            return is_silero_speech_active
-        finally:
-            self.silero_working = False
+        return is_silero_speech(self, chunk, generation)
 
     def _is_webrtc_speech(self, chunk, all_frames_must_be_true=False):
-        """
-        Returns true if speech is detected in the provided audio data
-
-        Args:
-            data (bytes): raw bytes of audio data (1024 raw bytes with
-            16000 sample rate and 16 bits per sample)
-        """
-        speech_str = f"{bcolors.OKGREEN}WebRTC VAD detected speech{bcolors.ENDC}"
-        silence_str = f"{bcolors.WARNING}WebRTC VAD detected silence{bcolors.ENDC}"
-        if self.sample_rate != 16000:
-            pcm_data = np.frombuffer(chunk, dtype=np.int16)
-            data_16000 = signal.resample_poly(
-                pcm_data, 16000, self.sample_rate)
-            chunk = data_16000.astype(np.int16).tobytes()
-
-        # Number of audio frames per millisecond
-        frame_length = int(16000 * 0.01)  # for 10ms frame
-        num_frames = int(len(chunk) / (2 * frame_length))
-        speech_frames = 0
-
-        for i in range(num_frames):
-            start_byte = i * frame_length * 2
-            end_byte = start_byte + frame_length * 2
-            frame = chunk[start_byte:end_byte]
-            if self.webrtc_vad_model.is_speech(frame, 16000):
-                speech_frames += 1
-                if not all_frames_must_be_true:
-                    if self.debug_mode:
-                        logger.info(f"Speech detected in frame {i + 1}"
-                              f" of {num_frames}")
-                    if not self.is_webrtc_speech_active and self.use_extended_logging:
-                        logger.info(speech_str)
-                    self.is_webrtc_speech_active = True
-                    self.last_webrtc_speech_time = time.time()
-                    return True
-        if all_frames_must_be_true:
-            if self.debug_mode and speech_frames == num_frames:
-                logger.info(f"Speech detected in {speech_frames} of "
-                      f"{num_frames} frames")
-            elif self.debug_mode:
-                logger.info(f"Speech not detected in all {num_frames} frames")
-            speech_detected = speech_frames == num_frames
-            if speech_detected and not self.is_webrtc_speech_active and self.use_extended_logging:
-                logger.info(speech_str)
-            elif not speech_detected and self.is_webrtc_speech_active and self.use_extended_logging:
-                logger.info(silence_str)
-            self.is_webrtc_speech_active = speech_detected
-            return speech_detected
-        else:
-            if self.debug_mode:
-                logger.info(f"Speech not detected in any of {num_frames} frames")
-            if self.is_webrtc_speech_active and self.use_extended_logging:
-                logger.info(silence_str)
-            self.is_webrtc_speech_active = False
-            return False
+        return is_webrtc_speech(self, chunk, all_frames_must_be_true)
 
     def _check_voice_activity(self, data):
-        """
-        Initiate check if voice is active based on the provided data.
-
-        Args:
-            data: The audio data to be checked for voice activity.
-        """
-        was_webrtc_speech_active = self.is_webrtc_speech_active
-        self._is_webrtc_speech(data)
-
-        # First quick performing check for voice activity using WebRTC
-        if self.is_webrtc_speech_active:
-
-            if not self.silero_working:
-                if not was_webrtc_speech_active:
-                    self._reset_silero_vad_state()
-                self.silero_working = True
-                silero_generation = getattr(self, "_silero_vad_generation", 0)
-
-                # Run the intensive check in a separate thread
-                threading.Thread(
-                    target=self._is_silero_speech,
-                    args=(data, silero_generation)).start()
+        return check_voice_activity(
+            self,
+            data,
+            thread_factory=threading.Thread,
+        )
 
     def _pre_recording_buffer_trim_enabled(self):
-        config = getattr(self, "pre_recording_buffer_trim_config", None) or {}
-        return bool(config.get("enabled", False))
+        return pre_recording_buffer_trim_enabled(self)
 
     def _append_to_pre_recording_buffer(self, data):
-        self.audio_buffer.append(data)
-        metadata_buffer = getattr(self, "audio_buffer_metadata", None)
-        if metadata_buffer is not None:
-            metadata_buffer.append(self._preroll_frame_metadata(data))
+        return append_to_pre_recording_buffer(self, data)
 
     def _clear_pre_recording_buffer(self):
-        self.audio_buffer.clear()
-        metadata_buffer = getattr(self, "audio_buffer_metadata", None)
-        if metadata_buffer is not None:
-            metadata_buffer.clear()
+        return clear_pre_recording_buffer(self)
 
     def _selected_pre_recording_buffer_frames(self):
-        frames = list(self.audio_buffer)
-        self._pending_preroll_selection = None
-        if not frames:
-            return frames
-
-        if not self._pre_recording_buffer_trim_enabled():
-            return frames
-
-        metadata = list(getattr(self, "audio_buffer_metadata", ()))
-        if len(metadata) != len(frames):
-            metadata = [self._metadata_for_frame_without_vad(frame) for frame in frames]
-
-        config = getattr(self, "pre_recording_buffer_trim_config", None) or {}
-        selection = select_preroll_frames(
-            metadata,
-            int(getattr(self, "sample_rate", SAMPLE_RATE) or SAMPLE_RATE),
-            min_silence_ms=config.get("min_silence_ms", 200.0),
-            guard_ms=config.get("guard_ms", 160.0),
-            max_gap_ms=config.get("max_gap_ms", 80.0),
-            min_included_ms=config.get("min_included_ms", 600.0),
-            energy_silence_rms=config.get("energy_silence_rms"),
-            noise_floor_multiplier=config.get("noise_floor_multiplier", 2.5),
-            energy_margin_rms=config.get("energy_margin_rms", 25.0),
-        )
-        selection.diagnostics.update(self._webrtc_replay_preroll_diagnostics(frames))
-        self._pending_preroll_selection = selection
-        return frames[selection.start_index:]
+        return selected_pre_recording_buffer_frames(self)
 
     def _preroll_frame_metadata(self, data):
-        sample_count = max(0, len(data) // 2)
-        rms = self._frame_rms(data)
-        webrtc_is_speech = bool(getattr(self, "is_webrtc_speech_active", False))
-        silero_is_speech = bool(getattr(self, "is_silero_speech_active", False))
-        is_speech = webrtc_is_speech or silero_is_speech
-        return PrerollFrameMetadata(
-            sample_count=sample_count,
-            is_speech=is_speech,
-            rms=rms,
-            webrtc_is_speech=webrtc_is_speech,
-            silero_is_speech=silero_is_speech,
-        )
+        return preroll_frame_metadata(self, data)
 
     def _metadata_for_frame_without_vad(self, frame):
-        return PrerollFrameMetadata(
-            sample_count=max(0, len(frame) // 2),
-            is_speech=None,
-            rms=self._frame_rms(frame),
-        )
+        return metadata_for_frame_without_vad(self, frame)
 
     def _frame_rms(self, data):
-        if not data:
-            return None
-        try:
-            samples = np.frombuffer(data, dtype=np.int16)
-            if samples.size == 0:
-                return None
-            audio = samples.astype(np.float32)
-            return float(np.sqrt(np.mean(audio * audio)))
-        except Exception:
-            logger.debug("Could not calculate pre-roll frame RMS", exc_info=True)
-            return None
+        return frame_rms(data)
 
     def _webrtc_replay_preroll_diagnostics(self, frames):
-        speech_sample_count = 0
-        analyzed_sample_count = 0
-        frame_length = int(16000 * 0.01)
-        sample_rate = int(getattr(self, "sample_rate", SAMPLE_RATE) or SAMPLE_RATE)
-
-        try:
-            vad_model = webrtcvad.Vad(int(getattr(self, "webrtc_sensitivity", 3)))
-            for chunk in list(frames or ()):
-                replay_chunk = chunk
-                if sample_rate != 16000:
-                    pcm_data = np.frombuffer(replay_chunk, dtype=np.int16)
-                    data_16000 = signal.resample_poly(
-                        pcm_data,
-                        16000,
-                        sample_rate,
-                    )
-                    replay_chunk = data_16000.astype(np.int16).tobytes()
-
-                num_frames = int(len(replay_chunk) / (2 * frame_length))
-                for index in range(num_frames):
-                    start_byte = index * frame_length * 2
-                    end_byte = start_byte + frame_length * 2
-                    frame = replay_chunk[start_byte:end_byte]
-                    analyzed_sample_count += frame_length
-                    if vad_model.is_speech(frame, 16000):
-                        speech_sample_count += frame_length
-        except Exception as exc:
-            logger.debug("Could not replay WebRTC VAD over pre-roll", exc_info=True)
-            return {"webrtcReplayError": str(exc)}
-
-        return {
-            "webrtcReplaySpeechSampleCount": speech_sample_count,
-            "webrtcReplayAnalyzedSampleCount": analyzed_sample_count,
-            "webrtcReplaySpeechSeconds": speech_sample_count / 16000.0,
-            "webrtcReplayAnalyzedSeconds": analyzed_sample_count / 16000.0,
-        }
+        return webrtc_replay_preroll_diagnostics(self, frames)
 
     def clear_audio_queue(self):
         """
@@ -3610,19 +3353,7 @@ class AudioToTextRecorder:
             pass
 
     def _is_voice_active(self):
-        """
-        Determine if voice is active.
-
-        Returns:
-            bool: True if voice is active, False otherwise.
-        """
-        webrtc_speech_recent = (
-            time.time() - getattr(self, "last_webrtc_speech_time", 0) <= 1.0
-        )
-        return (
-            (self.is_webrtc_speech_active or webrtc_speech_recent)
-            and self.is_silero_speech_active
-        )
+        return is_voice_active(self)
 
     def _set_state(self, new_state):
         """
