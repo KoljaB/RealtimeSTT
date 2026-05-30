@@ -255,6 +255,7 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             "_set_spinner",
             "_preprocess_output",
             "_find_tail_match_in_text",
+            "_read_stdout",
             "_audio_data_worker",
         ]
 

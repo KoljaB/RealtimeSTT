@@ -13,7 +13,6 @@ import os
 import platform
 import threading
 import time
-import traceback
 from typing import Callable, Iterable, List, Optional, Union
 
 # Third-party imports.
@@ -36,6 +35,7 @@ from .core.recording_buffers import (
     queue_recorded_audio,
     set_audio_from_frames,
 )
+from .core.runtime import read_stdout_pipe
 from .core.state import run_callback, set_recorder_state
 from .core.state import set_spinner
 from .core.text_formatting import (
@@ -1321,23 +1321,7 @@ class AudioToTextRecorder:
             return thread
 
     def _read_stdout(self):
-        while not self.shutdown_event.is_set():
-            try:
-                if self.parent_stdout_pipe.poll(0.1):
-                    logger.debug("Receive from stdout pipe")
-                    message = self.parent_stdout_pipe.recv()
-                    logger.info(message)
-            except (BrokenPipeError, EOFError, OSError):
-                # The pipe probably has been closed, so we ignore the error
-                pass
-            except KeyboardInterrupt:  # handle manual interruption (Ctrl+C)
-                logger.info("KeyboardInterrupt in read from stdout detected, exiting...")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in read from stdout: {e}", exc_info=True)
-                logger.error(traceback.format_exc())  # Log the full traceback here
-                break
-            time.sleep(0.1)
+        return read_stdout_pipe(self)
 
     def _set_state_after_transcription(self):
         if self.is_recording:
