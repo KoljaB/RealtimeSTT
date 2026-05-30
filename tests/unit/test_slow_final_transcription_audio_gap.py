@@ -179,7 +179,7 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.on_recording_stop = None
 
         recorder.stop()
-        with mock.patch("RealtimeSTT.audio_recorder.set_recorder_state"):
+        with mock.patch("RealtimeSTT.core.lifecycle.set_recorder_state"):
             recorder.wait_audio()
 
         expected = np.frombuffer(b"".join(chunks), dtype=np.int16).astype(np.float32) / 32768.0
@@ -220,7 +220,7 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.stop_recording_event = threading.Event()
         recorder.on_recording_start = None
 
-        with mock.patch("RealtimeSTT.audio_recorder.set_recorder_state"):
+        with mock.patch("RealtimeSTT.core.lifecycle.set_recorder_state"):
             recorder.start()
 
         self.assertEqual(silero.reset_count, 1)

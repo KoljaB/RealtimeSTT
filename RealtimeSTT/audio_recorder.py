@@ -27,6 +27,14 @@ from .core.initialization import initialize_recorder
 from .core.recorder_config import build_recorder_init_args
 from .core.realtime import run_realtime_worker
 from .core.recording import run_recording_worker
+from .core.lifecycle import (
+    abort_recording,
+    listen_for_voice_activity,
+    start_recording,
+    stop_recording,
+    wait_for_recorded_audio,
+    wakeup_recorder,
+)
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
@@ -644,63 +652,7 @@ class AudioToTextRecorder:
         """
         Starts recording audio directly without waiting for voice activity.
         """
-
-        # Ensure there's a minimum interval
-        # between stopping and starting recording
-        if (time.time() - self.recording_stop_time
-                < self.min_gap_between_recordings):
-            logger.info("Attempted to start recording "
-                         "too soon after stopping."
-                         )
-            self._pending_preroll_selection = None
-            self.last_preroll_selection = None
-            return self
-
-        logger.info("recording started")
-        set_recorder_state(self, "recording")
-        self.text_storage = []
-        self.realtime_stabilized_text = ""
-        self.realtime_stabilized_safetext = ""
-        self.realtime_observation_sequence = 0
-        self.realtime_recording_id = getattr(self, "realtime_recording_id", 0) + 1
-        self.recording_start_monotonic = time.monotonic()
-        self.last_preroll_selection = getattr(
-            self,
-            "_pending_preroll_selection",
-            None,
-        )
-        self._pending_preroll_selection = None
-        self.wakeword_detected = False
-        self.wake_word_detect_time = 0
-        self.frames = []
-        if frames:
-            self.frames = frames
-
-        self.recording_start_time = time.time()
-        self.speech_end_silence_candidate_start = 0
-        realtime_text_stabilizer = getattr(
-            self,
-            "realtime_text_stabilizer",
-            None,
-        )
-        if realtime_text_stabilizer is None:
-            realtime_text_stabilizer = RealtimeTextStabilizer()
-            self.realtime_text_stabilizer = realtime_text_stabilizer
-        realtime_text_stabilizer.reset(
-            self.realtime_recording_id,
-            started_at_monotonic=self.recording_start_monotonic,
-            started_at_wall_time=self.recording_start_time,
-        )
-        reset_silero_vad_state(self)
-        self.is_recording = True
-        self.is_webrtc_speech_active = False
-        self.stop_recording_event.clear()
-        self.start_recording_event.set()
-
-        if self.on_recording_start:
-            run_callback(self, self.on_recording_start)
-
-        return self
+        return start_recording(self, frames)
 
     def stop(self,
              backdate_stop_seconds: float = 0.0,
@@ -716,50 +668,11 @@ class AudioToTextRecorder:
         - backdate_resume_seconds (float, default="0.0"): Specifies the number
             of seconds to backdate the time relistening is initiated.
         """
-
-        # Ensure there's a minimum interval
-        # between starting and stopping recording
-        if (time.time() - self.recording_start_time
-                < self.min_length_of_recording):
-            logger.info("Attempted to stop recording "
-                         "too soon after starting."
-                         )
-            return self
-
-        logger.info("recording stopped")
-        stopped_frames = copy.deepcopy(self.frames)
-        self.last_frames = copy.deepcopy(stopped_frames)
-        self.backdate_stop_seconds = backdate_stop_seconds
-        self.backdate_resume_seconds = backdate_resume_seconds
-        queue_recorded_audio(
+        return stop_recording(
             self,
-            stopped_frames,
-            backdate_stop_seconds,
-            backdate_resume_seconds,
+            backdate_stop_seconds=backdate_stop_seconds,
+            backdate_resume_seconds=backdate_resume_seconds,
         )
-        self.frames = []
-        self.is_recording = False
-        self.recording_stop_time = time.time()
-        realtime_text_stabilizer = getattr(
-            self,
-            "realtime_text_stabilizer",
-            None,
-        )
-        if realtime_text_stabilizer is not None:
-            realtime_text_stabilizer.finalize()
-        reset_silero_vad_state(self)
-        self.is_webrtc_speech_active = False
-        self.silero_check_time = 0
-        self.start_recording_event.clear()
-        self.stop_recording_event.set()
-
-        self.last_recording_start_time = self.recording_start_time
-        self.last_recording_stop_time = self.recording_stop_time
-
-        if self.on_recording_stop:
-            run_callback(self, self.on_recording_stop)
-
-        return self
 
     def listen(self):
         """
@@ -768,10 +681,7 @@ class AudioToTextRecorder:
         The recorder now "listens" for voice activation.
         Once voice is detected we enter "recording" state.
         """
-        self.listen_start = time.time()
-        set_recorder_state(self, "listening")
-        reset_silero_vad_state(self)
-        self.start_recording_on_voice_activity = True
+        return listen_for_voice_activity(self)
 
     def text(self,
              on_transcription_finished=None,
@@ -935,89 +845,7 @@ class AudioToTextRecorder:
         - Updates the state of the instance.
         - Modifies the audio attribute to contain the processed audio data.
         """
-
-        armed_for_voice_activity = False
-
-        try:
-            logger.info("Setting listen time")
-            if self.listen_start == 0:
-                self.listen_start = time.time()
-
-            queued_recording = get_next_recorded_audio(self)
-
-            # If not yet started recording, wait for voice activity to initiate.
-            if queued_recording is None and not self.is_recording and not self.frames:
-                set_recorder_state(self, "listening")
-                reset_silero_vad_state(self)
-                self.start_recording_on_voice_activity = True
-                armed_for_voice_activity = True
-
-                # Wait until recording starts
-                logger.debug('Waiting for recording start')
-                while not self.interrupt_stop_event.is_set():
-                    if self.start_recording_event.wait(timeout=0.02):
-                        break
-
-            # If recording is ongoing, wait for voice inactivity
-            # to finish recording.
-            if queued_recording is None and self.is_recording:
-                self.stop_recording_on_voice_deactivity = True
-
-                # Wait until recording stops
-                logger.debug('Waiting for recording stop')
-                while not self.interrupt_stop_event.is_set():
-                    if (self.stop_recording_event.wait(timeout=0.02)):
-                        break
-
-            if queued_recording is None:
-                queued_recording = get_next_recorded_audio(self)
-
-            if queued_recording is not None:
-                frames = queued_recording["frames"]
-                backdate_stop_seconds = queued_recording["backdate_stop_seconds"]
-                backdate_resume_seconds = queued_recording["backdate_resume_seconds"]
-            else:
-                frames = self.frames
-                if len(frames) == 0:
-                    frames = self.last_frames
-                backdate_stop_seconds = self.backdate_stop_seconds
-                backdate_resume_seconds = self.backdate_resume_seconds
-
-            frames_to_read = set_audio_from_frames(
-                self,
-                frames,
-                backdate_stop_seconds,
-                backdate_resume_seconds,
-            )
-
-            if not self.is_recording:
-                self.frames.clear()
-                self.last_frames.clear()
-                self.frames.extend(frames_to_read)
-
-            # Reset backdating parameters
-            self.backdate_stop_seconds = 0.0
-            self.backdate_resume_seconds = 0.0
-
-            self.listen_start = 0
-
-            if not self.is_recording:
-                set_recorder_state(self, "inactive")
-
-            if (
-                    armed_for_voice_activity
-                    and not self.use_wake_words
-                    and not self.interrupt_stop_event.is_set()
-                    and not self.is_shut_down):
-                self.continuous_listening = True
-                reset_silero_vad_state(self)
-                self.start_recording_on_voice_activity = True
-                self.stop_recording_on_voice_deactivity = True
-
-        except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt in wait_audio, shutting down")
-            self.shutdown()
-            raise  # Re-raise the exception after cleanup
+        return wait_for_recorded_audio(self)
 
     def feed_audio(self, chunk, original_sample_rate=16000):
         """
@@ -1126,19 +954,10 @@ class AudioToTextRecorder:
         """
         If in wake work modus, wake up as if a wake word was spoken.
         """
-        self.listen_start = time.time()
+        return wakeup_recorder(self)
 
     def abort(self):
-        state = self.state
-        self.start_recording_on_voice_activity = False
-        self.stop_recording_on_voice_deactivity = False
-        self.interrupt_stop_event.set()
-        if self.state != "inactive": # if inactive, was_interrupted will never be set
-            self.was_interrupted.wait()
-            set_recorder_state(self, "transcribing")
-        self.was_interrupted.clear()
-        if self.is_recording: # if recording, make sure to stop the recorder
-            self.stop()
+        return abort_recording(self)
 
     def set_microphone(self, microphone_on=True):
         """
