@@ -17,6 +17,7 @@ import numpy as np
 
 from .core.realtime_text_stabilizer import RealtimeTextStabilizer
 from .core.initialization import initialize_recorder
+from .core.recorder_config import build_recorder_init_args
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
@@ -510,10 +511,110 @@ class AudioToTextRecorder:
             model, wake word detection, or audio recording.
         """
 
+        init_args = build_recorder_init_args(
+            self,
+            model=model,
+            transcription_engine=transcription_engine,
+            transcription_engine_options=transcription_engine_options,
+            download_root=download_root,
+            language=language,
+            compute_type=compute_type,
+            input_device_index=input_device_index,
+            gpu_device_index=gpu_device_index,
+            device=device,
+            on_recording_start=on_recording_start,
+            on_recording_stop=on_recording_stop,
+            on_transcription_start=on_transcription_start,
+            ensure_sentence_starting_uppercase=ensure_sentence_starting_uppercase,
+            ensure_sentence_ends_with_period=ensure_sentence_ends_with_period,
+            use_microphone=use_microphone,
+            spinner=spinner,
+            level=level,
+            batch_size=batch_size,
+            enable_realtime_transcription=enable_realtime_transcription,
+            use_main_model_for_realtime=use_main_model_for_realtime,
+            realtime_transcription_engine=realtime_transcription_engine,
+            realtime_transcription_engine_options=(
+                realtime_transcription_engine_options
+            ),
+            realtime_model_type=realtime_model_type,
+            realtime_processing_pause=realtime_processing_pause,
+            init_realtime_after_seconds=init_realtime_after_seconds,
+            on_realtime_transcription_update=on_realtime_transcription_update,
+            on_realtime_transcription_stabilized=(
+                on_realtime_transcription_stabilized
+            ),
+            realtime_batch_size=realtime_batch_size,
+            silero_sensitivity=silero_sensitivity,
+            silero_use_onnx=silero_use_onnx,
+            silero_deactivity_detection=silero_deactivity_detection,
+            webrtc_sensitivity=webrtc_sensitivity,
+            warmup_vad=warmup_vad,
+            post_speech_silence_duration=post_speech_silence_duration,
+            min_length_of_recording=min_length_of_recording,
+            min_gap_between_recordings=min_gap_between_recordings,
+            pre_recording_buffer_duration=pre_recording_buffer_duration,
+            pre_recording_buffer_trim_config=pre_recording_buffer_trim_config,
+            on_vad_start=on_vad_start,
+            on_vad_stop=on_vad_stop,
+            on_vad_detect_start=on_vad_detect_start,
+            on_vad_detect_stop=on_vad_detect_stop,
+            on_turn_detection_start=on_turn_detection_start,
+            on_turn_detection_stop=on_turn_detection_stop,
+            wakeword_backend=wakeword_backend,
+            openwakeword_model_paths=openwakeword_model_paths,
+            openwakeword_inference_framework=openwakeword_inference_framework,
+            wake_words=wake_words,
+            wake_words_sensitivity=wake_words_sensitivity,
+            wake_word_activation_delay=wake_word_activation_delay,
+            wake_word_timeout=wake_word_timeout,
+            wake_word_buffer_duration=wake_word_buffer_duration,
+            on_wakeword_detected=on_wakeword_detected,
+            on_wakeword_timeout=on_wakeword_timeout,
+            on_wakeword_detection_start=on_wakeword_detection_start,
+            on_wakeword_detection_end=on_wakeword_detection_end,
+            on_recorded_chunk=on_recorded_chunk,
+            debug_mode=debug_mode,
+            handle_buffer_overflow=handle_buffer_overflow,
+            beam_size=beam_size,
+            beam_size_realtime=beam_size_realtime,
+            buffer_size=buffer_size,
+            sample_rate=sample_rate,
+            initial_prompt=initial_prompt,
+            initial_prompt_realtime=initial_prompt_realtime,
+            suppress_tokens=suppress_tokens,
+            print_transcription_time=print_transcription_time,
+            early_transcription_on_silence=early_transcription_on_silence,
+            allowed_latency_limit=allowed_latency_limit,
+            no_log_file=no_log_file,
+            use_extended_logging=use_extended_logging,
+            faster_whisper_vad_filter=faster_whisper_vad_filter,
+            normalize_audio=normalize_audio,
+            start_callback_in_new_thread=start_callback_in_new_thread,
+            realtime_transcription_use_syllable_boundaries=(
+                realtime_transcription_use_syllable_boundaries
+            ),
+            realtime_boundary_detector_sensitivity=(
+                realtime_boundary_detector_sensitivity
+            ),
+            realtime_boundary_followup_delays=realtime_boundary_followup_delays,
+            transcription_executor=transcription_executor,
+            realtime_transcription_executor=realtime_transcription_executor,
+            on_realtime_text_stabilization_update=(
+                on_realtime_text_stabilization_update
+            ),
+            silero_backend=silero_backend,
+            silero_onnx_model_path=silero_onnx_model_path,
+            silero_onnx_threads=silero_onnx_threads,
+            deactivity_silence_confirmation_duration=(
+                deactivity_silence_confirmation_duration
+            ),
+        )
+
         initialize_recorder(
             self,
             AudioToTextRecorder,
-            locals().copy(),
+            init_args,
             normalize_wakeword_backend=_normalize_wakeword_backend,
             load_porcupine_module=_load_porcupine_module,
             load_openwakeword_modules=_load_openwakeword_modules,
