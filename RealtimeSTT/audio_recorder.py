@@ -1,36 +1,25 @@
-"""
+"""Public recorder facade for RealtimeSTT."""
 
-The AudioToTextRecorder class in the provided code facilitates
-fast speech-to-text transcription.
-
-The class employs a pluggable transcription engine to transcribe the recorded
-audio into text using machine learning models, which can be run either on a GPU or
-CPU. Voice activity detection (VAD) is built in, meaning the software can
-automatically start or stop recording based on the presence or absence of
-speech. It integrates optional wake word detection through Porcupine or
-OpenWakeWord, allowing the software to initiate recording when a specific word
-or phrase is spoken. The system provides real-time feedback and can be further
-customized.
-
-Features:
-- Voice Activity Detection: Automatically starts/stops recording when speech
-  is detected or when speech ends.
-- Wake Word Detection: Starts recording when a specified wake word (or words)
-  is detected.
-- Event Callbacks: Customizable callbacks for when recording starts
-  or finishes.
-- Fast Transcription: Returns the transcribed text from the audio as fast
-  as possible.
-
-Author: Kolja Beigel
-
-"""
-
+import base64
+import copy
+import gc
+import logging
+import os
+import platform
+import queue
+import re
+import signal as system_signal
+import threading
+import time
+import traceback
 from typing import Callable, Iterable, List, Optional, Union
+
 import torch.multiprocessing as mp
 from scipy.signal import resample
-import signal as system_signal
 from scipy import signal
+import numpy as np
+import halo
+
 from .core.realtime_text_stabilizer import RealtimeTextStabilizer
 from .core.initialization import initialize_recorder
 from .core.recording import run_recording_worker
@@ -54,27 +43,22 @@ from .core.voice_activity import (
     reset_silero_vad_state,
     selected_pre_recording_buffer_frames,
 )
-import numpy as np
-import traceback
-import threading
-import platform
-import logging
-import base64
-import queue
-import halo
-import time
-import copy
-import os
-import re
-import gc
 
-# Named logger for this module.
+
+# Compatibility environment setup.
+#
+# Some downstream combinations of Torch, OpenMP, and audio/model runtimes rely on
+# this import-time setting. Keep it early and behavior-compatible; it is not a
+# general runtime recommendation for application code.
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
+
+# Logger setup.
 logger = logging.getLogger("realtimestt")
 logger.propagate = False
 
-# Set OpenMP runtime duplicate library handling to OK (Use only for development!)
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
+# Public constructor defaults and compatibility constants.
 INIT_MODEL_TRANSCRIPTION = "tiny"
 INIT_MODEL_TRANSCRIPTION_REALTIME = "tiny"
 INIT_REALTIME_PROCESSING_PAUSE = 0.2
@@ -90,18 +74,21 @@ INIT_WAKE_WORD_ACTIVATION_DELAY = 0.0
 INIT_WAKE_WORD_TIMEOUT = 5.0
 INIT_WAKE_WORD_BUFFER_DURATION = 0.1
 ALLOWED_LATENCY_LIMIT = 100
-
-TIME_SLEEP = 0.02
 SAMPLE_RATE = 16000
 BUFFER_SIZE = 512
 DEACTIVITY_SILENCE_CONFIRMATION_DURATION = 0.16
-INT16_MAX_ABS_VALUE = 32768.0
 
 INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
 
 
+# Internal recorder constants.
+TIME_SLEEP = 0.02
+INT16_MAX_ABS_VALUE = 32768.0
+
+
+# Console color constants used by debug speech detection output.
 class bcolors:
     OKGREEN = '\033[92m'  # Green for active speech detection
     WARNING = '\033[93m'  # Yellow for silence detection
