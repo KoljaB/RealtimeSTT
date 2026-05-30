@@ -1,5 +1,10 @@
-"""Public recorder facade for RealtimeSTT."""
+"""Public recorder facade for RealtimeSTT.
 
+This module preserves the stable recorder API while delegating subsystem
+implementation details to ``RealtimeSTT.core``.
+"""
+
+# Standard library imports.
 import base64
 import copy
 import gc
@@ -11,13 +16,18 @@ import time
 import traceback
 from typing import Callable, Iterable, List, Optional, Union
 
+# Third-party imports.
 import torch.multiprocessing as mp
 from scipy.signal import resample
 import numpy as np
 
+# Internal imports.
+from .core.audio_input_worker import run_audio_data_worker
 from .core.realtime_text_stabilizer import RealtimeTextStabilizer
 from .core.initialization import initialize_recorder
 from .core.recorder_config import build_recorder_init_args
+from .core.realtime import run_realtime_worker
+from .core.recording import run_recording_worker
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
@@ -27,7 +37,9 @@ from .core.recording_buffers import (
     set_audio_from_frames,
 )
 from .core.state import run_callback, set_recorder_state
+from .core.state import set_spinner
 from .core.text_formatting import (
+    find_tail_match_in_text,
     format_number,
     preprocess_output,
 )
@@ -42,7 +54,12 @@ from .core.wakeword import (
     _normalize_wakeword_backend,
 )
 from .core.voice_activity import (
+    check_voice_activity,
+    is_silero_speech,
+    is_voice_active,
+    is_webrtc_speech,
     reset_silero_vad_state,
+    selected_pre_recording_buffer_frames,
 )
 
 
@@ -51,7 +68,7 @@ from .core.voice_activity import (
 # Some downstream combinations of Torch, OpenMP, and audio/model runtimes rely on
 # this import-time setting. Keep it early and behavior-compatible; it is not a
 # general runtime recommendation for application code.
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 
 # Logger setup.
@@ -1178,6 +1195,103 @@ class AudioToTextRecorder:
               exception, if any.
         """
         self.shutdown()
+
+    # Internal compatibility wrappers.
+
+    def _recording_worker(self):
+        return run_recording_worker(self)
+
+    def _realtime_worker(self):
+        return run_realtime_worker(self)
+
+    @staticmethod
+    def _audio_data_worker(
+            audio_queue,
+            target_sample_rate,
+            buffer_size,
+            input_device_index,
+            shutdown_event,
+            interrupt_stop_event,
+            use_microphone):
+        return run_audio_data_worker(
+            audio_queue,
+            target_sample_rate,
+            buffer_size,
+            input_device_index,
+            shutdown_event,
+            interrupt_stop_event,
+            use_microphone,
+        )
+
+    def _is_silero_speech(self, chunk, generation=None):
+        return is_silero_speech(self, chunk, generation)
+
+    def _is_webrtc_speech(self, chunk, all_frames_must_be_true=False):
+        return is_webrtc_speech(self, chunk, all_frames_must_be_true)
+
+    def _check_voice_activity(self, data):
+        return check_voice_activity(
+            self,
+            data,
+            thread_factory=threading.Thread,
+        )
+
+    def _selected_pre_recording_buffer_frames(self):
+        return selected_pre_recording_buffer_frames(self)
+
+    def _set_audio_from_frames(
+            self,
+            frames,
+            backdate_stop_seconds=0.0,
+            backdate_resume_seconds=0.0):
+        return set_audio_from_frames(
+            self,
+            frames,
+            backdate_stop_seconds,
+            backdate_resume_seconds,
+        )
+
+    def _queue_recorded_audio(
+            self,
+            frames,
+            backdate_stop_seconds=0.0,
+            backdate_resume_seconds=0.0):
+        return queue_recorded_audio(
+            self,
+            frames,
+            backdate_stop_seconds,
+            backdate_resume_seconds,
+        )
+
+    def _get_next_recorded_audio(self):
+        return get_next_recorded_audio(self)
+
+    def _is_voice_active(self):
+        return is_voice_active(self)
+
+    def _run_callback(self, cb, *args, **kwargs):
+        return run_callback(self, cb, *args, **kwargs)
+
+    def _set_state(self, new_state):
+        return set_recorder_state(self, new_state)
+
+    def _set_spinner(self, text):
+        return set_spinner(self, text)
+
+    def _preprocess_output(self, text, preview=False):
+        return preprocess_output(
+            text,
+            preview=preview,
+            ensure_sentence_starting_uppercase=(
+                self.ensure_sentence_starting_uppercase
+            ),
+            ensure_sentence_ends_with_period=(
+                self.ensure_sentence_ends_with_period
+            ),
+        )
+
+    def _find_tail_match_in_text(self, text1, text2, length_of_match=10):
+        return find_tail_match_in_text(text1, text2, length_of_match)
 
     # Internal facade-level helpers.
 
