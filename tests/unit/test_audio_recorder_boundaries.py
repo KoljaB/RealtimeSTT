@@ -170,6 +170,50 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
         self.assertIs(init_args["on_recording_start"], callback)
         self.assertTrue(init_args["use_extended_logging"])
 
+    def test_audio_reader_starts_facade_worker_wrapper(self):
+        from RealtimeSTT.core import initialization
+
+        class UseMicrophone:
+            value = True
+
+        class RecorderClass:
+            @staticmethod
+            def _audio_data_worker(*args):
+                return None
+
+        class Recorder:
+            audio_queue = object()
+            sample_rate = 16000
+            buffer_size = 512
+            input_device_index = 2
+            shutdown_event = object()
+            interrupt_stop_event = object()
+            use_microphone = UseMicrophone()
+
+            def _start_thread(self, target=None, args=()):
+                self.started_target = target
+                self.started_args = args
+                return "reader-process"
+
+        recorder = Recorder()
+
+        initialization._start_audio_reader(recorder, RecorderClass)
+
+        self.assertIs(recorder.reader_process, "reader-process")
+        self.assertIs(recorder.started_target, RecorderClass._audio_data_worker)
+        self.assertEqual(
+            recorder.started_args,
+            (
+                recorder.audio_queue,
+                recorder.sample_rate,
+                recorder.buffer_size,
+                recorder.input_device_index,
+                recorder.shutdown_event,
+                recorder.interrupt_stop_event,
+                recorder.use_microphone,
+            ),
+        )
+
     def test_internal_recorder_modules_do_not_import_public_facade(self):
         offenders = []
 

@@ -54,7 +54,7 @@ def initialize_recorder(
 
     _log_extended_initialization(init_args["use_extended_logging"], init_args)
     _initialize_transcription_runtime(recorder, recorder_cls)
-    _start_audio_reader(recorder)
+    _start_audio_reader(recorder, recorder_cls)
     _initialize_realtime_transcription_model(recorder)
     _initialize_wakeword_detection(
         recorder,
@@ -397,7 +397,7 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
         )
 
 
-def _start_audio_reader(recorder):
+def _start_audio_reader(recorder, recorder_cls):
     # Start audio data reading process
     if recorder.use_microphone.value:
         logger.info("Initializing audio recording"
@@ -406,7 +406,7 @@ def _start_audio_reader(recorder):
                      f" buffer size: {recorder.buffer_size}"
                      )
         recorder.reader_process = recorder._start_thread(
-            target=run_audio_data_worker,
+            target=recorder_cls._audio_data_worker,
             args=(
                 recorder.audio_queue,
                 recorder.sample_rate,
