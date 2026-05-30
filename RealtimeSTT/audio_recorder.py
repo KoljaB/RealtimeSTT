@@ -17,8 +17,6 @@ from typing import Callable, Iterable, List, Optional, Union
 
 # Third-party imports.
 import torch.multiprocessing as mp
-from scipy.signal import resample
-import numpy as np
 
 # Internal imports.
 from .core.audio_input_worker import run_audio_data_worker
@@ -35,6 +33,7 @@ from .core.lifecycle import (
     wait_for_recorded_audio,
     wakeup_recorder,
 )
+from .core.manual_audio_input import feed_audio as feed_manual_audio
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
@@ -766,39 +765,7 @@ class AudioToTextRecorder:
         accumulated until the buffer size is reached, and then the accumulated
         data is fed into the audio_queue.
         """
-        # Check if the buffer attribute exists, if not, initialize it
-        if not hasattr(self, 'buffer'):
-            self.buffer = bytearray()
-
-        # Check if input is a NumPy array
-        if isinstance(chunk, np.ndarray):
-            # Handle stereo to mono conversion if necessary
-            if chunk.ndim == 2:
-                chunk = np.mean(chunk, axis=1)
-
-            # Resample to 16000 Hz if necessary
-            if original_sample_rate != 16000:
-                num_samples = int(len(chunk) * 16000 / original_sample_rate)
-                chunk = resample(chunk, num_samples)
-
-            # Ensure data type is int16
-            chunk = chunk.astype(np.int16)
-
-            # Convert the NumPy array to bytes
-            chunk = chunk.tobytes()
-
-        # Append the chunk to the buffer
-        self.buffer += chunk
-        buf_size = 2 * self.buffer_size  # silero complains if too short
-
-        # Check if the buffer has reached or exceeded the buffer_size
-        while len(self.buffer) >= buf_size:
-            # Extract self.buffer_size amount of data from the buffer
-            to_process = self.buffer[:buf_size]
-            self.buffer = self.buffer[buf_size:]
-
-            # Feed the extracted data to the audio_queue
-            self.audio_queue.put(to_process)
+        return feed_manual_audio(self, chunk, original_sample_rate)
 
     def shutdown(self):
         """
