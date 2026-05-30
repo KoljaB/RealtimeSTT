@@ -156,6 +156,12 @@ You can configure the server using the following command-line arguments:
 - **Default**: `True`
 - **Description**: Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources.
 
+#### `--deactivity_silence_confirmation_duration`
+
+- **Type**: `float`
+- **Default**: `0.16`
+- **Description**: Seconds of continuous VAD silence required before end-of-speech silence is confirmed.
+
 #### `--early_transcription_on_silence`
 
 - **Type**: `float`

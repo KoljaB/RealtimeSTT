@@ -191,6 +191,9 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# Local diagnostic outputs
+test_outputs/
+
 # mypy
 .mypy_cache/
 .dmypy.json

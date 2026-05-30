@@ -8,9 +8,13 @@ import numpy as np
 from RealtimeSTT import silero_vad
 
 try:
-    from RealtimeSTT.audio_recorder import AudioToTextRecorder
+    from RealtimeSTT.audio_recorder import (
+        AudioToTextRecorder,
+        DEACTIVITY_SILENCE_CONFIRMATION_DURATION,
+    )
 except Exception as exc:  # pragma: no cover - optional runtime deps may be absent
     AudioToTextRecorder = None
+    DEACTIVITY_SILENCE_CONFIRMATION_DURATION = None
     AUDIO_RECORDER_IMPORT_ERROR = exc
 else:
     AUDIO_RECORDER_IMPORT_ERROR = None
@@ -160,6 +164,17 @@ class SileroVadPublicApiTests(unittest.TestCase):
         self.assertLess(
             names.index("silero_deactivity_detection"),
             names.index("silero_backend"),
+        )
+
+    def test_constructor_exposes_deactivity_silence_confirmation_duration(self):
+        signature = inspect.signature(AudioToTextRecorder.__init__)
+        parameter = signature.parameters[
+            "deactivity_silence_confirmation_duration"
+        ]
+
+        self.assertEqual(
+            parameter.default,
+            DEACTIVITY_SILENCE_CONFIRMATION_DURATION,
         )
 
 

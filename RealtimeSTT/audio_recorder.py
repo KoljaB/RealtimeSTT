@@ -45,6 +45,13 @@ from .transcription_engines import (
     TranscriptionEngineConfig,
     create_transcription_engine,
 )
+from ._audio_recorder.transcription import (
+    TranscriptionWorker,
+    call_transcription_executor,
+    receive_transcription_result,
+    run_transcription_worker,
+    submit_transcription_request,
+)
 from .wakeword_dependencies import (
     OPENWAKEWORD_BACKENDS,
     PORCUPINE_WAKEWORD_BACKENDS,
@@ -115,137 +122,6 @@ def _load_porcupine_module():
 
 def _load_openwakeword_modules():
     return _wakeword_load_openwakeword_modules(importer=import_module)
-
-
-class TranscriptionWorker:
-    def __init__(self, conn, stdout_pipe, transcription_engine, transcription_engine_options, model_path, download_root, compute_type, gpu_device_index, device,
-                 ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens,
-                 batch_size, faster_whisper_vad_filter, normalize_audio):
-        self.conn = conn
-        self.stdout_pipe = stdout_pipe
-        self.transcription_engine = transcription_engine
-        self.transcription_engine_options = transcription_engine_options or {}
-        self.model_path = model_path
-        self.download_root = download_root
-        self.compute_type = compute_type
-        self.gpu_device_index = gpu_device_index
-        self.device = device
-        self.ready_event = ready_event
-        self.shutdown_event = shutdown_event
-        self.interrupt_stop_event = interrupt_stop_event
-        self.beam_size = beam_size
-        self.initial_prompt = initial_prompt
-        self.suppress_tokens = suppress_tokens
-        self.batch_size = batch_size
-        self.faster_whisper_vad_filter = faster_whisper_vad_filter
-        self.normalize_audio = normalize_audio
-        self.queue = queue.Queue()
-
-    def custom_print(self, *args, **kwargs):
-        message = ' '.join(map(str, args))
-        try:
-            self.stdout_pipe.send(message)
-        except (BrokenPipeError, EOFError, OSError):
-            pass
-
-    def poll_connection(self):
-        while not self.shutdown_event.is_set():
-            try:
-                # Use a longer timeout to reduce polling frequency
-                if self.conn.poll(0.01):  # Increased from 0.01 to 0.5 seconds
-                    data = self.conn.recv()
-                    self.queue.put(data)
-                else:
-                    # Sleep only if no data, but use a shorter sleep
-                    time.sleep(TIME_SLEEP)
-            except Exception as e:
-                logging.error(f"Error receiving data from connection: {e}", exc_info=True)
-                time.sleep(TIME_SLEEP)
-
-    def run(self):
-        if __name__ == "__main__":
-             system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
-             __builtins__['print'] = self.custom_print
-
-        logging.info(
-            f"Initializing {self.transcription_engine} main transcription model {self.model_path}"
-        )
-
-        try:
-            engine = create_transcription_engine(
-                self.transcription_engine,
-                TranscriptionEngineConfig(
-                    model=self.model_path,
-                    download_root=self.download_root,
-                    compute_type=self.compute_type,
-                    gpu_device_index=self.gpu_device_index,
-                    device=self.device,
-                    beam_size=self.beam_size,
-                    initial_prompt=self.initial_prompt,
-                    suppress_tokens=self.suppress_tokens,
-                    batch_size=self.batch_size,
-                    vad_filter=self.faster_whisper_vad_filter,
-                    normalize_audio=self.normalize_audio,
-                    engine_options=self.transcription_engine_options,
-                ),
-            )
-
-            # Run a warm-up transcription
-            current_dir = os.path.dirname(os.path.realpath(__file__))
-            warmup_audio_path = os.path.join(
-                current_dir, "warmup_audio.wav"
-            )
-            warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
-            engine.warmup(warmup_audio_data)
-        except Exception as e:
-            logging.exception(
-                f"Error initializing main {self.transcription_engine} transcription model: {e}"
-            )
-            raise
-
-        self.ready_event.set()
-        logging.debug(
-            f"{self.transcription_engine} main speech to text transcription model initialized successfully"
-        )
-
-        # Start the polling thread
-        polling_thread = threading.Thread(target=self.poll_connection)
-        polling_thread.start()
-
-        try:
-            while not self.shutdown_event.is_set():
-                try:
-                    audio, language, use_prompt = self.queue.get(timeout=0.1)
-                    try:
-                        logging.debug(f"Transcribing audio with language {language}")
-                        start_t = time.time()
-                        transcription_result = engine.transcribe(
-                            audio,
-                            language=language,
-                            use_prompt=use_prompt,
-                        )
-                        elapsed = time.time() - start_t
-                        logging.debug(
-                            f"Final text detected with main model: {transcription_result.text} in {elapsed:.4f}s"
-                        )
-                        self.conn.send(('success', transcription_result))
-                    except Exception as e:
-                        logging.error(f"General error in transcription: {e}", exc_info=True)
-                        self.conn.send(('error', str(e)))
-                except queue.Empty:
-                    continue
-                except KeyboardInterrupt:
-                    self.interrupt_stop_event.set()
-                    logging.debug("Transcription worker process finished due to KeyboardInterrupt")
-                    break
-                except Exception as e:
-                    logging.error(f"General error in processing queue item: {e}", exc_info=True)
-        finally:
-            __builtins__['print'] = print  # Restore the original print function
-            self.conn.close()
-            self.stdout_pipe.close()
-            self.shutdown_event.set()  # Ensure the polling thread will stop
-            polling_thread.join()  # Wait for the polling thread to finish
 
 
 class bcolors:
@@ -364,6 +240,9 @@ class AudioToTextRecorder:
                  silero_backend: str = "auto",
                  silero_onnx_model_path: Optional[str] = None,
                  silero_onnx_threads: int = 2,
+                 deactivity_silence_confirmation_duration: float = (
+                     DEACTIVITY_SILENCE_CONFIRMATION_DURATION
+                 ),
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -496,6 +375,9 @@ class AudioToTextRecorder:
             seconds of silence that must follow speech before the recording
             is considered to be completed. This ensures that any brief
             pauses during speech don't prematurely end the recording.
+        - deactivity_silence_confirmation_duration (float, default=0.16):
+            Duration in seconds that VAD silence must persist before it is
+            accepted as confirmed end-of-speech silence.
         - min_gap_between_recordings (float, default=1.0): Specifies the
             minimum time interval in seconds that should exist between the
             end of one recording session and the beginning of another to
@@ -673,6 +555,9 @@ class AudioToTextRecorder:
             pre_recording_buffer_trim_config or {}
         )
         self.post_speech_silence_duration = post_speech_silence_duration
+        self.deactivity_silence_confirmation_duration = (
+            deactivity_silence_confirmation_duration
+        )
         self.on_recording_start = on_recording_start
         self.on_recording_stop = on_recording_stop
         self.on_wakeword_detected = on_wakeword_detected
@@ -1205,61 +1090,16 @@ class AudioToTextRecorder:
             time.sleep(0.1)
 
     def _transcription_worker(*args, **kwargs):
-        worker = TranscriptionWorker(*args, **kwargs)
-        worker.run()
+        run_transcription_worker(*args, **kwargs)
 
     def _call_transcription_executor(self, executor, audio, language, use_prompt):
-        if hasattr(executor, "transcribe"):
-            return executor.transcribe(
-                audio,
-                language=language if language else None,
-                use_prompt=use_prompt,
-            )
-        return executor(
-            audio,
-            language=language if language else None,
-            use_prompt=use_prompt,
-        )
+        return call_transcription_executor(executor, audio, language, use_prompt)
 
     def _submit_transcription_request(self, audio, language, use_prompt):
-        if self._uses_external_transcription_executor:
-            audio_copy = copy.deepcopy(audio)
-
-            def _run_external_transcription():
-                try:
-                    result = self._call_transcription_executor(
-                        self.transcription_executor,
-                        audio_copy,
-                        language,
-                        use_prompt,
-                    )
-                    self._external_transcription_results.put(("success", result))
-                except Exception as exc:
-                    self._external_transcription_results.put(("error", str(exc)))
-
-            self.transcribe_count += 1
-            thread = threading.Thread(
-                target=_run_external_transcription,
-                name="RealtimeSTTExternalFinalTranscription",
-                daemon=True,
-            )
-            self._external_transcription_threads.append(thread)
-            thread.start()
-            return
-
-        self.parent_transcription_pipe.send((audio, language, use_prompt))
-        self.transcribe_count += 1
+        submit_transcription_request(self, audio, language, use_prompt)
 
     def _receive_transcription_result(self, timeout=0.1):
-        if self._uses_external_transcription_executor:
-            try:
-                return self._external_transcription_results.get(timeout=timeout)
-            except queue.Empty:
-                return None
-
-        if not self.parent_transcription_pipe.poll(timeout):
-            return None
-        return self.parent_transcription_pipe.recv()
+        return receive_transcription_result(self, timeout=timeout)
 
     def _run_callback(self, cb, *args, **kwargs):
         if self.start_callback_in_new_thread:
@@ -2538,7 +2378,7 @@ class AudioToTextRecorder:
                                 self.speech_end_silence_candidate_start = now
                             if (
                                 now - self.speech_end_silence_candidate_start
-                                < DEACTIVITY_SILENCE_CONFIRMATION_DURATION
+                                < self.deactivity_silence_confirmation_duration
                             ):
                                 is_speech = True
 

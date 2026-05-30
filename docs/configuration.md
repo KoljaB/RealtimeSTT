@@ -69,6 +69,7 @@ recorder = AudioToTextRecorder(
 | `silero_sensitivity` | `0.4` | Silero VAD sensitivity, from `0` to `1`. |
 | `silero_use_onnx` | `False` | Uses Silero's ONNX path instead of the PyTorch path. |
 | `silero_deactivity_detection` | `False` | Uses Silero for end-of-speech detection instead of the default WebRTC end detection path. |
+| `deactivity_silence_confirmation_duration` | `0.16` | Required continuous VAD silence before end-of-speech silence is confirmed. |
 | `webrtc_sensitivity` | `3` | WebRTC VAD aggressiveness from `0` to `3`; higher is more aggressive and less sensitive. |
 | `warmup_vad` | `True` | Runs a small VAD warmup during initialization to avoid first-chunk lazy setup cost. |
 | `post_speech_silence_duration` | `0.6` | Required silence after speech before a recording is considered complete. |

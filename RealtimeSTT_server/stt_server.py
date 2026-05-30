@@ -37,6 +37,8 @@ stt-server [OPTIONS]
     - `--enable_realtime_transcription`: Enable real-time transcription; default True.
     - `--realtime_processing_pause`: Pause between audio chunk processing; default 0.02.
     - `--silero_deactivity_detection`: Use Silero for end-of-speech detection; default True.
+    - `--deactivity_silence_confirmation_duration`: Seconds of VAD silence
+      required before end-of-speech silence is confirmed; default 0.16.
     - `--early_transcription_on_silence`: Start transcription after silence in seconds; default 0.2.
     - `--beam_size`: Beam size for main model; default 5.
     - `--beam_size_realtime`: Beam size for real-time model; default 3.
@@ -149,6 +151,7 @@ from colorama import init, Fore, Style
 init()
 
 from RealtimeSTT import AudioToTextRecorder
+from RealtimeSTT.audio_recorder import DEACTIVITY_SILENCE_CONFIRMATION_DURATION
 from scipy.signal import resample
 import numpy as np
 import websockets
@@ -181,6 +184,7 @@ allowed_parameters = [
     'silero_sensitivity',
     'wake_word_activation_delay',
     'post_speech_silence_duration',
+    'deactivity_silence_confirmation_duration',
     'listen_start',
     'recording_stop_time',
     'last_transcription_bytes',
@@ -464,6 +468,9 @@ def parse_arguments():
 
     parser.add_argument('--silero_deactivity_detection', action='store_true', default=True,
                         help='Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources. Default is True.')
+
+    parser.add_argument('--deactivity_silence_confirmation_duration', type=float, default=DEACTIVITY_SILENCE_CONFIRMATION_DURATION,
+                        help='Seconds of continuous VAD silence required before end-of-speech silence is confirmed. Default is 0.16 seconds.')
 
     parser.add_argument('--early_transcription_on_silence', type=float, default=0.2,
                         help='Start transcription after the specified seconds of silence. This is useful when you want to trigger transcription mid-speech when there is a brief pause. Should be lower than post_speech_silence_duration. Set to 0 to disable. Default is 0.2 seconds.')
@@ -813,6 +820,7 @@ async def main_async():
         'enable_realtime_transcription': args.enable_realtime_transcription,
         'realtime_processing_pause': args.realtime_processing_pause,
         'silero_deactivity_detection': args.silero_deactivity_detection,
+        'deactivity_silence_confirmation_duration': args.deactivity_silence_confirmation_duration,
         'early_transcription_on_silence': args.early_transcription_on_silence,
         'beam_size': args.beam_size,
         'beam_size_realtime': args.beam_size_realtime,

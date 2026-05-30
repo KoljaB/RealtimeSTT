@@ -22,7 +22,19 @@ A stronger version from Take 2 is worth adopting:
 
 > **Codex may only refactor as far as your smallest hard parity gate can still prove behavior stayed the same.**
 
-Where the two takes differ, Take 2 gives the broader production operating model, while Take 1 gives the cleaner day-to-day workflow. The best combined approach is: use Take 2’s larger system around Codex, but keep Take 1’s discipline of small, reviewable, one-responsibility changes.
+Boundary sizing rule:
+
+> **A good refactor boundary is based on cohesion and coupling. Line count is secondary.**
+
+Cohesion means the extracted code changes for the same reason. Coupling means
+how much the extracted code depends on the rest of the system. A safe pass can
+move a few hundred lines when those lines form one coherent responsibility and
+the validation gate can prove parity. A pass is too large when it mixes
+unrelated responsibilities or changes behavior that the current tests cannot
+observe. A pass is too small when it extracts arbitrary line-count chunks and
+creates file clutter without improving ownership.
+
+Where the two takes differ, Take 2 gives the broader production operating model, while Take 1 gives the cleaner day-to-day workflow. The best combined approach is: use Take 2’s larger system around Codex, but keep Take 1’s discipline of bounded, reviewable, one-responsibility changes.
 
 ---
 
@@ -38,7 +50,7 @@ The combined recommendation:
 AGENTS.md
 docs/
   ARCHITECTURE.md
-  REFACTURING.md
+  REFACTORING.md
   module-map.md
   api-compatibility.md
   exec-plans/
@@ -140,7 +152,7 @@ Identify Single Responsibility Principle violations by listing:
 Rank extraction candidates from lowest risk to highest risk.
 
 For each candidate, propose:
-- one small class, function, or module to extract,
+- one cohesive class, function, or module boundary to extract,
 - target file path,
 - public API compatibility plan,
 - validation command that proves behavior stayed stable.
@@ -849,7 +861,8 @@ Commit after validation.
 
 ### Phase 4: Repeat extraction
 
-Keep each pass small.
+Keep each pass responsibility-sized: large enough to move one coherent boundary,
+and small enough for focused parity validation and review.
 
 Good PR titles:
 
@@ -1034,4 +1047,4 @@ Before accepting any Codex refactor, verify:
 
 The safest operating principle is simple:
 
-> **Make Codex prove every small step before you let it take the next one.**
+> **Make Codex prove every bounded step before you let it take the next one.**
