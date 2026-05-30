@@ -214,6 +214,7 @@ class AudioToTextRecorder:
         and wake word detection.
 
         Args:
+        Main transcription and output:
         - model (str, default="tiny"): Specifies the size of the transcription
             model to use or the path to a converted model directory.
             Valid options are 'tiny', 'tiny.en', 'base', 'base.en',
@@ -262,6 +263,8 @@ class AudioToTextRecorder:
             state.
         - level (int, default=logging.WARNING): Logging level.
         - batch_size (int, default=16): Batch size for the main transcription
+
+        Realtime transcription:
         - enable_realtime_transcription (bool, default=False): Enables or
             disables real-time transcription of audio. When set to True, the
             audio will be transcribed continuously as it is being recorded.
@@ -305,6 +308,8 @@ class AudioToTextRecorder:
             triggered with a structured realtime stabilization event.
         - realtime_batch_size (int, default=16): Batch size for the real-time
             transcription model.
+
+        Voice activity and turn detection:
         - silero_sensitivity (float, default=SILERO_SENSITIVITY): Sensitivity
             for the Silero Voice Activity Detection model ranging from 0
             (least sensitive) to 1 (most sensitive). Default is 0.5.
@@ -374,6 +379,8 @@ class AudioToTextRecorder:
             to be called when the system starts to listen for a turn of speech.
         - on_turn_detection_stop (callable, default=None): Callback function to
             be called when the system stops listening for a turn of speech.
+
+        Wake word detection:
         - wakeword_backend (str, default=""): Specifies the backend library to
             use for wake word detection. Supported options include 'pvporcupine'
             for using the Porcupine wake word engine or 'oww' for using the
@@ -423,6 +430,8 @@ class AudioToTextRecorder:
         - on_wakeword_detection_end (callable, default=None): Callback
             function to be called when the system stops to listen for
             wake words (e.g. because of timeout or wake word detected)
+
+        Audio input, decoding, and transcription tuning:
         - on_recorded_chunk (callable, default=None): Callback function to be
             called when a chunk of audio is recorded. The function is called
             with the recorded audio chunk as its argument.
@@ -461,6 +470,8 @@ class AudioToTextRecorder:
             of additional GPU load due to some unnecessary final transcriptions.
         - allowed_latency_limit (int, default=100): Maximal amount of chunks
             that can be unprocessed in queue before discarding chunks.
+
+        Logging, VAD warmup, normalization, and callback execution:
         - no_log_file (bool, default=False): Skips writing of debug log file.
         - use_extended_logging (bool, default=False): Writes extensive
             log messages for the recording worker, that processes the audio
@@ -480,6 +491,8 @@ class AudioToTextRecorder:
             the callback functions will be executed in a
             new thread. This can help improve performance by allowing the
             callback to run concurrently with other operations.
+
+        Realtime boundary scheduling:
         - realtime_transcription_use_syllable_boundaries (bool, default=False):
             If set to True, realtime transcription is scheduled from a cheap
             vowel/syllable-boundary detector instead of the fixed
