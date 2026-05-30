@@ -177,7 +177,7 @@ def submit_transcription_request(recorder, audio, language, use_prompt):
 
         def _run_external_transcription():
             try:
-                result = recorder._call_transcription_executor(
+                result = call_transcription_executor(
                     recorder.transcription_executor,
                     audio_copy,
                     language,

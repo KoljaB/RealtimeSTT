@@ -10,6 +10,7 @@ from ..realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )
+from .transcription import call_transcription_executor
 
 
 logger = logging.getLogger("realtimestt")
@@ -201,7 +202,7 @@ def run_realtime_worker(recorder):
     def _transcribe_with_main_model(audio_array):
         try:
             if self._uses_external_transcription_executor:
-                return self._call_transcription_executor(
+                return call_transcription_executor(
                     self.transcription_executor,
                     audio_array,
                     self.language,
@@ -237,7 +238,7 @@ def run_realtime_worker(recorder):
     def _transcribe_with_realtime_model(audio_array):
         if self._uses_external_realtime_transcription_executor:
             try:
-                return self._call_transcription_executor(
+                return call_transcription_executor(
                     self.realtime_transcription_executor,
                     audio_array,
                     self.language,

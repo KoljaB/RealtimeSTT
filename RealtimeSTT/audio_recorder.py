@@ -26,70 +26,41 @@ Author: Kolja Beigel
 
 """
 
-from importlib import import_module
 from typing import Callable, Iterable, List, Optional, Union
 import torch.multiprocessing as mp
 from scipy.signal import resample
 import signal as system_signal
-from ctypes import c_bool
 from scipy import signal
-from .safepipe import SafePipe
 from .realtime_text_stabilizer import RealtimeTextStabilizer
-from .preroll import PrerollFrameMetadata, select_preroll_frames
-from .silero_vad import create_silero_vad_model
-from .transcription_engines import (
-    TranscriptionEngineConfig,
-    create_transcription_engine,
-)
 from ._audio_recorder.initialization import initialize_recorder
 from ._audio_recorder.recording import run_recording_worker
 from ._audio_recorder.realtime import run_realtime_worker
 from ._audio_recorder.transcription import (
     TranscriptionWorker,
-    call_transcription_executor,
     receive_transcription_result,
-    run_transcription_worker,
     submit_transcription_request,
 )
-from ._audio_recorder.wakeword import (
-    OPENWAKEWORD_BACKENDS,
-    PORCUPINE_WAKEWORD_BACKENDS,
-    _load_openwakeword_modules as _wakeword_load_openwakeword_modules,
-    _load_porcupine_module as _wakeword_load_porcupine_module,
-    _normalize_wakeword_backend as _wakeword_normalize_backend,
-    process_wakeword,
-    setup_wakeword_detection,
+from .wakeword_dependencies import (
+    _load_openwakeword_modules,
+    _load_porcupine_module,
+    _normalize_wakeword_backend,
 )
 from ._audio_recorder.voice_activity import (
-    append_to_pre_recording_buffer,
     check_voice_activity,
     clear_pre_recording_buffer,
-    frame_rms,
     is_silero_speech,
     is_voice_active,
     is_webrtc_speech,
-    metadata_for_frame_without_vad,
-    pre_recording_buffer_trim_enabled,
-    preroll_frame_metadata,
     reset_silero_vad_state,
     selected_pre_recording_buffer_frames,
-    silero_vad_probability,
-    warmup_voice_activity_detectors,
-    webrtc_replay_preroll_diagnostics,
 )
-import soundfile as sf
-import collections
 import numpy as np
 import traceback
 import threading
-import webrtcvad
-import datetime
 import platform
 import logging
-import struct
 import base64
 import queue
-import torch
 import halo
 import time
 import copy
@@ -129,17 +100,6 @@ INT16_MAX_ABS_VALUE = 32768.0
 INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
-
-def _normalize_wakeword_backend(wakeword_backend, wake_words):
-    return _wakeword_normalize_backend(wakeword_backend, wake_words)
-
-
-def _load_porcupine_module():
-    return _wakeword_load_porcupine_module(importer=import_module)
-
-
-def _load_openwakeword_modules():
-    return _wakeword_load_openwakeword_modules(importer=import_module)
 
 
 class bcolors:
@@ -601,18 +561,6 @@ class AudioToTextRecorder:
                 break 
             time.sleep(0.1)
 
-    def _transcription_worker(*args, **kwargs):
-        run_transcription_worker(*args, **kwargs)
-
-    def _call_transcription_executor(self, executor, audio, language, use_prompt):
-        return call_transcription_executor(executor, audio, language, use_prompt)
-
-    def _submit_transcription_request(self, audio, language, use_prompt):
-        submit_transcription_request(self, audio, language, use_prompt)
-
-    def _receive_transcription_result(self, timeout=0.1):
-        return receive_transcription_result(self, timeout=timeout)
-
     def _run_callback(self, cb, *args, **kwargs):
         if self.start_callback_in_new_thread:
             # Run the callback in a new thread to avoid blocking the main thread
@@ -1011,7 +959,7 @@ class AudioToTextRecorder:
             # If not yet started recording, wait for voice activity to initiate.
             if queued_recording is None and not self.is_recording and not self.frames:
                 self._set_state("listening")
-                self._reset_silero_vad_state()
+                reset_silero_vad_state(self)
                 self.start_recording_on_voice_activity = True
                 armed_for_voice_activity = True
 
@@ -1072,7 +1020,7 @@ class AudioToTextRecorder:
                     and not self.interrupt_stop_event.is_set()
                     and not self.is_shut_down):
                 self.continuous_listening = True
-                self._reset_silero_vad_state()
+                reset_silero_vad_state(self)
                 self.start_recording_on_voice_activity = True
                 self.stop_recording_on_voice_deactivity = True
 
@@ -1180,7 +1128,7 @@ class AudioToTextRecorder:
             return False
 
         self._queue_recorded_audio(frames)
-        self._clear_pre_recording_buffer()
+        clear_pre_recording_buffer(self)
         return True
 
 
@@ -1199,7 +1147,8 @@ class AudioToTextRecorder:
                 if self.transcribe_count == 0:
                     logger.debug("Adding transcription request, no early transcription started")
                     start_time = time.time()  # Start timing
-                    self._submit_transcription_request(
+                    submit_transcription_request(
+                        self,
                         audio_bytes,
                         self.language,
                         use_prompt,
@@ -1207,7 +1156,7 @@ class AudioToTextRecorder:
 
                 while self.transcribe_count > 0:
                     logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
-                    response = self._receive_transcription_result(timeout=0.1)
+                    response = receive_transcription_result(self, timeout=0.1)
                     if response is None: # check if transcription done
                         if self.interrupt_stop_event.is_set(): # check if interrupted
                             self.was_interrupted.set()
@@ -1280,12 +1229,6 @@ class AudioToTextRecorder:
         else:
             return self.perform_final_transcription(audio_copy)
 
-
-    def _process_wakeword(self, data):
-        """
-        Processes audio data to detect wake words.
-        """
-        return process_wakeword(self, data)
 
     def text(self,
              on_transcription_finished=None,
@@ -1392,7 +1335,7 @@ class AudioToTextRecorder:
             started_at_monotonic=self.recording_start_monotonic,
             started_at_wall_time=self.recording_start_time,
         )
-        self._reset_silero_vad_state()
+        reset_silero_vad_state(self)
         self.is_recording = True
         self.is_webrtc_speech_active = False
         self.stop_recording_event.clear()
@@ -1447,7 +1390,7 @@ class AudioToTextRecorder:
         )
         if realtime_text_stabilizer is not None:
             realtime_text_stabilizer.finalize()
-        self._reset_silero_vad_state()
+        reset_silero_vad_state(self)
         self.is_webrtc_speech_active = False
         self.silero_check_time = 0
         self.start_recording_event.clear()
@@ -1470,7 +1413,7 @@ class AudioToTextRecorder:
         """
         self.listen_start = time.time()
         self._set_state("listening")
-        self._reset_silero_vad_state()
+        reset_silero_vad_state(self)
         self.start_recording_on_voice_activity = True
 
     def feed_audio(self, chunk, original_sample_rate=16000):
@@ -1602,15 +1545,6 @@ class AudioToTextRecorder:
 
         return run_realtime_worker(self)
 
-    def _silero_vad_probability(self, audio_chunk):
-        return silero_vad_probability(self, audio_chunk)
-
-    def _reset_silero_vad_state(self):
-        return reset_silero_vad_state(self)
-
-    def _warmup_voice_activity_detectors(self):
-        return warmup_voice_activity_detectors(self)
-
     def _is_silero_speech(self, chunk, generation=None):
         return is_silero_speech(self, chunk, generation)
 
@@ -1624,36 +1558,15 @@ class AudioToTextRecorder:
             thread_factory=threading.Thread,
         )
 
-    def _pre_recording_buffer_trim_enabled(self):
-        return pre_recording_buffer_trim_enabled(self)
-
-    def _append_to_pre_recording_buffer(self, data):
-        return append_to_pre_recording_buffer(self, data)
-
-    def _clear_pre_recording_buffer(self):
-        return clear_pre_recording_buffer(self)
-
     def _selected_pre_recording_buffer_frames(self):
         return selected_pre_recording_buffer_frames(self)
-
-    def _preroll_frame_metadata(self, data):
-        return preroll_frame_metadata(self, data)
-
-    def _metadata_for_frame_without_vad(self, frame):
-        return metadata_for_frame_without_vad(self, frame)
-
-    def _frame_rms(self, data):
-        return frame_rms(data)
-
-    def _webrtc_replay_preroll_diagnostics(self, frames):
-        return webrtc_replay_preroll_diagnostics(self, frames)
 
     def clear_audio_queue(self):
         """
         Safely empties the audio queue to ensure no remaining audio 
         fragments get processed e.g. after waking up the recorder.
         """
-        self._clear_pre_recording_buffer()
+        clear_pre_recording_buffer(self)
         try:
             while True:
                 self.audio_queue.get_nowait()

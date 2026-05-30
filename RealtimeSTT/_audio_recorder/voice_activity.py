@@ -88,10 +88,10 @@ def warmup_voice_activity_detectors(recorder):
         tone = (0.03 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
         silence = np.zeros(sample_count, dtype=np.float32)
 
-        recorder._silero_vad_probability(tone)
-        recorder._silero_vad_probability(silence)
+        silero_vad_probability(recorder, tone)
+        silero_vad_probability(recorder, silence)
 
-        recorder._reset_silero_vad_state()
+        reset_silero_vad_state(recorder)
     except Exception:
         logger.debug("Silero VAD warmup skipped", exc_info=True)
 
@@ -130,12 +130,12 @@ def is_silero_speech(recorder, chunk, generation=None):
         audio_chunk = audio_chunk.astype(np.float32) / INT16_MAX_ABS_VALUE
         lock = getattr(recorder, "silero_vad_lock", None)
         if lock is None:
-            vad_prob = recorder._silero_vad_probability(audio_chunk)
+            vad_prob = silero_vad_probability(recorder, audio_chunk)
         else:
             with lock:
                 if generation != getattr(recorder, "_silero_vad_generation", 0):
                     return False
-                vad_prob = recorder._silero_vad_probability(audio_chunk)
+                vad_prob = silero_vad_probability(recorder, audio_chunk)
 
         if generation != getattr(recorder, "_silero_vad_generation", 0):
             return False
@@ -228,7 +228,7 @@ def check_voice_activity(recorder, data, thread_factory=None):
 
         if not recorder.silero_working:
             if not was_webrtc_speech_active:
-                recorder._reset_silero_vad_state()
+                reset_silero_vad_state(recorder)
             recorder.silero_working = True
             silero_generation = getattr(recorder, "_silero_vad_generation", 0)
 
@@ -247,7 +247,7 @@ def append_to_pre_recording_buffer(recorder, data):
     recorder.audio_buffer.append(data)
     metadata_buffer = getattr(recorder, "audio_buffer_metadata", None)
     if metadata_buffer is not None:
-        metadata_buffer.append(recorder._preroll_frame_metadata(data))
+        metadata_buffer.append(preroll_frame_metadata(recorder, data))
 
 
 def clear_pre_recording_buffer(recorder):
@@ -263,12 +263,12 @@ def selected_pre_recording_buffer_frames(recorder):
     if not frames:
         return frames
 
-    if not recorder._pre_recording_buffer_trim_enabled():
+    if not pre_recording_buffer_trim_enabled(recorder):
         return frames
 
     metadata = list(getattr(recorder, "audio_buffer_metadata", ()))
     if len(metadata) != len(frames):
-        metadata = [recorder._metadata_for_frame_without_vad(frame) for frame in frames]
+        metadata = [metadata_for_frame_without_vad(recorder, frame) for frame in frames]
 
     config = getattr(recorder, "pre_recording_buffer_trim_config", None) or {}
     selection = select_preroll_frames(
@@ -282,14 +282,14 @@ def selected_pre_recording_buffer_frames(recorder):
         noise_floor_multiplier=config.get("noise_floor_multiplier", 2.5),
         energy_margin_rms=config.get("energy_margin_rms", 25.0),
     )
-    selection.diagnostics.update(recorder._webrtc_replay_preroll_diagnostics(frames))
+    selection.diagnostics.update(webrtc_replay_preroll_diagnostics(recorder, frames))
     recorder._pending_preroll_selection = selection
     return frames[selection.start_index:]
 
 
 def preroll_frame_metadata(recorder, data):
     sample_count = max(0, len(data) // 2)
-    rms = recorder._frame_rms(data)
+    rms = frame_rms(data)
     webrtc_is_speech = bool(getattr(recorder, "is_webrtc_speech_active", False))
     silero_is_speech = bool(getattr(recorder, "is_silero_speech_active", False))
     is_speech = webrtc_is_speech or silero_is_speech
@@ -306,7 +306,7 @@ def metadata_for_frame_without_vad(recorder, frame):
     return PrerollFrameMetadata(
         sample_count=max(0, len(frame) // 2),
         is_speech=None,
-        rms=recorder._frame_rms(frame),
+        rms=frame_rms(frame),
     )
 
 

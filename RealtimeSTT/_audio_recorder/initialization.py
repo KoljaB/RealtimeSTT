@@ -22,6 +22,8 @@ from ..transcription_engines import (
     create_transcription_engine,
 )
 from .wakeword import OPENWAKEWORD_BACKENDS, setup_wakeword_detection
+from .transcription import run_transcription_worker
+from .voice_activity import warmup_voice_activity_detectors
 
 
 logger = logging.getLogger("realtimestt")
@@ -368,7 +370,7 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
         recorder.main_transcription_ready_event.set()
     else:
         recorder.transcript_process = recorder._start_thread(
-            target=recorder_cls._transcription_worker,
+            target=run_transcription_worker,
             args=(
                 child_transcription_pipe,
                 child_stdout_pipe,
@@ -540,7 +542,7 @@ def _initialize_voice_activity_detection(
     )
 
     if recorder.warmup_vad:
-        recorder._warmup_voice_activity_detectors()
+        warmup_voice_activity_detectors(recorder)
 
 
 def _initialize_recording_buffers(recorder):

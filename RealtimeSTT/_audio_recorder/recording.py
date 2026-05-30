@@ -8,6 +8,13 @@ import time
 
 import numpy as np
 
+from .transcription import submit_transcription_request
+from .voice_activity import (
+    append_to_pre_recording_buffer,
+    clear_pre_recording_buffer,
+    reset_silero_vad_state,
+)
+from .wakeword import process_wakeword
 
 logger = logging.getLogger("realtimestt")
 
@@ -170,7 +177,7 @@ def run_recording_worker(recorder):
                     try:
                         if self.use_extended_logging:
                             logger.debug('Debug: Processing wakeword')
-                        wakeword_index = self._process_wakeword(data)
+                        wakeword_index = process_wakeword(self, data)
 
                     except struct.error:
                         logger.error("Error unpacking audio data "
@@ -229,11 +236,11 @@ def run_recording_worker(recorder):
                         # Add the buffered audio
                         # to the recording frames
                         self.frames.extend(pre_recording_frames)
-                        self._clear_pre_recording_buffer()
+                        clear_pre_recording_buffer(self)
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Resetting Silero VAD model states')
-                        self._reset_silero_vad_state()
+                        reset_silero_vad_state(self)
                     else:
                         if self.use_extended_logging:
                             logger.debug('Debug: Checking voice activity')
@@ -335,7 +342,8 @@ def run_recording_worker(recorder):
 
                                 if self.use_extended_logging:
                                     logger.debug("Debug: early transcription request submit")
-                                self._submit_transcription_request(
+                                submit_transcription_request(
+                                    self,
                                     audio,
                                     self.language,
                                     True,
@@ -417,7 +425,7 @@ def run_recording_worker(recorder):
                     self.stop_recording_on_voice_deactivity = True
                 else:
                     self.stop_recording_on_voice_deactivity = False
-                self._clear_pre_recording_buffer()
+                clear_pre_recording_buffer(self)
 
             if self.use_extended_logging:
                 logger.debug('Debug: Checking Silero time')
@@ -454,7 +462,7 @@ def run_recording_worker(recorder):
             if not self.is_recording or self.speech_end_silence_start:
                 if self.use_extended_logging:
                     logger.debug('Debug: Appending data to audio buffer')
-                self._append_to_pre_recording_buffer(data)
+                append_to_pre_recording_buffer(self, data)
 
     except Exception as e:
         logger.debug('Debug: Caught exception in main try block')
