@@ -7,7 +7,6 @@ implementation details to ``RealtimeSTT.core``.
 # Standard library imports.
 import base64
 import copy
-import gc
 import logging
 import os
 import platform
@@ -43,6 +42,7 @@ from .core.recording_buffers import (
     set_audio_from_frames,
 )
 from .core.runtime import read_stdout_pipe
+from .core.shutdown import shutdown_recorder
 from .core.state import run_callback, set_recorder_state
 from .core.state import set_spinner
 from .core.text_formatting import (
@@ -772,61 +772,7 @@ class AudioToTextRecorder:
         Safely shuts down the audio recording by stopping the
         recording worker and closing the audio stream.
         """
-
-        with self.shutdown_lock:
-            if self.is_shut_down:
-                return
-
-            print("\033[91mRealtimeSTT shutting down\033[0m")
-
-            # Force wait_audio() and text() to exit
-            self.is_shut_down = True
-            self.continuous_listening = False
-            self.start_recording_event.set()
-            self.stop_recording_event.set()
-
-            self.shutdown_event.set()
-            self.is_recording = False
-            self.is_running = False
-
-            logger.debug('Finishing recording thread')
-            if self.recording_thread:
-                self.recording_thread.join()
-
-            logger.debug('Terminating reader process')
-
-            # Give it some time to finish the loop and cleanup.
-            if self.use_microphone.value:
-                self.reader_process.join(timeout=10)
-
-                if self.reader_process.is_alive():
-                    logger.warning("Reader process did not terminate "
-                                    "in time. Terminating forcefully."
-                                    )
-                    self.reader_process.terminate()
-
-            logger.debug('Terminating transcription process')
-            if self.transcript_process:
-                self.transcript_process.join(timeout=10)
-
-            if self.transcript_process and self.transcript_process.is_alive():
-                logger.warning("Transcript process did not terminate "
-                                "in time. Terminating forcefully."
-                                )
-                self.transcript_process.terminate()
-
-            if self.parent_transcription_pipe:
-                self.parent_transcription_pipe.close()
-
-            logger.debug('Finishing realtime thread')
-            if self.realtime_thread:
-                self.realtime_thread.join()
-
-            if self.enable_realtime_transcription:
-                if self.realtime_transcription_model:
-                    del self.realtime_transcription_model
-                    self.realtime_transcription_model = None
-            gc.collect()
+        return shutdown_recorder(self)
 
     # Public compatibility utilities.
 
