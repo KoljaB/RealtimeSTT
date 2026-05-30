@@ -14,7 +14,10 @@ import torch
 import torch.multiprocessing as mp
 import webrtcvad
 
+from .audio_input_worker import run_audio_data_worker
+from .realtime import run_realtime_worker
 from .realtime_text_stabilizer import RealtimeTextStabilizer
+from .recording import run_recording_worker
 from ..transcription_engines import (
     TranscriptionEngineConfig,
     create_transcription_engine,
@@ -51,7 +54,7 @@ def initialize_recorder(
 
     _log_extended_initialization(init_args["use_extended_logging"], init_args)
     _initialize_transcription_runtime(recorder, recorder_cls)
-    _start_audio_reader(recorder, recorder_cls)
+    _start_audio_reader(recorder)
     _initialize_realtime_transcription_model(recorder)
     _initialize_wakeword_detection(
         recorder,
@@ -394,7 +397,7 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
         )
 
 
-def _start_audio_reader(recorder, recorder_cls):
+def _start_audio_reader(recorder):
     # Start audio data reading process
     if recorder.use_microphone.value:
         logger.info("Initializing audio recording"
@@ -403,7 +406,7 @@ def _start_audio_reader(recorder, recorder_cls):
                      f" buffer size: {recorder.buffer_size}"
                      )
         recorder.reader_process = recorder._start_thread(
-            target=recorder_cls._audio_data_worker,
+            target=run_audio_data_worker,
             args=(
                 recorder.audio_queue,
                 recorder.sample_rate,
@@ -569,12 +572,18 @@ def _initialize_recording_buffers(recorder):
 
 def _start_worker_threads(recorder):
     # Start the recording worker thread
-    recorder.recording_thread = threading.Thread(target=recorder._recording_worker)
+    recorder.recording_thread = threading.Thread(
+        target=run_recording_worker,
+        args=(recorder,),
+    )
     recorder.recording_thread.daemon = True
     recorder.recording_thread.start()
 
     # Start the realtime transcription worker thread
-    recorder.realtime_thread = threading.Thread(target=recorder._realtime_worker)
+    recorder.realtime_thread = threading.Thread(
+        target=run_realtime_worker,
+        args=(recorder,),
+    )
     recorder.realtime_thread.daemon = True
     recorder.realtime_thread.start()
 

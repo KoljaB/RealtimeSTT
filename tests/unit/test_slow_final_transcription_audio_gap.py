@@ -11,8 +11,18 @@ import numpy as np
 
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
+    from RealtimeSTT.core.recording_buffers import get_next_recorded_audio
+    from RealtimeSTT.core.voice_activity import (
+        check_voice_activity,
+        is_silero_speech,
+        is_voice_active,
+    )
 except Exception as exc:  # pragma: no cover - optional runtime deps may be absent
     AudioToTextRecorder = None
+    get_next_recorded_audio = None
+    check_voice_activity = None
+    is_silero_speech = None
+    is_voice_active = None
     IMPORT_ERROR = exc
 else:
     IMPORT_ERROR = None
@@ -125,7 +135,7 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
 
         recorder.stop()
 
-        queued_recording = recorder._get_next_recorded_audio()
+        queued_recording = get_next_recorded_audio(recorder)
         retained_audio = np.frombuffer(
             b"".join(queued_recording["frames"]),
             dtype=np.int16,
@@ -167,10 +177,10 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.stop_recording_on_voice_deactivity = False
         recorder.continuous_listening = False
         recorder.on_recording_stop = None
-        recorder._set_state = lambda state: None
 
         recorder.stop()
-        recorder.wait_audio()
+        with mock.patch("RealtimeSTT.audio_recorder.set_recorder_state"):
+            recorder.wait_audio()
 
         expected = np.frombuffer(b"".join(chunks), dtype=np.int16).astype(np.float32) / 32768.0
 
@@ -183,11 +193,11 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.is_silero_speech_active = True
         recorder.last_webrtc_speech_time = time.time() - 0.2
 
-        self.assertTrue(recorder._is_voice_active())
+        self.assertTrue(is_voice_active(recorder))
 
         recorder.last_webrtc_speech_time = time.time() - 2.0
 
-        self.assertFalse(recorder._is_voice_active())
+        self.assertFalse(is_voice_active(recorder))
 
     def test_start_resets_silero_vad_state(self):
         recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
@@ -198,7 +208,6 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.is_silero_speech_active = True
         recorder.recording_stop_time = 0
         recorder.min_gap_between_recordings = 0
-        recorder._set_state = lambda state: None
         recorder.text_storage = []
         recorder.realtime_stabilized_text = ""
         recorder.realtime_stabilized_safetext = ""
@@ -211,7 +220,8 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.stop_recording_event = threading.Event()
         recorder.on_recording_start = None
 
-        recorder.start()
+        with mock.patch("RealtimeSTT.audio_recorder.set_recorder_state"):
+            recorder.start()
 
         self.assertEqual(silero.reset_count, 1)
         self.assertFalse(recorder.is_silero_speech_active)
@@ -251,21 +261,22 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.is_webrtc_speech_active = False
         recorder.is_silero_speech_active = True
         recorder.silero_working = False
-        recorder._is_webrtc_speech = lambda data: setattr(
-            recorder,
-            "is_webrtc_speech_active",
-            True,
-        )
+        def mark_webrtc_speech(recorder_arg, data):
+            setattr(recorder_arg, "is_webrtc_speech_active", True)
 
-        with mock.patch("RealtimeSTT.audio_recorder.threading.Thread") as thread_cls:
-            recorder._check_voice_activity(b"audio")
+        with mock.patch(
+            "RealtimeSTT.core.voice_activity.is_webrtc_speech",
+            side_effect=mark_webrtc_speech,
+        ):
+            with mock.patch("RealtimeSTT.core.voice_activity.threading.Thread") as thread_cls:
+                check_voice_activity(recorder, b"audio")
 
         self.assertEqual(silero.reset_count, 1)
         self.assertFalse(recorder.is_silero_speech_active)
         self.assertEqual(recorder._silero_vad_generation, 8)
         self.assertTrue(recorder.silero_working)
         thread_cls.assert_called_once()
-        self.assertEqual(thread_cls.call_args.kwargs["args"], (b"audio", 8))
+        self.assertEqual(thread_cls.call_args.kwargs["args"], (recorder, b"audio", 8))
 
     def test_stale_silero_generation_does_not_update_detection_state(self):
         recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
@@ -276,7 +287,8 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         recorder.silero_working = False
         recorder.is_silero_speech_active = False
 
-        result = recorder._is_silero_speech(
+        result = is_silero_speech(
+            recorder,
             np.zeros(512, dtype=np.int16).tobytes(),
             generation=1,
         )
@@ -298,7 +310,7 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
         self.assertTrue(recorder.flush_buffered_audio())
         self.assertTrue(recorder.audio_buffer == collections.deque())
 
-        queued_recording = recorder._get_next_recorded_audio()
+        queued_recording = get_next_recorded_audio(recorder)
         retained_audio = np.frombuffer(
             b"".join(queued_recording["frames"]),
             dtype=np.int16,

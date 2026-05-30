@@ -9,10 +9,16 @@ import time
 import numpy as np
 
 from .transcription import submit_transcription_request
+from .state import run_callback, set_recorder_state
 from .voice_activity import (
     append_to_pre_recording_buffer,
+    check_voice_activity,
     clear_pre_recording_buffer,
+    is_silero_speech,
+    is_voice_active,
+    is_webrtc_speech,
     reset_silero_vad_state,
+    selected_pre_recording_buffer_frames,
 )
 from .wakeword import process_wakeword
 
@@ -78,7 +84,7 @@ def run_recording_worker(recorder):
                 if self.on_recorded_chunk:
                     if self.use_extended_logging:
                         logger.debug('Debug: Calling on_recorded_chunk')
-                    self._run_callback(self.on_recorded_chunk, data)
+                    run_callback(self, self.on_recorded_chunk, data)
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking if handle_buffer_overflow is True')
@@ -148,7 +154,7 @@ def run_recording_worker(recorder):
                         if self.on_wakeword_timeout:
                             if self.use_extended_logging:
                                 logger.debug('Debug: Calling on_wakeword_timeout')
-                            self._run_callback(self.on_wakeword_timeout)
+                            run_callback(self, self.on_wakeword_timeout)
                 delay_was_passed = wake_word_activation_delay_passed
 
                 if self.use_extended_logging:
@@ -160,16 +166,16 @@ def run_recording_worker(recorder):
                             and not self.wakeword_detected:
                         if self.use_extended_logging:
                             logger.debug('Debug: Setting state to "wakeword"')
-                        self._set_state("wakeword")
+                        set_recorder_state(self, "wakeword")
                     else:
                         if self.listen_start:
                             if self.use_extended_logging:
                                 logger.debug('Debug: Setting state to "listening"')
-                            self._set_state("listening")
+                            set_recorder_state(self, "listening")
                         else:
                             if self.use_extended_logging:
                                 logger.debug('Debug: Setting state to "inactive"')
-                            self._set_state("inactive")
+                            set_recorder_state(self, "inactive")
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking wake word conditions')
@@ -201,7 +207,7 @@ def run_recording_worker(recorder):
                         if self.on_wakeword_detected:
                             if self.use_extended_logging:
                                 logger.debug('Debug: Calling on_wakeword_detected')
-                            self._run_callback(self.on_wakeword_detected)
+                            run_callback(self, self.on_wakeword_detected)
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking voice activity conditions')
@@ -215,10 +221,10 @@ def run_recording_worker(recorder):
                     if self.use_extended_logging:
                         logger.debug('Debug: Checking if voice is active')
 
-                    if self._is_voice_active():
+                    if is_voice_active(self):
 
                         if self.on_vad_start:
-                           self._run_callback(self.on_vad_start)
+                           run_callback(self, self.on_vad_start)
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Voice activity detected')
@@ -226,7 +232,7 @@ def run_recording_worker(recorder):
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Starting recording')
-                        pre_recording_frames = self._selected_pre_recording_buffer_frames()
+                        pre_recording_frames = selected_pre_recording_buffer_frames(self)
                         self.start()
 
                         self.start_recording_on_voice_activity = False
@@ -245,7 +251,7 @@ def run_recording_worker(recorder):
                         if self.use_extended_logging:
                             logger.debug('Debug: Checking voice activity')
                         data_copy = data[:]
-                        self._check_voice_activity(data_copy)
+                        check_voice_activity(self, data_copy)
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Resetting speech_end_silence_start')
@@ -255,7 +261,7 @@ def run_recording_worker(recorder):
                     if self.on_turn_detection_stop:
                         if self.use_extended_logging:
                             logger.debug('Debug: Calling on_turn_detection_stop')
-                        self._run_callback(self.on_turn_detection_stop)
+                        run_callback(self, self.on_turn_detection_stop)
 
             else:
                 if self.use_extended_logging:
@@ -287,8 +293,8 @@ def run_recording_worker(recorder):
                     if self.use_extended_logging:
                         logger.debug('Debug: Determining if speech is detected')
                     is_speech = (
-                        self._is_silero_speech(data) if self.silero_deactivity_detection
-                        else self._is_webrtc_speech(data)
+                        is_silero_speech(self, data) if self.silero_deactivity_detection
+                        else is_webrtc_speech(self, data)
                     )
                     if is_speech:
                         self.speech_end_silence_candidate_start = 0
@@ -328,7 +334,7 @@ def run_recording_worker(recorder):
                                 if self.use_extended_logging:
                                     logger.debug('Debug: Calling on_turn_detection_start')
 
-                                self._run_callback(self.on_turn_detection_start)
+                                run_callback(self, self.on_turn_detection_start)
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Checking early transcription conditions')
@@ -365,7 +371,7 @@ def run_recording_worker(recorder):
                                 if self.on_turn_detection_stop:
                                     if self.use_extended_logging:
                                         logger.debug('Debug: Calling on_turn_detection_stop')
-                                    self._run_callback(self.on_turn_detection_stop)
+                                    run_callback(self, self.on_turn_detection_stop)
 
                             self.allowed_to_early_transcribe = True
 
@@ -377,7 +383,7 @@ def run_recording_worker(recorder):
                             self.post_speech_silence_duration:
 
                         if self.on_vad_stop:
-                            self._run_callback(self.on_vad_stop)
+                            run_callback(self, self.on_vad_stop)
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Formatting silence start time')
@@ -403,7 +409,7 @@ def run_recording_worker(recorder):
                                 if self.on_turn_detection_stop:
                                     if self.use_extended_logging:
                                         logger.debug('Debug: Calling on_turn_detection_stop')
-                                    self._run_callback(self.on_turn_detection_stop)
+                                    run_callback(self, self.on_turn_detection_stop)
 
                             if self.use_extended_logging:
                                 logger.debug('Debug: Handling non-wake word scenario')
@@ -443,7 +449,7 @@ def run_recording_worker(recorder):
                 if self.wakeword_detected and self.on_wakeword_timeout:
                     if self.use_extended_logging:
                         logger.debug('Debug: Calling on_wakeword_timeout')
-                    self._run_callback(self.on_wakeword_timeout)
+                    run_callback(self, self.on_wakeword_timeout)
                 self.wakeword_detected = False
 
             if self.use_extended_logging:

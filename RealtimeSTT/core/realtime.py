@@ -10,6 +10,8 @@ from .realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )
+from .state import run_callback
+from .text_formatting import preprocess_output
 from .transcription import call_transcription_executor
 
 
@@ -429,7 +431,7 @@ def run_realtime_worker(recorder):
 
     def _safe_realtime_callback(callback, *args):
         try:
-            self._run_callback(callback, *args)
+            run_callback(self, callback, *args)
         except Exception as e:
             logger.error(f"Realtime callback failed: {e}", exc_info=True)
 
@@ -539,12 +541,30 @@ def run_realtime_worker(recorder):
         stabilized_display_text = event.display_text or raw_text.strip()
         _safe_realtime_callback(
             self._on_realtime_transcription_stabilized,
-            self._preprocess_output(stabilized_display_text, True),
+            preprocess_output(
+                stabilized_display_text,
+                preview=True,
+                ensure_sentence_starting_uppercase=(
+                    self.ensure_sentence_starting_uppercase
+                ),
+                ensure_sentence_ends_with_period=(
+                    self.ensure_sentence_ends_with_period
+                ),
+            ),
         )
 
         _safe_realtime_callback(
             self._on_realtime_transcription_update,
-            self._preprocess_output(raw_text.strip(), True),
+            preprocess_output(
+                raw_text.strip(),
+                preview=True,
+                ensure_sentence_starting_uppercase=(
+                    self.ensure_sentence_starting_uppercase
+                ),
+                ensure_sentence_ends_with_period=(
+                    self.ensure_sentence_ends_with_period
+                ),
+            ),
         )
 
     last_transcription_time = time.time()

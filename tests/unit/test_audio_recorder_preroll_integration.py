@@ -4,6 +4,7 @@ import unittest
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
     from RealtimeSTT.core.preroll import PrerollFrameMetadata
+    from RealtimeSTT.core.voice_activity import selected_pre_recording_buffer_frames
 except Exception as exc:  # pragma: no cover - optional runtime deps may be absent
     AudioToTextRecorder = None
     IMPORT_ERROR = exc
@@ -53,7 +54,7 @@ class AudioRecorderPrerollIntegrationTests(unittest.TestCase):
         }
         recorder._pending_preroll_selection = None
 
-        selected_frames = recorder._selected_pre_recording_buffer_frames()
+        selected_frames = selected_pre_recording_buffer_frames(recorder)
 
         selection = recorder._pending_preroll_selection
         self.assertIsNotNone(selection)

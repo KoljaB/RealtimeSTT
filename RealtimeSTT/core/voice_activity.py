@@ -221,7 +221,7 @@ def check_voice_activity(recorder, data, thread_factory=None):
         thread_factory = threading.Thread
 
     was_webrtc_speech_active = recorder.is_webrtc_speech_active
-    recorder._is_webrtc_speech(data)
+    is_webrtc_speech(recorder, data)
 
     # First quick performing check for voice activity using WebRTC
     if recorder.is_webrtc_speech_active:
@@ -234,8 +234,8 @@ def check_voice_activity(recorder, data, thread_factory=None):
 
             # Run the intensive check in a separate thread
             thread_factory(
-                target=recorder._is_silero_speech,
-                args=(data, silero_generation)).start()
+                target=is_silero_speech,
+                args=(recorder, data, silero_generation)).start()
 
 
 def pre_recording_buffer_trim_enabled(recorder):

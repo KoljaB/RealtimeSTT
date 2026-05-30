@@ -9,6 +9,7 @@ except ModuleNotFoundError:
 
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
+    from RealtimeSTT.core.realtime import run_realtime_worker
     from RealtimeSTT.core.realtime_text_stabilizer import RealtimeTextStabilizer
     from RealtimeSTT.transcription_engines import (
         TranscriptionInfo,
@@ -16,6 +17,7 @@ try:
     )
 except Exception as exc:  # pragma: no cover - import guard for optional deps
     AudioToTextRecorder = None
+    run_realtime_worker = None
     RealtimeTextStabilizer = None
     TranscriptionInfo = None
     TranscriptionResult = None
@@ -153,7 +155,11 @@ class AudioRecorderRealtimeStreamingTests(unittest.TestCase):
         return recorder
 
     def run_worker(self, recorder):
-        thread = threading.Thread(target=recorder._realtime_worker, daemon=True)
+        thread = threading.Thread(
+            target=run_realtime_worker,
+            args=(recorder,),
+            daemon=True,
+        )
         thread.start()
         return thread
 

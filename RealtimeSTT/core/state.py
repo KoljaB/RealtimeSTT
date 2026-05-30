@@ -44,30 +44,30 @@ def set_recorder_state(recorder, new_state):
     # Execute callbacks based on transitioning FROM a particular state
     if old_state == "listening":
         if recorder.on_vad_detect_stop:
-            recorder._run_callback(recorder.on_vad_detect_stop)
+            run_callback(recorder, recorder.on_vad_detect_stop)
     elif old_state == "wakeword":
         if recorder.on_wakeword_detection_end:
-            recorder._run_callback(recorder.on_wakeword_detection_end)
+            run_callback(recorder, recorder.on_wakeword_detection_end)
 
     # Execute callbacks based on transitioning TO a particular state
     if new_state == "listening":
         if recorder.on_vad_detect_start:
-            recorder._run_callback(recorder.on_vad_detect_start)
-        recorder._set_spinner("speak now")
+            run_callback(recorder, recorder.on_vad_detect_start)
+        set_spinner(recorder, "speak now")
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 250
     elif new_state == "wakeword":
         if recorder.on_wakeword_detection_start:
-            recorder._run_callback(recorder.on_wakeword_detection_start)
-        recorder._set_spinner(f"say {recorder.wake_words}")
+            run_callback(recorder, recorder.on_wakeword_detection_start)
+        set_spinner(recorder, f"say {recorder.wake_words}")
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 500
     elif new_state == "transcribing":
-        recorder._set_spinner("transcribing")
+        set_spinner(recorder, "transcribing")
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 50
     elif new_state == "recording":
-        recorder._set_spinner("recording")
+        set_spinner(recorder, "recording")
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 100
     elif new_state == "inactive":

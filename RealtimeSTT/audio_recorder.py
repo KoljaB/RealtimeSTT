@@ -6,7 +6,6 @@ import gc
 import logging
 import os
 import platform
-import queue
 import threading
 import time
 import traceback
@@ -17,13 +16,17 @@ from scipy.signal import resample
 import numpy as np
 
 from .core.realtime_text_stabilizer import RealtimeTextStabilizer
-from .core.audio_input_worker import run_audio_data_worker
 from .core.initialization import initialize_recorder
-from .core.recording import run_recording_worker
-from .core.realtime import run_realtime_worker
-from .core.state import run_callback, set_recorder_state, set_spinner
+from .core.recording_buffers import (
+    clear_audio_queue as clear_recorder_audio_queue,
+    flush_buffered_audio as flush_recorder_buffered_audio,
+    get_next_recorded_audio,
+    has_pending_recordings as recorder_has_pending_recordings,
+    queue_recorded_audio,
+    set_audio_from_frames,
+)
+from .core.state import run_callback, set_recorder_state
 from .core.text_formatting import (
-    find_tail_match_in_text,
     format_number,
     preprocess_output,
 )
@@ -38,13 +41,7 @@ from .core.wakeword import (
     _normalize_wakeword_backend,
 )
 from .core.voice_activity import (
-    check_voice_activity,
-    clear_pre_recording_buffer,
-    is_silero_speech,
-    is_voice_active,
-    is_webrtc_speech,
     reset_silero_vad_state,
-    selected_pre_recording_buffer_frames,
 )
 
 
@@ -551,51 +548,6 @@ class AudioToTextRecorder:
                 break 
             time.sleep(0.1)
 
-    def _run_callback(self, cb, *args, **kwargs):
-        return run_callback(self, cb, *args, **kwargs)
-
-    @staticmethod
-    def _audio_data_worker(
-        audio_queue,
-        target_sample_rate,
-        buffer_size,
-        input_device_index,
-        shutdown_event,
-        interrupt_stop_event,
-        use_microphone
-    ):
-        """
-        Worker method that handles the audio recording process.
-
-        This method runs in a separate process and is responsible for:
-        - Setting up the audio input stream for recording at the highest possible sample rate.
-        - Continuously reading audio data from the input stream, resampling if necessary,
-        preprocessing the data, and placing complete chunks in a queue.
-        - Handling errors during the recording process.
-        - Gracefully terminating the recording process when a shutdown event is set.
-
-        Args:
-            audio_queue (queue.Queue): A queue where recorded audio data is placed.
-            target_sample_rate (int): The desired sample rate for the output audio (for Silero VAD).
-            buffer_size (int): The number of samples expected by the Silero VAD model.
-            input_device_index (int): The index of the audio input device.
-            shutdown_event (threading.Event): An event that, when set, signals this worker method to terminate.
-            interrupt_stop_event (threading.Event): An event to signal keyboard interrupt.
-            use_microphone (multiprocessing.Value): A shared value indicating whether to use the microphone.
-
-        Raises:
-            Exception: If there is an error while initializing the audio recording.
-        """
-        return run_audio_data_worker(
-            audio_queue,
-            target_sample_rate,
-            buffer_size,
-            input_device_index,
-            shutdown_event,
-            interrupt_stop_event,
-            use_microphone
-        )
-
     def wakeup(self):
         """
         If in wake work modus, wake up as if a wake word was spoken.
@@ -609,7 +561,7 @@ class AudioToTextRecorder:
         self.interrupt_stop_event.set()
         if self.state != "inactive": # if inactive, was_interrupted will never be set
             self.was_interrupted.wait()
-            self._set_state("transcribing")
+            set_recorder_state(self, "transcribing")
         self.was_interrupted.clear()
         if self.is_recording: # if recording, make sure to stop the recorder
             self.stop()
@@ -637,11 +589,11 @@ class AudioToTextRecorder:
             if self.listen_start == 0:
                 self.listen_start = time.time()
 
-            queued_recording = self._get_next_recorded_audio()
+            queued_recording = get_next_recorded_audio(self)
 
             # If not yet started recording, wait for voice activity to initiate.
             if queued_recording is None and not self.is_recording and not self.frames:
-                self._set_state("listening")
+                set_recorder_state(self, "listening")
                 reset_silero_vad_state(self)
                 self.start_recording_on_voice_activity = True
                 armed_for_voice_activity = True
@@ -664,7 +616,7 @@ class AudioToTextRecorder:
                         break
 
             if queued_recording is None:
-                queued_recording = self._get_next_recorded_audio()
+                queued_recording = get_next_recorded_audio(self)
 
             if queued_recording is not None:
                 frames = queued_recording["frames"]
@@ -677,7 +629,8 @@ class AudioToTextRecorder:
                 backdate_stop_seconds = self.backdate_stop_seconds
                 backdate_resume_seconds = self.backdate_resume_seconds
 
-            frames_to_read = self._set_audio_from_frames(
+            frames_to_read = set_audio_from_frames(
+                self,
                 frames,
                 backdate_stop_seconds,
                 backdate_resume_seconds,
@@ -695,7 +648,7 @@ class AudioToTextRecorder:
             self.listen_start = 0
 
             if not self.is_recording:
-                self._set_state("inactive")
+                set_recorder_state(self, "inactive")
 
             if (
                     armed_for_voice_activity
@@ -712,107 +665,17 @@ class AudioToTextRecorder:
             self.shutdown()
             raise  # Re-raise the exception after cleanup
 
-    def _set_audio_from_frames(
-            self,
-            frames,
-            backdate_stop_seconds=0.0,
-            backdate_resume_seconds=0.0,
-    ):
-        frames = frames or []
-
-        # Calculate samples needed for backdating resume
-        samples_to_keep = int(self.sample_rate * backdate_resume_seconds)
-
-        # First convert all current frames to audio array
-        full_audio_array = np.frombuffer(b''.join(frames), dtype=np.int16)
-        full_audio = full_audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
-
-        # Calculate how many samples we need to keep for backdating resume
-        if samples_to_keep > 0:
-            samples_to_keep = min(samples_to_keep, len(full_audio))
-            # Keep the last N samples for backdating resume
-            frames_to_read_audio = full_audio[-samples_to_keep:]
-
-            # Convert the audio back to int16 bytes for frames
-            frames_to_read_int16 = (frames_to_read_audio * INT16_MAX_ABS_VALUE).astype(np.int16)
-            frame_bytes = frames_to_read_int16.tobytes()
-
-            # Split into appropriate frame sizes (assuming standard frame size)
-            FRAME_SIZE = 2048  # Typical frame size
-            frames_to_read = []
-            for i in range(0, len(frame_bytes), FRAME_SIZE):
-                frame = frame_bytes[i:i + FRAME_SIZE]
-                if frame:  # Only add non-empty frames
-                    frames_to_read.append(frame)
-        else:
-            frames_to_read = []
-
-        # Process backdate stop seconds
-        samples_to_remove = int(self.sample_rate * backdate_stop_seconds)
-
-        if samples_to_remove > 0:
-            if samples_to_remove < len(full_audio):
-                self.audio = full_audio[:-samples_to_remove]
-                logger.debug(f"Removed {samples_to_remove} samples "
-                    f"({samples_to_remove/self.sample_rate:.3f}s) from end of audio")
-            else:
-                self.audio = np.array([], dtype=np.float32)
-                logger.debug("Cleared audio (samples_to_remove >= audio length)")
-        else:
-            self.audio = full_audio
-            logger.debug(f"No samples removed, final audio length: {len(self.audio)}")
-
-        return frames_to_read
-
-    def _queue_recorded_audio(
-            self,
-            frames,
-            backdate_stop_seconds=0.0,
-            backdate_resume_seconds=0.0,
-    ):
-        if not frames:
-            return
-
-        self.recorded_audio_queue.put({
-            "frames": copy.deepcopy(frames),
-            "backdate_stop_seconds": backdate_stop_seconds,
-            "backdate_resume_seconds": backdate_resume_seconds,
-        })
-
-    def _get_next_recorded_audio(self):
-        try:
-            return self.recorded_audio_queue.get_nowait()
-        except queue.Empty:
-            return None
-
     def has_pending_recordings(self):
-        return not self.recorded_audio_queue.empty()
+        return recorder_has_pending_recordings(self)
 
     def _set_state_after_transcription(self):
         if self.is_recording:
-            self._set_state("recording")
+            set_recorder_state(self, "recording")
         else:
-            self._set_state("inactive")
+            set_recorder_state(self, "inactive")
 
     def flush_buffered_audio(self, min_abs_level=50):
-        if self.is_recording:
-            self.stop()
-            return True
-
-        frames = list(self.audio_buffer)
-        if not frames:
-            return False
-
-        audio_array = np.frombuffer(b''.join(frames), dtype=np.int16)
-        if audio_array.size == 0:
-            return False
-
-        if np.max(np.abs(audio_array.astype(np.int32))) < min_abs_level:
-            return False
-
-        self._queue_recorded_audio(frames)
-        clear_pre_recording_buffer(self)
-        return True
+        return flush_recorder_buffered_audio(self, min_abs_level)
 
 
     def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
@@ -859,7 +722,15 @@ class AudioToTextRecorder:
                     self.last_transcription_bytes = copy.deepcopy(audio_bytes)
                     self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
                     self.last_transcription_metadata = getattr(result, "metadata", None)
-                    transcription = self._preprocess_output(result.text)
+                    transcription = preprocess_output(
+                        result.text,
+                        ensure_sentence_starting_uppercase=(
+                            self.ensure_sentence_starting_uppercase
+                        ),
+                        ensure_sentence_ends_with_period=(
+                            self.ensure_sentence_ends_with_period
+                        ),
+                    )
                     end_time = time.time()  # End timing
                     transcription_time = end_time - start_time
 
@@ -903,7 +774,7 @@ class AudioToTextRecorder:
             Exception: If there is an error during the transcription process.
         """
         audio_copy = copy.deepcopy(self.audio)
-        self._set_state("transcribing")
+        set_recorder_state(self, "transcribing")
         if self.on_transcription_start:
             abort_value = self.on_transcription_start(audio_copy)
             if not abort_value:
@@ -978,7 +849,7 @@ class AudioToTextRecorder:
             return self
 
         logger.info("recording started")
-        self._set_state("recording")
+        set_recorder_state(self, "recording")
         self.text_storage = []
         self.realtime_stabilized_text = ""
         self.realtime_stabilized_safetext = ""
@@ -1019,7 +890,7 @@ class AudioToTextRecorder:
         self.start_recording_event.set()
 
         if self.on_recording_start:
-            self._run_callback(self.on_recording_start)
+            run_callback(self, self.on_recording_start)
 
         return self
 
@@ -1052,7 +923,8 @@ class AudioToTextRecorder:
         self.last_frames = copy.deepcopy(stopped_frames)
         self.backdate_stop_seconds = backdate_stop_seconds
         self.backdate_resume_seconds = backdate_resume_seconds
-        self._queue_recorded_audio(
+        queue_recorded_audio(
+            self,
             stopped_frames,
             backdate_stop_seconds,
             backdate_resume_seconds,
@@ -1077,7 +949,7 @@ class AudioToTextRecorder:
         self.last_recording_stop_time = self.recording_stop_time
 
         if self.on_recording_stop:
-            self._run_callback(self.on_recording_stop)
+            run_callback(self, self.on_recording_stop)
 
         return self
 
@@ -1089,7 +961,7 @@ class AudioToTextRecorder:
         Once voice is detected we enter "recording" state.
         """
         self.listen_start = time.time()
-        self._set_state("listening")
+        set_recorder_state(self, "listening")
         reset_silero_vad_state(self)
         self.start_recording_on_voice_activity = True
 
@@ -1201,95 +1073,12 @@ class AudioToTextRecorder:
                     self.realtime_transcription_model = None
             gc.collect()
 
-    def _recording_worker(self):
-        """
-        The main worker method which constantly monitors the audio
-        input for voice activity and accordingly starts/stops the recording.
-        """
-
-        return run_recording_worker(self)
-
-    def _realtime_worker(self):
-        """
-        Performs real-time transcription if the feature is enabled.
-
-        This worker is intentionally defensive:
-        - realtime transcription must never crash the recorder
-        - empty/None buffers are skipped
-        - frame buffers are snapshotted before transcription
-        - model/pipe errors are logged and skipped
-        """
-
-        return run_realtime_worker(self)
-
-    def _is_silero_speech(self, chunk, generation=None):
-        return is_silero_speech(self, chunk, generation)
-
-    def _is_webrtc_speech(self, chunk, all_frames_must_be_true=False):
-        return is_webrtc_speech(self, chunk, all_frames_must_be_true)
-
-    def _check_voice_activity(self, data):
-        return check_voice_activity(
-            self,
-            data,
-            thread_factory=threading.Thread,
-        )
-
-    def _selected_pre_recording_buffer_frames(self):
-        return selected_pre_recording_buffer_frames(self)
-
     def clear_audio_queue(self):
         """
         Safely empties the audio queue to ensure no remaining audio 
         fragments get processed e.g. after waking up the recorder.
         """
-        clear_pre_recording_buffer(self)
-        try:
-            while True:
-                self.audio_queue.get_nowait()
-        except:
-            # PyTorch's mp.Queue doesn't have a specific Empty exception
-            # so we catch any exception that might occur when the queue is empty
-            pass
-
-    def _is_voice_active(self):
-        return is_voice_active(self)
-
-    def _set_state(self, new_state):
-        """
-        Update the current state of the recorder and execute
-        corresponding state-change callbacks.
-
-        Args:
-            new_state (str): The new state to set.
-
-        """
-        return set_recorder_state(self, new_state)
-
-    def _set_spinner(self, text):
-        """
-        Update the spinner's text or create a new
-        spinner with the provided text.
-
-        Args:
-            text (str): The text to be displayed alongside the spinner.
-        """
-        return set_spinner(self, text)
-
-    def _preprocess_output(self, text, preview=False):
-        return preprocess_output(
-            text,
-            preview=preview,
-            ensure_sentence_starting_uppercase=(
-                self.ensure_sentence_starting_uppercase
-            ),
-            ensure_sentence_ends_with_period=(
-                self.ensure_sentence_ends_with_period
-            ),
-        )
-
-    def _find_tail_match_in_text(self, text1, text2, length_of_match=10):
-        return find_tail_match_in_text(text1, text2, length_of_match)
+        return clear_recorder_audio_queue(self)
 
     def _on_realtime_transcription_stabilized(self, text):
         """
@@ -1308,7 +1097,7 @@ class AudioToTextRecorder:
         """
         if self.on_realtime_transcription_stabilized:
             if self.is_recording:
-                self._run_callback(self.on_realtime_transcription_stabilized, text)
+                run_callback(self, self.on_realtime_transcription_stabilized, text)
 
     def _on_realtime_transcription_update(self, text):
         """
@@ -1326,7 +1115,7 @@ class AudioToTextRecorder:
         """
         if self.on_realtime_transcription_update:
             if self.is_recording:
-                self._run_callback(self.on_realtime_transcription_update, text)
+                run_callback(self, self.on_realtime_transcription_update, text)
 
     def __enter__(self):
         """

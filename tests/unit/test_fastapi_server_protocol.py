@@ -328,7 +328,9 @@ class FastAPIServerProtocolTests(unittest.TestCase):
         recorder.language = "en"
         recorder.interrupt_stop_event = threading.Event()
         recorder.was_interrupted = threading.Event()
-        recorder._set_state = lambda state: None
+        recorder.state = "transcribing"
+        recorder.spinner = False
+        recorder.halo = None
         recorder.is_recording = False
         recorder.allowed_to_early_transcribe = True
         recorder.detected_language = None

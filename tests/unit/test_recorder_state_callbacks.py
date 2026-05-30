@@ -3,16 +3,6 @@ from unittest import mock
 
 from RealtimeSTT.core import state as state_helpers
 
-try:
-    from RealtimeSTT import audio_recorder
-    from RealtimeSTT.audio_recorder import AudioToTextRecorder
-except Exception as exc:  # pragma: no cover - optional runtime deps may be absent
-    audio_recorder = None
-    AudioToTextRecorder = None
-    IMPORT_ERROR = exc
-else:
-    IMPORT_ERROR = None
-
 
 class FakeHalo:
     def __init__(self, text=None):
@@ -41,22 +31,29 @@ class RecorderLike:
         self.on_wakeword_detection_start = None
         self.on_wakeword_detection_end = None
 
-    def _run_callback(self, cb, *args, **kwargs):
-        return state_helpers.run_callback(self, cb, *args, **kwargs)
-
-    def _set_spinner(self, text):
-        self.events.append(f"spinner:{text}")
-        return state_helpers.set_spinner(self, text)
-
 
 class RecorderStateCallbackTests(unittest.TestCase):
+    def patch_spinner_events(self):
+        original_set_spinner = state_helpers.set_spinner
+
+        def recording_set_spinner(recorder, text):
+            recorder.events.append(f"spinner:{text}")
+            return original_set_spinner(recorder, text)
+
+        return mock.patch.object(
+            state_helpers,
+            "set_spinner",
+            side_effect=recording_set_spinner,
+        )
+
     def test_inactive_to_listening_runs_start_callback_before_spinner(self):
         recorder = RecorderLike()
         recorder.on_vad_detect_start = lambda: recorder.events.append("vad_start")
 
-        with mock.patch.object(state_helpers.halo, "Halo", FakeHalo):
-            with self.assertLogs("realtimestt", level="INFO") as logs:
-                state_helpers.set_recorder_state(recorder, "listening")
+        with self.patch_spinner_events():
+            with mock.patch.object(state_helpers.halo, "Halo", FakeHalo):
+                with self.assertLogs("realtimestt", level="INFO") as logs:
+                    state_helpers.set_recorder_state(recorder, "listening")
 
         self.assertEqual(recorder.state, "listening")
         self.assertEqual(recorder.events, ["vad_start", "spinner:speak now"])
@@ -72,7 +69,8 @@ class RecorderStateCallbackTests(unittest.TestCase):
         recorder = RecorderLike(state="listening", halo=FakeHalo("speak now"))
         recorder.on_vad_detect_stop = lambda: recorder.events.append("vad_stop")
 
-        state_helpers.set_recorder_state(recorder, "recording")
+        with self.patch_spinner_events():
+            state_helpers.set_recorder_state(recorder, "recording")
 
         self.assertEqual(recorder.state, "recording")
         self.assertEqual(recorder.events, ["vad_stop", "spinner:recording"])
@@ -82,7 +80,8 @@ class RecorderStateCallbackTests(unittest.TestCase):
     def test_recording_to_transcribing_sets_spinner_text_and_interval(self):
         recorder = RecorderLike(state="recording", halo=FakeHalo("recording"))
 
-        state_helpers.set_recorder_state(recorder, "transcribing")
+        with self.patch_spinner_events():
+            state_helpers.set_recorder_state(recorder, "transcribing")
 
         self.assertEqual(recorder.state, "transcribing")
         self.assertEqual(recorder.events, ["spinner:transcribing"])
@@ -95,8 +94,9 @@ class RecorderStateCallbackTests(unittest.TestCase):
             lambda: recorder.events.append("wakeword_start")
         )
 
-        with mock.patch.object(state_helpers.halo, "Halo", FakeHalo):
-            state_helpers.set_recorder_state(recorder, "wakeword")
+        with self.patch_spinner_events():
+            with mock.patch.object(state_helpers.halo, "Halo", FakeHalo):
+                state_helpers.set_recorder_state(recorder, "wakeword")
 
         self.assertEqual(recorder.state, "wakeword")
         self.assertEqual(recorder.events, ["wakeword_start", "spinner:say jarvis"])
@@ -176,28 +176,6 @@ class RecorderStateCallbackTests(unittest.TestCase):
         self.assertEqual(thread.kwargs, {"preview": True})
         self.assertTrue(thread.daemon)
         self.assertTrue(thread.started)
-
-
-class AudioToTextRecorderStateCompatibilityTests(unittest.TestCase):
-    def setUp(self):
-        if IMPORT_ERROR is not None:
-            self.skipTest(f"RealtimeSTT import failed: {IMPORT_ERROR}")
-
-    def test_facade_state_helpers_delegate_to_core_helpers(self):
-        recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
-        callback = lambda: None
-
-        with mock.patch.object(audio_recorder, "run_callback") as run_callback:
-            recorder._run_callback(callback, "value", flag=True)
-        run_callback.assert_called_once_with(recorder, callback, "value", flag=True)
-
-        with mock.patch.object(audio_recorder, "set_recorder_state") as set_state:
-            recorder._set_state("recording")
-        set_state.assert_called_once_with(recorder, "recording")
-
-        with mock.patch.object(audio_recorder, "set_spinner") as set_spinner:
-            recorder._set_spinner("recording")
-        set_spinner.assert_called_once_with(recorder, "recording")
 
 
 if __name__ == "__main__":

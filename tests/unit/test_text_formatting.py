@@ -74,21 +74,6 @@ class AudioToTextRecorderTextFormattingCompatibilityTests(unittest.TestCase):
         recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
         self.assertEqual(recorder.format_number(123.456789), "23.45")
 
-    def test_facade_preprocess_output_preserves_recorder_flags(self):
-        recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
-        recorder.ensure_sentence_starting_uppercase = False
-        recorder.ensure_sentence_ends_with_period = False
-
-        self.assertEqual(recorder._preprocess_output("  hello\tworld  "), "hello world")
-
-    def test_facade_tail_match_delegates_to_core_helper(self):
-        recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
-
-        self.assertEqual(
-            recorder._find_tail_match_in_text("alpha world", "one world two", 5),
-            9,
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

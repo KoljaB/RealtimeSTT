@@ -513,7 +513,9 @@ class AudioRecorderRealtimeStabilizerIntegrationTests(unittest.TestCase):
         recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
         recorder.recording_stop_time = 0
         recorder.min_gap_between_recordings = 0
-        recorder._set_state = lambda state: None
+        recorder.state = "inactive"
+        recorder.spinner = False
+        recorder.halo = None
         recorder.on_recording_start = None
         recorder.start_recording_event = threading.Event()
         recorder.stop_recording_event = threading.Event()
