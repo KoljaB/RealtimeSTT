@@ -247,6 +247,12 @@ class AudioToTextRecorder:
         Initializes an audio recorder and  transcription
         and wake word detection.
 
+        Compatibility note:
+            This constructor intentionally keeps its explicit historical
+            signature in the public facade. Refactors may move runtime setup
+            behind core helpers, but must not reorder, rename, or remove
+            parameters.
+
         Args:
         Main transcription and output:
         - model (str, default="tiny"): Specifies the size of the transcription
