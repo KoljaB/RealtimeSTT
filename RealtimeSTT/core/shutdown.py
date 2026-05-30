@@ -8,13 +8,16 @@ logger = logging.getLogger("realtimestt")
 
 
 def shutdown_recorder(recorder):
+    """
+    Stops worker threads, subprocesses, pipes, and realtime resources.
+    """
     with recorder.shutdown_lock:
         if recorder.is_shut_down:
             return
 
         print("\033[91mRealtimeSTT shutting down\033[0m")
 
-        # Force wait_audio() and text() to exit
+        # Wake wait_audio() and text() callers before worker teardown.
         recorder.is_shut_down = True
         recorder.continuous_listening = False
         recorder.start_recording_event.set()
@@ -30,7 +33,7 @@ def shutdown_recorder(recorder):
 
         logger.debug('Terminating reader process')
 
-        # Give it some time to finish the loop and cleanup.
+        # Give the reader loop time to flush and close its device handle.
         if recorder.use_microphone.value:
             recorder.reader_process.join(timeout=10)
 

@@ -1,12 +1,7 @@
-"""
-Lightweight realtime speech-boundary detection.
+"""Detects lightweight realtime acoustic boundaries in short PCM chunks.
 
-This module intentionally does not know anything about Whisper, recorder
-threads, or GPU work. It watches short PCM chunks and emits low-cost acoustic
-boundary events that can be used to schedule heavier realtime transcription.
-
-The detector is heuristic. It detects likely voiced energy valleys, not
-linguistic syllables with certainty.
+The detector is heuristic: it emits likely voiced energy valleys, not certain
+linguistic syllable boundaries.
 """
 
 import math
@@ -21,7 +16,9 @@ INT16_MAX_ABS_VALUE = 32768.0
 
 
 class SpeechBoundaryEvent:
-    """A committed acoustic boundary candidate."""
+    """
+    A committed acoustic boundary candidate.
+    """
 
     def __init__(
             self,
@@ -35,6 +32,9 @@ class SpeechBoundaryEvent:
             valley_depth_db: float,
             latency_ms: float,
             created_at: Optional[float] = None):
+        """
+        Stores one committed acoustic boundary candidate.
+        """
         self.boundary_sample = boundary_sample
         self.boundary_time_seconds = boundary_time_seconds
         self.score = score
@@ -47,6 +47,9 @@ class SpeechBoundaryEvent:
         self.created_at = time.time() if created_at is None else created_at
 
     def as_dict(self) -> Dict[str, float]:
+        """
+        Returns the boundary event as plain metadata.
+        """
         return {
             "boundary_sample": self.boundary_sample,
             "boundary_time_seconds": self.boundary_time_seconds,
@@ -75,7 +78,9 @@ class SpeechBoundaryEvent:
 
 
 class SpeechBoundaryResult:
-    """Result returned for one processed chunk."""
+    """
+    Result returned for one processed chunk.
+    """
 
     def __init__(
             self,
@@ -87,6 +92,9 @@ class SpeechBoundaryResult:
             is_vowel_like: bool,
             voicing_score: float,
             processed_frames: int):
+        """
+        Stores detector output for one processed audio chunk.
+        """
         self.events = events
         self.current_energy_db = current_energy_db
         self.current_rms = current_rms
@@ -98,10 +106,16 @@ class SpeechBoundaryResult:
 
     @property
     def boundary_detected(self) -> bool:
+        """
+        Reports whether the result contains boundary events.
+        """
         return bool(self.events)
 
     @property
     def latest_event(self) -> Optional[SpeechBoundaryEvent]:
+        """
+        Returns the newest boundary event when one exists.
+        """
         if not self.events:
             return None
         return self.events[-1]
@@ -134,6 +148,9 @@ class RealtimeSpeechBoundaryDetector:
             vowel_margin_db: Optional[float] = None,
             min_voicing_score: Optional[float] = None,
             max_vowel_zero_crossing_rate: Optional[float] = None):
+        """
+        Configures a streaming acoustic boundary detector.
+        """
         self.sample_rate = int(sample_rate)
         self.frame_ms = float(frame_ms)
         self.lookahead_ms = float(lookahead_ms)
@@ -178,6 +195,9 @@ class RealtimeSpeechBoundaryDetector:
         self.reset()
 
     def reset(self) -> None:
+        """
+        Clears detector history and rolling acoustic state.
+        """
         self._pending_samples = np.empty(0, dtype=np.float32)
         self._frames: List[Dict[str, float]] = []
         self._processed_samples = 0
@@ -192,7 +212,9 @@ class RealtimeSpeechBoundaryDetector:
         self._current_voicing_score = 0.0
 
     def process_bytes(self, pcm_chunk: bytes) -> SpeechBoundaryResult:
-        """Process little-endian int16 PCM bytes."""
+        """
+        Processes little-endian int16 PCM bytes.
+        """
         if not pcm_chunk:
             return self._empty_result()
 
@@ -204,7 +226,9 @@ class RealtimeSpeechBoundaryDetector:
         return self.process_samples(samples)
 
     def process_samples(self, samples) -> SpeechBoundaryResult:
-        """Process int16 or float audio samples."""
+        """
+        Processes int16 or float audio samples.
+        """
         samples = self._samples_to_float32(samples)
         if samples.size == 0:
             return self._empty_result()

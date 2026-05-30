@@ -18,8 +18,10 @@ logger = logging.getLogger("realtimestt")
 
 
 def start_recording(recorder, frames=None):
-    # Ensure there's a minimum interval
-    # between stopping and starting recording
+    """
+    Starts a recording unless the stop/start gap is still too small.
+    """
+    # Preserve the configured stop/start gap to avoid immediate retriggers.
     if (time.time() - recorder.recording_stop_time
             < recorder.min_gap_between_recordings):
         logger.info("Attempted to start recording "
@@ -83,8 +85,15 @@ def stop_recording(
         backdate_stop_seconds=0.0,
         backdate_resume_seconds=0.0,
 ):
-    # Ensure there's a minimum interval
-    # between starting and stopping recording
+    """
+    Stops a recording and queues it for final transcription.
+
+    Args:
+    - recorder: Recorder-like object whose active recording should stop.
+    - backdate_stop_seconds: Seconds to remove from the recording tail.
+    - backdate_resume_seconds: Seconds to keep for resumed listening.
+    """
+    # Preserve the configured minimum length before accepting a stop.
     if (time.time() - recorder.recording_start_time
             < recorder.min_length_of_recording):
         logger.info("Attempted to stop recording "
@@ -129,6 +138,9 @@ def stop_recording(
 
 
 def listen_for_voice_activity(recorder):
+    """
+    Arms voice-activity recording and moves the recorder to listening.
+    """
     recorder.listen_start = time.time()
     set_recorder_state(recorder, "listening")
     reset_silero_vad_state(recorder)
@@ -136,6 +148,9 @@ def listen_for_voice_activity(recorder):
 
 
 def wait_for_recorded_audio(recorder):
+    """
+    Waits until recorded audio is available for final transcription.
+    """
     armed_for_voice_activity = False
 
     try:
@@ -145,25 +160,20 @@ def wait_for_recorded_audio(recorder):
 
         queued_recording = get_next_recorded_audio(recorder)
 
-        # If not yet started recording, wait for voice activity to initiate.
         if queued_recording is None and not recorder.is_recording and not recorder.frames:
             set_recorder_state(recorder, "listening")
             reset_silero_vad_state(recorder)
             recorder.start_recording_on_voice_activity = True
             armed_for_voice_activity = True
 
-            # Wait until recording starts
             logger.debug('Waiting for recording start')
             while not recorder.interrupt_stop_event.is_set():
                 if recorder.start_recording_event.wait(timeout=0.02):
                     break
 
-        # If recording is ongoing, wait for voice inactivity
-        # to finish recording.
         if queued_recording is None and recorder.is_recording:
             recorder.stop_recording_on_voice_deactivity = True
 
-            # Wait until recording stops
             logger.debug('Waiting for recording stop')
             while not recorder.interrupt_stop_event.is_set():
                 if (recorder.stop_recording_event.wait(timeout=0.02)):
@@ -195,7 +205,6 @@ def wait_for_recorded_audio(recorder):
             recorder.last_frames.clear()
             recorder.frames.extend(frames_to_read)
 
-        # Reset backdating parameters
         recorder.backdate_stop_seconds = 0.0
         recorder.backdate_resume_seconds = 0.0
 
@@ -221,17 +230,23 @@ def wait_for_recorded_audio(recorder):
 
 
 def wakeup_recorder(recorder):
+    """
+    Wakes the recorder by starting a new listening window.
+    """
     recorder.listen_start = time.time()
 
 
 def abort_recording(recorder):
+    """
+    Aborts active recording and resets interruption bookkeeping.
+    """
     state = recorder.state
     recorder.start_recording_on_voice_activity = False
     recorder.stop_recording_on_voice_deactivity = False
     recorder.interrupt_stop_event.set()
-    if recorder.state != "inactive": # if inactive, was_interrupted will never be set
+    if recorder.state != "inactive": # inactive aborts never set was_interrupted
         recorder.was_interrupted.wait()
         set_recorder_state(recorder, "transcribing")
     recorder.was_interrupted.clear()
-    if recorder.is_recording: # if recording, make sure to stop the recorder
+    if recorder.is_recording:
         recorder.stop()

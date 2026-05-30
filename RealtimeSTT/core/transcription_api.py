@@ -18,6 +18,9 @@ logger = logging.getLogger("realtimestt")
 
 
 def text(recorder, on_transcription_finished=None):
+    """
+    Waits for audio and returns the final transcription text.
+    """
     recorder.interrupt_stop_event.clear()
     recorder.was_interrupted.clear()
     try:
@@ -40,6 +43,9 @@ def text(recorder, on_transcription_finished=None):
 
 
 def transcribe(recorder):
+    """
+    Starts final transcription for the recorder's current audio.
+    """
     audio_copy = copy.deepcopy(recorder.audio)
     set_recorder_state(recorder, "transcribing")
     if recorder.on_transcription_start:
@@ -51,7 +57,20 @@ def transcribe(recorder):
         return recorder.perform_final_transcription(audio_copy)
 
 
+def _set_state_after_transcription(recorder):
+    """
+    Restores recorder state after final transcription completes.
+    """
+    if recorder.is_recording:
+        set_recorder_state(recorder, "recording")
+    else:
+        set_recorder_state(recorder, "inactive")
+
+
 def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
+    """
+    Runs final transcription and formats the resulting text.
+    """
     start_time = 0
     with recorder.transcription_lock:
         if audio_bytes is None:
@@ -65,7 +84,7 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
         try:
             if recorder.transcribe_count == 0:
                 logger.debug("Adding transcription request, no early transcription started")
-                start_time = time.time()  # Start timing
+                start_time = time.time()
                 submit_transcription_request(
                     recorder,
                     audio_bytes,
@@ -76,17 +95,17 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
             while recorder.transcribe_count > 0:
                 logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {recorder.transcribe_count}")
                 response = receive_transcription_result(recorder, timeout=0.1)
-                if response is None: # check if transcription done
-                    if recorder.interrupt_stop_event.is_set(): # check if interrupted
+                if response is None:
+                    if recorder.interrupt_stop_event.is_set():
                         recorder.was_interrupted.set()
-                        recorder._set_state_after_transcription()
-                        return "" # return empty string if interrupted
+                        _set_state_after_transcription(recorder)
+                        return ""
                     continue
                 status, result = response
                 recorder.transcribe_count -= 1
 
             recorder.allowed_to_early_transcribe = True
-            recorder._set_state_after_transcription()
+            _set_state_after_transcription(recorder)
             if status == 'success':
                 recorder.detected_language = (
                     result.info.language if result.info.language_probability > 0 else None
@@ -104,7 +123,7 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
                         recorder.ensure_sentence_ends_with_period
                     ),
                 )
-                end_time = time.time()  # End timing
+                end_time = time.time()
                 transcription_time = end_time - start_time
 
                 if start_time:
@@ -112,7 +131,7 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
                         print(f"Model {recorder.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                     else:
                         logger.debug(f"Model {recorder.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                return "" if recorder.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
+                return "" if recorder.interrupt_stop_event.is_set() else transcription
             else:
                 logger.error(f"Transcription error: {result}")
                 raise Exception(result)

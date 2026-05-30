@@ -1,3 +1,5 @@
+"""Adapts selected Hugging Face Transformers ASR models."""
+
 from importlib import import_module
 
 from ._model_utils import (
@@ -20,6 +22,7 @@ DEFAULT_MOONSHINE_MODEL = "UsefulSensors/moonshine-streaming-medium"
 
 
 def _load_transformers_classes(engine_name, class_names):
+    """Loads required Transformers classes for an engine."""
     try:
         transformers = import_module("transformers")
     except ModuleNotFoundError as exc:
@@ -41,6 +44,7 @@ def _load_transformers_classes(engine_name, class_names):
 
 
 def _load_torch(engine_name):
+    """Loads torch for a Transformers-backed engine."""
     try:
         return import_module("torch")
     except ModuleNotFoundError as exc:
@@ -51,6 +55,7 @@ def _load_torch(engine_name):
 
 
 def _with_cache_dir(options, download_root):
+    """Adds a cache directory to model options when needed."""
     options = dict(options)
     if download_root and "cache_dir" not in options:
         options["cache_dir"] = download_root
@@ -58,7 +63,14 @@ def _with_cache_dir(options, download_root):
 
 
 class CohereTranscribeBackend:
+    """
+    Wraps the Cohere Transcribe Transformers backend.
+    """
+
     def __init__(self, config, processor_cls=None, model_cls=None, torch_module=None):
+        """
+        Initializes the Cohere Transcribe Transformers backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.model_name = config.model or DEFAULT_COHERE_MODEL
@@ -97,6 +109,9 @@ class CohereTranscribeBackend:
         self.model = model_cls.from_pretrained(self.model_name, **model_options)
 
     def transcribe(self, audio, language, **params):
+        """
+        Runs Cohere Transcribe generation for one audio input.
+        """
         processor_kwargs = {
             "sampling_rate": self.sample_rate,
             "return_tensors": "pt",
@@ -133,13 +148,23 @@ class CohereTranscribeBackend:
 
 
 class CohereTranscribeEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with Cohere Transcribe models.
+    """
+
     engine_name = "cohere_transcribe"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the Cohere Transcribe engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or CohereTranscribeBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with Cohere Transcribe.
+        """
         language = language or (self.config.engine_options or {}).get("language")
         if not language:
             raise TranscriptionEngineError(
@@ -155,7 +180,14 @@ class CohereTranscribeEngine(BaseTranscriptionEngine):
 
 
 class GraniteSpeechBackend:
+    """
+    Wraps the Granite Speech Transformers backend.
+    """
+
     def __init__(self, config, processor_cls=None, model_cls=None, torch_module=None):
+        """
+        Initializes the Granite Speech Transformers backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.model_name = config.model or DEFAULT_GRANITE_MODEL
@@ -211,6 +243,9 @@ class GraniteSpeechBackend:
         return tensor
 
     def transcribe(self, audio, prompt, **params):
+        """
+        Runs Granite Speech generation for one audio input.
+        """
         chat = [{"role": "user", "content": prompt}]
         prompt_text = self.tokenizer.apply_chat_template(
             chat,
@@ -246,11 +281,18 @@ class GraniteSpeechBackend:
 
 
 class GraniteSpeechEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with Granite Speech models.
+    """
+
     engine_name = "granite_speech"
 
     DEFAULT_PROMPT = "<|audio|>transcribe the speech with proper punctuation and capitalization."
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the Granite Speech engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or GraniteSpeechBackend)(config)
 
@@ -269,6 +311,9 @@ class GraniteSpeechEngine(BaseTranscriptionEngine):
         return prompt
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with Granite Speech.
+        """
         audio = self._normalize_audio(audio)
         decoded = self.backend.transcribe(
             audio,
@@ -284,7 +329,14 @@ class GraniteSpeechEngine(BaseTranscriptionEngine):
 
 
 class MoonshineBackend:
+    """
+    Wraps the Moonshine streaming Transformers backend.
+    """
+
     def __init__(self, config, processor_cls=None, model_cls=None, torch_module=None):
+        """
+        Initializes the Moonshine Transformers backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.model_name = config.model or DEFAULT_MOONSHINE_MODEL
@@ -333,6 +385,9 @@ class MoonshineBackend:
             return None
 
     def transcribe(self, audio, **params):
+        """
+        Runs Moonshine generation for one audio input.
+        """
         inputs = self.processor(
             audio,
             return_tensors="pt",
@@ -361,13 +416,23 @@ class MoonshineBackend:
 
 
 class MoonshineEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with Moonshine models.
+    """
+
     engine_name = "moonshine"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the Moonshine engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or MoonshineBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with Moonshine.
+        """
         if language and language.lower() not in ("en", "english"):
             raise TranscriptionEngineError(
                 "The 'moonshine' engine currently supports English transcription only."

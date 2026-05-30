@@ -1,19 +1,30 @@
+"""Provides small helpers for normalizing model inputs and outputs."""
+
 from collections.abc import Mapping
 
 
 def attr_or_key(value, name, default=None):
+    """
+    Returns an attribute or mapping value by name.
+    """
     if isinstance(value, Mapping):
         return value.get(name, default)
     return getattr(value, name, default)
 
 
 def first_item(value):
+    """
+    Returns the first sequence item or the value itself.
+    """
     if isinstance(value, (list, tuple)):
         return value[0] if value else None
     return value
 
 
 def text_from_output(output):
+    """
+    Extracts display text from common model output shapes.
+    """
     output = first_item(output)
     if output is None:
         return ""
@@ -34,11 +45,17 @@ def text_from_output(output):
 
 
 def language_from_output(output, fallback=None):
+    """
+    Extracts a language value from a model output.
+    """
     output = first_item(output)
     return attr_or_key(output, "language", fallback)
 
 
 def move_to_device(value, device=None, dtype=None):
+    """
+    Moves tensor-like values to a device or dtype when supported.
+    """
     if not hasattr(value, "to"):
         return value
 
@@ -58,12 +75,18 @@ def move_to_device(value, device=None, dtype=None):
 
 
 def model_kwargs_from_inputs(inputs):
+    """
+    Converts mapping-like model inputs to keyword arguments.
+    """
     if isinstance(inputs, Mapping):
         return dict(inputs)
     return inputs
 
 
 def decode_to_text(decoded):
+    """
+    Converts decoded model output to stripped text.
+    """
     if isinstance(decoded, str):
         return decoded.strip()
     if isinstance(decoded, (list, tuple)):
@@ -72,6 +95,9 @@ def decode_to_text(decoded):
 
 
 def torch_dtype_from_compute_type(torch_module, compute_type, default=None):
+    """
+    Maps a compute type string to a torch dtype when possible.
+    """
     normalized = (compute_type or "").lower().replace("-", "_")
     if normalized in ("float16", "fp16", "half"):
         return getattr(torch_module, "float16", default)

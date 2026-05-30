@@ -29,8 +29,7 @@ INT16_MAX_ABS_VALUE = 32768.0
 
 def run_recording_worker(recorder):
     """
-    The main worker method which constantly monitors the audio
-    input for voice activity and accordingly starts/stops the recording.
+    Monitors audio input and controls recording start and stop timing.
     """
 
     self = recorder
@@ -51,7 +50,6 @@ def run_recording_worker(recorder):
 
         if self.use_extended_logging:
             logger.debug('Debug: Starting main loop')
-        # Continuously monitor audio for voice activity
         while self.is_running:
 
             # if self.use_extended_logging:
@@ -91,7 +89,6 @@ def run_recording_worker(recorder):
                 if self.handle_buffer_overflow:
                     if self.use_extended_logging:
                         logger.debug('Debug: Handling buffer overflow')
-                    # Handle queue overflow
                     if (self.audio_queue.qsize() >
                             self.allowed_latency_limit):
                         if self.use_extended_logging:
@@ -116,7 +113,6 @@ def run_recording_worker(recorder):
 
             if self.use_extended_logging:
                 logger.debug('Debug: Updating time_since_last_buffer_message')
-            # Feed the extracted data to the audio_queue
             if time_since_last_buffer_message:
                 time_passed = time.time() - time_since_last_buffer_message
                 if time_passed > 1:
@@ -135,7 +131,6 @@ def run_recording_worker(recorder):
             if not self.is_recording:
                 if self.use_extended_logging:
                     logger.debug('Debug: Handling not recording state')
-                # Handle not recording state
                 time_since_listen_start = (time.time() - self.listen_start
                                         if self.listen_start else 0)
 
@@ -146,7 +141,7 @@ def run_recording_worker(recorder):
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Handling wake-word timeout callback')
-                # Handle wake-word timeout callback
+                # Wake-word timeout fires once after the activation delay passes.
                 if wake_word_activation_delay_passed \
                         and not delay_was_passed:
 
@@ -159,7 +154,6 @@ def run_recording_worker(recorder):
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Setting state and spinner text')
-                # Set state and spinner text
                 if not self.recording_stop_time:
                     if self.use_wake_words \
                             and wake_word_activation_delay_passed \
@@ -196,7 +190,6 @@ def run_recording_worker(recorder):
 
                     if self.use_extended_logging:
                         logger.debug('Debug: Checking if wake word detected')
-                    # If a wake word is detected
                     if wakeword_index >= 0:
                         if self.use_extended_logging:
                             logger.debug('Debug: Wake word detected, updating variables')
@@ -211,8 +204,6 @@ def run_recording_worker(recorder):
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking voice activity conditions')
-                # Check for voice activity to
-                # trigger the start of recording
                 if ((not self.use_wake_words
                     or not wake_word_activation_delay_passed)
                         and self.start_recording_on_voice_activity) \
@@ -239,8 +230,6 @@ def run_recording_worker(recorder):
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Adding buffered audio to frames')
-                        # Add the buffered audio
-                        # to the recording frames
                         self.frames.extend(pre_recording_frames)
                         clear_pre_recording_buffer(self)
 
@@ -266,11 +255,10 @@ def run_recording_worker(recorder):
             else:
                 if self.use_extended_logging:
                     logger.debug('Debug: Handling recording state')
-                # If we are currently recording
                 if wakeword_samples_to_remove and wakeword_samples_to_remove > 0:
                     if self.use_extended_logging:
                         logger.debug('Debug: Removing wakeword samples')
-                    # Remove samples from the beginning of self.frames
+                    # Drop configured wake-word audio before user speech.
                     samples_removed = 0
                     while wakeword_samples_to_remove > 0 and self.frames:
                         frame = self.frames[0]
@@ -288,7 +276,6 @@ def run_recording_worker(recorder):
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking if stop_recording_on_voice_deactivity is True')
-                # Stop the recording if silence is detected after speech
                 if self.stop_recording_on_voice_deactivity:
                     if self.use_extended_logging:
                         logger.debug('Debug: Determining if speech is detected')
@@ -322,8 +309,7 @@ def run_recording_worker(recorder):
                     if not is_speech:
                         if self.use_extended_logging:
                             logger.debug('Debug: Handling voice deactivity')
-                        # Voice deactivity was detected, so we start
-                        # measuring silence time before stopping recording
+                        # Silence must persist before the turn is considered ended.
                         if self.speech_end_silence_start == 0 and \
                             (time.time() - self.recording_start_time > self.min_length_of_recording):
 
@@ -377,7 +363,7 @@ def run_recording_worker(recorder):
 
                     if self.use_extended_logging:
                         logger.debug('Debug: Checking if silence duration exceeds threshold')
-                    # Wait for silence to stop recording after speech
+                    # Stop only after the post-speech silence threshold passes.
                     if self.speech_end_silence_start and time.time() - \
                             self.speech_end_silence_start >= \
                             self.post_speech_silence_duration:
@@ -387,12 +373,10 @@ def run_recording_worker(recorder):
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Formatting silence start time')
-                        # Get time in desired format (HH:MM:SS.nnn)
                         silence_start_time = datetime.datetime.fromtimestamp(self.speech_end_silence_start).strftime('%H:%M:%S.%f')[:-3]
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Calculating time difference')
-                        # Calculate time difference
                         time_diff = time.time() - self.speech_end_silence_start
 
                         if self.use_extended_logging:
@@ -425,7 +409,7 @@ def run_recording_worker(recorder):
             if not self.is_recording and was_recording:
                 if self.use_extended_logging:
                     logger.debug('Debug: Resetting after stopping recording')
-                # Reset after stopping recording to ensure clean state
+                # Reset stop flags after each completed recording.
                 if self.continuous_listening:
                     self.start_recording_on_voice_activity = True
                     self.stop_recording_on_voice_deactivity = True
@@ -440,8 +424,7 @@ def run_recording_worker(recorder):
 
             if self.use_extended_logging:
                 logger.debug('Debug: Handling wake word timeout')
-            # Handle wake word timeout (waited to long initiating
-            # speech after wake word detection)
+            # Wake-word detection expires if speech does not start in time.
             if self.wake_word_detect_time and time.time() - \
                     self.wake_word_detect_time > self.wake_word_timeout:
 

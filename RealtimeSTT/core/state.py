@@ -10,38 +10,31 @@ logger = logging.getLogger("realtimestt")
 
 
 def run_callback(recorder, cb, *args, **kwargs):
+    """
+    Runs a callback according to the recorder threading setting.
+    """
     if recorder.start_callback_in_new_thread:
-        # Run the callback in a new thread to avoid blocking the main thread
         threading.Thread(target=cb, args=args, kwargs=kwargs, daemon=True).start()
     else:
-        # Run the callback in the main thread to avoid threading issues
         cb(*args, **kwargs)
 
 
 def set_recorder_state(recorder, new_state):
     """
-    Update the current state of the recorder and execute
-    corresponding state-change callbacks.
+    Updates recorder state and fires matching transition callbacks.
 
     Args:
-        recorder: Recorder-like object whose state should be updated.
-        new_state (str): The new state to set.
-
+    - recorder: Recorder-like object whose state should be updated.
+    - new_state: New recorder state.
     """
-    # Check if the state has actually changed
     if new_state == recorder.state:
         return
 
-    # Store the current state for later comparison
     old_state = recorder.state
-
-    # Update to the new state
     recorder.state = new_state
 
-    # Log the state change
     logger.info(f"State changed from '{old_state}' to '{new_state}'")
 
-    # Execute callbacks based on transitioning FROM a particular state
     if old_state == "listening":
         if recorder.on_vad_detect_stop:
             run_callback(recorder, recorder.on_vad_detect_stop)
@@ -49,7 +42,6 @@ def set_recorder_state(recorder, new_state):
         if recorder.on_wakeword_detection_end:
             run_callback(recorder, recorder.on_wakeword_detection_end)
 
-    # Execute callbacks based on transitioning TO a particular state
     if new_state == "listening":
         if recorder.on_vad_detect_start:
             run_callback(recorder, recorder.on_vad_detect_start)
@@ -78,18 +70,15 @@ def set_recorder_state(recorder, new_state):
 
 def set_spinner(recorder, text):
     """
-    Update the spinner's text or create a new
-    spinner with the provided text.
+    Updates the active spinner or creates one when needed.
 
     Args:
-        recorder: Recorder-like object whose spinner should be updated.
-        text (str): The text to be displayed alongside the spinner.
+    - recorder: Recorder-like object whose spinner should be updated.
+    - text: Text displayed alongside the spinner.
     """
     if recorder.spinner:
-        # If the Halo spinner doesn't exist, create and start it
         if recorder.halo is None:
             recorder.halo = halo.Halo(text=text)
             recorder.halo.start()
-        # If the Halo spinner already exists, just update the text
         else:
             recorder.halo.text = text

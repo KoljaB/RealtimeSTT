@@ -14,7 +14,6 @@ import torch
 import torch.multiprocessing as mp
 import webrtcvad
 
-from .audio_input_worker import run_audio_data_worker
 from .realtime import run_realtime_worker
 from .realtime_text_stabilizer import RealtimeTextStabilizer
 from .recording import run_recording_worker
@@ -25,6 +24,8 @@ from ..transcription_engines import (
 from .silero_vad import create_silero_vad_model
 from .safepipe import SafePipe
 from .wakeword import OPENWAKEWORD_BACKENDS, setup_wakeword_detection
+from .audio_input_worker import run_audio_data_worker
+from .runtime import read_stdout_pipe, start_recorder_worker
 from .transcription import run_transcription_worker
 from .voice_activity import warmup_voice_activity_detectors
 
@@ -40,6 +41,9 @@ def initialize_recorder(
     load_porcupine_module,
     load_openwakeword_modules,
 ):
+    """
+    Initializes recorder state, models, workers, and callbacks.
+    """
     normalized_wakeword_backend = _assign_initial_attributes(
         recorder,
         init_args,
@@ -295,11 +299,7 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
 
 
 def _configure_logger(recorder, no_log_file, init_args=None):
-    # ----------------------------------------------------------------------------
-    # Named logger configuration
-    # By default, let's set it up so it logs at 'level' to the console.
-    # If you do NOT want this default configuration, remove the lines below
-    # and manage your "realtimestt" logger from your application code.
+    # Configure the named logger with the package's historical default handlers.
     logger.setLevel(logging.DEBUG)  # We capture all, then filter via handlers
 
     log_format = "RealTimeSTT: %(name)s - %(levelname)s - %(message)s"
@@ -309,7 +309,6 @@ def _configure_logger(recorder, no_log_file, init_args=None):
     if init_args is not None:
         init_args["file_log_format"] = file_log_format
 
-    # Create and set up console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(recorder.level)
     console_handler.setFormatter(logging.Formatter(log_format))
@@ -325,7 +324,6 @@ def _configure_logger(recorder, no_log_file, init_args=None):
         if init_args is not None:
             init_args["file_handler"] = file_handler
         logger.addHandler(file_handler)
-    # ----------------------------------------------------------------------------
 
 
 def _initialize_shutdown_state(recorder):
@@ -335,7 +333,7 @@ def _initialize_shutdown_state(recorder):
 
 def _configure_multiprocessing_start_method():
     try:
-        # Only set the start method if it hasn't been set already
+        # Multiprocessing start method is process-global; leave existing settings intact.
         if mp.get_start_method(allow_none=True) is None:
             mp.set_start_method("spawn")
     except RuntimeError as e:
@@ -365,14 +363,13 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
         recorder.parent_transcription_pipe, child_transcription_pipe = SafePipe()
         recorder.parent_stdout_pipe, child_stdout_pipe = SafePipe()
 
-    # Set device for model
     recorder.device = "cuda" if recorder.device == "cuda" and torch.cuda.is_available() else "cpu"
 
     if recorder._uses_external_transcription_executor:
         logger.info("Using external main transcription executor")
         recorder.main_transcription_ready_event.set()
     else:
-        recorder.transcript_process = recorder._start_thread(
+        recorder.transcript_process = start_recorder_worker(
             target=run_transcription_worker,
             args=(
                 child_transcription_pipe,
@@ -398,15 +395,14 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
 
 
 def _start_audio_reader(recorder, recorder_cls):
-    # Start audio data reading process
     if recorder.use_microphone.value:
         logger.info("Initializing audio recording"
                      " (creating pyAudio input stream,"
                      f" sample rate: {recorder.sample_rate}"
                      f" buffer size: {recorder.buffer_size}"
                      )
-        recorder.reader_process = recorder._start_thread(
-            target=recorder_cls._audio_data_worker,
+        recorder.reader_process = start_recorder_worker(
+            target=run_audio_data_worker,
             args=(
                 recorder.audio_queue,
                 recorder.sample_rate,
@@ -420,7 +416,6 @@ def _start_audio_reader(recorder, recorder_cls):
 
 
 def _initialize_realtime_transcription_model(recorder):
-    # Initialize the realtime transcription model
     if (
         recorder.enable_realtime_transcription
         and not recorder.use_main_model_for_realtime
@@ -453,7 +448,7 @@ def _initialize_realtime_transcription_model(recorder):
                 ),
             )
 
-            # Run a warm-up transcription
+            # Warmup pays model startup cost before the first realtime chunk.
             current_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
             warmup_audio_path = os.path.join(
                 current_dir, "assets", "warmup_audio.wav"
@@ -481,7 +476,6 @@ def _initialize_wakeword_detection(
     load_porcupine_module,
     load_openwakeword_modules,
 ):
-    # Setup wake word detection
     setup_wakeword_detection(
         recorder,
         normalized_wakeword_backend,
@@ -502,7 +496,6 @@ def _initialize_voice_activity_detection(
     silero_onnx_model_path,
     silero_onnx_threads,
 ):
-    # Setup voice activity detection model WebRTC
     try:
         logger.info("Initializing WebRTC voice with "
                      f"Sensitivity {webrtc_sensitivity}"
@@ -520,7 +513,6 @@ def _initialize_voice_activity_detection(
                   "engine initialized successfully"
                   )
 
-    # Setup voice activity detection model Silero VAD
     try:
         recorder.silero_vad_model = create_silero_vad_model(
             backend=silero_backend,
@@ -563,7 +555,6 @@ def _initialize_recording_buffers(recorder):
     recorder.frames = []
     recorder.last_frames = []
 
-    # Recording control flags
     recorder.is_recording = False
     recorder.is_running = True
     recorder.start_recording_on_voice_activity = False
@@ -571,7 +562,6 @@ def _initialize_recording_buffers(recorder):
 
 
 def _start_worker_threads(recorder):
-    # Start the recording worker thread
     recorder.recording_thread = threading.Thread(
         target=run_recording_worker,
         args=(recorder,),
@@ -579,7 +569,6 @@ def _start_worker_threads(recorder):
     recorder.recording_thread.daemon = True
     recorder.recording_thread.start()
 
-    # Start the realtime transcription worker thread
     recorder.realtime_thread = threading.Thread(
         target=run_realtime_worker,
         args=(recorder,),
@@ -589,13 +578,15 @@ def _start_worker_threads(recorder):
 
 
 def _finish_initialization(recorder):
-    # Wait for transcription models to start
     logger.debug('Waiting for main transcription model to start')
     recorder.main_transcription_ready_event.wait()
     logger.debug('Main transcription model ready')
 
     if recorder.parent_stdout_pipe is not None:
-        recorder.stdout_thread = threading.Thread(target=recorder._read_stdout)
+        recorder.stdout_thread = threading.Thread(
+            target=read_stdout_pipe,
+            args=(recorder,),
+        )
         recorder.stdout_thread.daemon = True
         recorder.stdout_thread.start()
 

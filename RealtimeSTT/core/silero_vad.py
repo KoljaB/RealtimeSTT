@@ -1,10 +1,7 @@
-"""
-Silero VAD backend adapters.
+"""Adapts Silero VAD backends for recorder voice-activity checks.
 
-The recorder processes one 32 ms / 512-sample stream at a time. For that
-workload, PyTorch CUDA launch overhead is usually larger than the tiny recurrent
-Silero model itself, so the automatic backend prefers CPU ONNX Runtime and only
-uses CUDA when explicitly requested.
+Automatic selection prefers CPU ONNX Runtime because recorder chunks are tiny
+enough that CUDA launch overhead usually dominates.
 """
 
 import logging
@@ -60,10 +57,15 @@ _BACKEND_ALIASES = {
 
 
 class SileroVadError(RuntimeError):
-    """Raised when a requested Silero VAD backend cannot be loaded."""
+    """
+    Raised when a requested Silero VAD backend cannot be loaded.
+    """
 
 
 def normalize_silero_backend(backend):
+    """
+    Normalizes a Silero backend alias to its canonical value.
+    """
     key = str(backend or "").strip().lower().replace("-", "_")
     try:
         return _BACKEND_ALIASES[key]
@@ -76,7 +78,9 @@ def normalize_silero_backend(backend):
 
 
 def resolve_silero_backend(backend="auto", silero_use_onnx=None):
-    """Resolve the new backend option with the legacy silero_use_onnx flag."""
+    """
+    Resolves the backend option with the legacy silero_use_onnx flag.
+    """
     resolved = normalize_silero_backend(backend)
     if resolved != SILERO_BACKEND_AUTO:
         return resolved
@@ -96,7 +100,7 @@ def create_silero_vad_model(
     chunk_samples=512,
     logger=None,
 ):
-    """Create a Silero VAD adapter.
+    """Creates a Silero VAD adapter.
 
     Automatic selection order is:
     raw ONNX Runtime op18-ifless, raw ONNX Runtime regular model, PyTorch CPU.
@@ -300,7 +304,9 @@ def _first_model(loaded):
 
 
 def find_silero_model_file(filename):
-    """Find a Silero model asset in silero_vad or an existing torch hub cache."""
+    """
+    Finds a Silero model asset in silero_vad or a torch hub cache.
+    """
     for root in _silero_package_roots():
         found = _find_file_under(root, filename)
         if found:
@@ -344,9 +350,14 @@ def _find_file_under(root, filename):
 
 
 class SileroCallableVad:
-    """Adapter for Silero's PyTorch or official ONNX callable wrappers."""
+    """
+    Adapts Silero's PyTorch and official ONNX callable wrappers.
+    """
 
     def __init__(self, model, backend, device=None):
+        """
+        Wraps a callable Silero model.
+        """
         self._torch = import_module("torch")
         self.model = model
         self.backend = backend
@@ -357,11 +368,17 @@ class SileroCallableVad:
             self.model.eval()
 
     def reset_states(self):
+        """
+        Resets model recurrent state when the backend supports it.
+        """
         reset = getattr(self.model, "reset_states", None)
         if reset:
             reset()
 
     def __call__(self, audio, sample_rate):
+        """
+        Runs one Silero VAD inference call.
+        """
         if hasattr(audio, "detach"):
             tensor = audio.float()
         else:
@@ -375,9 +392,14 @@ class SileroCallableVad:
 
 
 class RawSileroOnnxVad:
-    """Fast direct ONNX Runtime Silero VAD for 16 kHz, 512-sample chunks."""
+    """
+    Runs direct ONNX Runtime Silero VAD for 16 kHz, 512-sample chunks.
+    """
 
     def __init__(self, model_path, backend, intra_op_num_threads=2):
+        """
+        Creates an ONNX Runtime session for a raw Silero model file.
+        """
         ort = import_module("onnxruntime")
         session_options = ort.SessionOptions()
         session_options.intra_op_num_threads = int(intra_op_num_threads or 2)
@@ -417,11 +439,17 @@ class RawSileroOnnxVad:
         }
 
     def reset_states(self):
+        """
+        Clears ONNX recurrent state and input context.
+        """
         self.input_buffer.fill(0.0)
         for value in self.state.values():
             value.fill(0.0)
 
     def __call__(self, audio, sample_rate):
+        """
+        Runs one raw ONNX Silero VAD inference call.
+        """
         if int(sample_rate) != self.sample_rate:
             raise ValueError("Raw Silero ONNX backend expects 16000 Hz audio")
         audio = _as_float32_audio(audio)

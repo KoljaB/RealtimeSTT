@@ -1,3 +1,5 @@
+"""Creates transcription engine instances by configured backend name."""
+
 from importlib import import_module
 
 from .base import TranscriptionEngineConfig, UnsupportedTranscriptionEngineError
@@ -35,12 +37,16 @@ ENGINE_CLASS_PATHS = {
 
 
 def _load_engine_class(name):
+    """Loads the engine class registered for a normalized name."""
     module_name, class_name = ENGINE_CLASS_PATHS[name]
     module = import_module(module_name, package=__package__)
     return getattr(module, class_name)
 
 
 def create_transcription_engine(name, config: TranscriptionEngineConfig):
+    """
+    Creates a transcription engine for a configured backend name.
+    """
     normalized_name = (name or "faster_whisper").strip().lower().replace("-", "_")
     if normalized_name not in ENGINE_CLASS_PATHS:
         available_engines = ", ".join(sorted(ENGINE_CLASS_PATHS))
@@ -52,4 +58,7 @@ def create_transcription_engine(name, config: TranscriptionEngineConfig):
 
 
 def get_supported_transcription_engines():
+    """
+    Returns the sorted list of supported engine names.
+    """
     return sorted(ENGINE_CLASS_PATHS)

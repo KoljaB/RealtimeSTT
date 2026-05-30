@@ -236,36 +236,34 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
         self.assertIs(SpeechBoundaryEvent, core_event)
         self.assertIs(SpeechBoundaryResult, core_result)
 
-    def test_compatibility_private_methods_remain_on_recorder(self):
+    def test_redundant_private_facade_wrappers_are_not_reintroduced(self):
         audio_recorder = import_audio_recorder(self)
         recorder_cls = audio_recorder.AudioToTextRecorder
-        expected = [
+        removed_wrappers = [
             "_recording_worker",
             "_realtime_worker",
-            "_is_silero_speech",
-            "_is_webrtc_speech",
+            "_audio_data_worker",
             "_check_voice_activity",
+            "_find_tail_match_in_text",
+            "_get_next_recorded_audio",
+            "_is_silero_speech",
+            "_is_voice_active",
+            "_is_webrtc_speech",
+            "_on_realtime_transcription_stabilized",
+            "_on_realtime_transcription_update",
+            "_preprocess_output",
+            "_queue_recorded_audio",
+            "_read_stdout",
             "_selected_pre_recording_buffer_frames",
             "_set_audio_from_frames",
-            "_queue_recorded_audio",
-            "_get_next_recorded_audio",
-            "_is_voice_active",
-            "_run_callback",
-            "_set_state",
             "_set_spinner",
-            "_preprocess_output",
-            "_find_tail_match_in_text",
-            "_read_stdout",
-            "_audio_data_worker",
+            "_set_state",
+            "_set_state_after_transcription",
+            "_start_thread",
         ]
 
-        for name in expected:
-            self.assertTrue(callable(getattr(recorder_cls, name, None)), name)
-
-        self.assertIsInstance(
-            inspect.getattr_static(recorder_cls, "_audio_data_worker"),
-            staticmethod,
-        )
+        for name in removed_wrappers:
+            self.assertFalse(hasattr(recorder_cls, name), name)
 
     def test_kmp_duplicate_lib_ok_is_true_after_module_import(self):
         code = (

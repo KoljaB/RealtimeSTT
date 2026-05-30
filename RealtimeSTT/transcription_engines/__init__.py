@@ -1,3 +1,5 @@
+"""Exports transcription engine interfaces and factory helpers."""
+
 from .base import (
     BaseTranscriptionEngine,
     StreamingTranscriptionSession,

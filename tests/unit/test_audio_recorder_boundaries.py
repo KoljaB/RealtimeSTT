@@ -170,16 +170,14 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
         self.assertIs(init_args["on_recording_start"], callback)
         self.assertTrue(init_args["use_extended_logging"])
 
-    def test_audio_reader_starts_facade_worker_wrapper(self):
+    def test_audio_reader_starts_core_worker(self):
         from RealtimeSTT.core import initialization
 
         class UseMicrophone:
             value = True
 
         class RecorderClass:
-            @staticmethod
-            def _audio_data_worker(*args):
-                return None
+            pass
 
         class Recorder:
             audio_queue = object()
@@ -190,17 +188,21 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
             interrupt_stop_event = object()
             use_microphone = UseMicrophone()
 
-            def _start_thread(self, target=None, args=()):
-                self.started_target = target
-                self.started_args = args
-                return "reader-process"
-
         recorder = Recorder()
 
-        initialization._start_audio_reader(recorder, RecorderClass)
+        def fake_start_recorder_worker(target=None, args=()):
+            recorder.started_target = target
+            recorder.started_args = args
+            return "reader-process"
+
+        with mock.patch(
+            "RealtimeSTT.core.initialization.start_recorder_worker",
+            side_effect=fake_start_recorder_worker,
+        ):
+            initialization._start_audio_reader(recorder, RecorderClass)
 
         self.assertIs(recorder.reader_process, "reader-process")
-        self.assertIs(recorder.started_target, RecorderClass._audio_data_worker)
+        self.assertIs(recorder.started_target, initialization.run_audio_data_worker)
         self.assertEqual(
             recorder.started_args,
             (

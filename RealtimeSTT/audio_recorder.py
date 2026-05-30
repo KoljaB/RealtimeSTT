@@ -1,33 +1,18 @@
-"""Public recorder facade for RealtimeSTT.
+"""Expose the public RealtimeSTT audio recorder API.
 
-This module preserves the stable recorder API while delegating subsystem
-implementation details to ``RealtimeSTT.core``.
+The recorder captures speech, coordinates voice activity and wake-word handling,
+and returns final or realtime transcription results.
 """
 
 # Standard library imports.
-import base64
-import copy
 import logging
 import os
 import platform
-import threading
-import time
 from typing import Callable, Iterable, List, Optional, Union
 
-# Third-party imports.
-import torch.multiprocessing as mp
-
 # Internal imports.
-from .core.audio_input_worker import run_audio_data_worker
-from .core.realtime_text_stabilizer import RealtimeTextStabilizer
 from .core.initialization import initialize_recorder
 from .core.recorder_config import build_recorder_init_args
-from .core.realtime import run_realtime_worker
-from .core.realtime_callbacks import (
-    publish_realtime_transcription_stabilized,
-    publish_realtime_transcription_update,
-)
-from .core.recording import run_recording_worker
 from .core.lifecycle import (
     abort_recording,
     listen_for_voice_activity,
@@ -40,42 +25,19 @@ from .core.manual_audio_input import feed_audio as feed_manual_audio
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
-    get_next_recorded_audio,
     has_pending_recordings as recorder_has_pending_recordings,
-    queue_recorded_audio,
-    set_audio_from_frames,
 )
-from .core.runtime import read_stdout_pipe
 from .core.shutdown import shutdown_recorder
-from .core.state import run_callback, set_recorder_state
-from .core.state import set_spinner
-from .core.text_formatting import (
-    find_tail_match_in_text,
-    format_number,
-    preprocess_output,
-)
+from .core.text_formatting import format_number
 from .core.transcription_api import (
     perform_final_transcription as perform_final_transcription_api,
     text as transcribe_text,
     transcribe as transcribe_recorded_audio,
 )
-from .core.transcription import (
-    TranscriptionWorker,
-    receive_transcription_result,
-    submit_transcription_request,
-)
 from .core.wakeword import (
     _load_openwakeword_modules,
     _load_porcupine_module,
     _normalize_wakeword_backend,
-)
-from .core.voice_activity import (
-    check_voice_activity,
-    is_silero_speech,
-    is_voice_active,
-    is_webrtc_speech,
-    reset_silero_vad_state,
-    selected_pre_recording_buffer_frames,
 )
 
 
@@ -665,6 +627,9 @@ class AudioToTextRecorder:
     def start(self, frames = None):
         """
         Starts recording audio directly without waiting for voice activity.
+
+        Args:
+        - frames: Optional audio frames to use as the initial recording data.
         """
         return start_recording(self, frames)
 
@@ -690,26 +655,13 @@ class AudioToTextRecorder:
 
     def listen(self):
         """
-        Puts recorder in immediate "listen" state.
-        This is the state after a wake word detection, for example.
-        The recorder now "listens" for voice activation.
-        Once voice is detected we enter "recording" state.
+        Puts the recorder in listening state for voice activation.
         """
         return listen_for_voice_activity(self)
 
     def wait_audio(self):
         """
-        Waits for the start and completion of the audio recording process.
-
-        This method is responsible for:
-        - Waiting for voice activity to begin recording if not yet started.
-        - Waiting for voice inactivity to complete the recording.
-        - Setting the audio buffer from the recorded frames.
-        - Resetting recording-related attributes.
-
-        Side effects:
-        - Updates the state of the instance.
-        - Modifies the audio attribute to contain the processed audio data.
+        Waits for recording to complete and loads the captured audio.
         """
         return wait_for_recorded_audio(self)
 
@@ -719,65 +671,40 @@ class AudioToTextRecorder:
              on_transcription_finished=None,
              ):
         """
-        Transcribes audio captured by this class instance
-        using the configured transcription engine.
-
-        - Automatically starts recording upon voice activity if not manually
-          started using `recorder.start()`.
-        - Automatically stops recording upon voice deactivity if not manually
-          stopped with `recorder.stop()`.
-        - Processes the recorded audio to generate transcription.
+        Records if needed and returns or publishes final transcription text.
 
         Args:
-            on_transcription_finished (callable, optional): Callback function
-              to be executed when transcription is ready.
-            If provided, transcription will be performed asynchronously, and
-              the callback will receive the transcription as its argument.
-              If omitted, the transcription will be performed synchronously,
-              and the result will be returned.
-
-        Returns (if not callback is set):
-            str: The transcription of the recorded audio
+        - on_transcription_finished: Optional callback that receives the
+            transcription result instead of returning it synchronously.
         """
         return transcribe_text(self, on_transcription_finished)
 
     def transcribe(self):
         """
-        Transcribes audio captured by this class instance using the
-        configured transcription engine.
-
-        Automatically starts recording upon voice activity if not manually
-          started using `recorder.start()`.
-        Automatically stops recording upon voice deactivity if not manually
-          stopped with `recorder.stop()`.
-        Processes the recorded audio to generate transcription.
-
-        Args:
-            on_transcription_finished (callable, optional): Callback function
-              to be executed when transcription is ready.
-            If provided, transcription will be performed asynchronously,
-              and the callback will receive the transcription as its argument.
-              If omitted, the transcription will be performed synchronously,
-              and the result will be returned.
-
-        Returns (if no callback is set):
-            str: The transcription of the recorded audio.
-
-        Raises:
-            Exception: If there is an error during the transcription process.
+        Transcribes the recorder's currently loaded audio.
         """
         return transcribe_recorded_audio(self)
 
     def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
+        """
+        Runs final transcription on recorded audio or provided audio samples.
+
+        Args:
+        - audio_bytes: Optional audio samples to transcribe instead of the
+            recorder's current audio buffer.
+        - use_prompt: Whether to use the configured initial prompt.
+        """
         return perform_final_transcription_api(self, audio_bytes, use_prompt)
 
     # Public manual input API.
 
     def feed_audio(self, chunk, original_sample_rate=16000):
         """
-        Feed an audio chunk into the processing pipeline. Chunks are
-        accumulated until the buffer size is reached, and then the accumulated
-        data is fed into the audio_queue.
+        Feeds an audio chunk into the manual audio input pipeline.
+
+        Args:
+        - chunk: Audio bytes or a NumPy audio array.
+        - original_sample_rate: Sample rate of the provided audio chunk.
         """
         return feed_manual_audio(self, chunk, original_sample_rate)
 
@@ -785,238 +712,77 @@ class AudioToTextRecorder:
 
     def wakeup(self):
         """
-        If in wake work modus, wake up as if a wake word was spoken.
+        Wakes the recorder as if a wake word was detected.
         """
         return wakeup_recorder(self)
 
     def abort(self):
+        """
+        Interrupts the current recording or transcription flow.
+        """
         return abort_recording(self)
 
     def set_microphone(self, microphone_on=True):
         """
         Set the microphone on or off.
+
+        Args:
+        - microphone_on: Whether microphone input should be enabled.
         """
         logger.info("Setting microphone to: " + str(microphone_on))
         self.use_microphone.value = microphone_on
 
     def clear_audio_queue(self):
         """
-        Safely empties the audio queue to ensure no remaining audio 
-        fragments get processed e.g. after waking up the recorder.
+        Safely empties queued audio fragments.
         """
         return clear_recorder_audio_queue(self)
 
     def has_pending_recordings(self):
+        """
+        Returns whether completed recordings are waiting to be consumed.
+        """
         return recorder_has_pending_recordings(self)
 
     def flush_buffered_audio(self, min_abs_level=50):
+        """
+        Queues buffered manual audio when it contains non-silent samples.
+
+        Args:
+        - min_abs_level: Minimum absolute sample level treated as non-silence.
+        """
         return flush_recorder_buffered_audio(self, min_abs_level)
 
     def shutdown(self):
         """
-        Safely shuts down the audio recording by stopping the
-        recording worker and closing the audio stream.
+        Safely shuts down recorder workers and releases runtime resources.
         """
         return shutdown_recorder(self)
 
     def format_number(self, num):
+        """
+        Formats a number for user-facing transcription text.
+
+        Args:
+        - num: Number to format.
+        """
         return format_number(num)
 
     # Context manager API.
 
     def __enter__(self):
         """
-        Method to setup the context manager protocol.
-
-        This enables the instance to be used in a `with` statement, ensuring
-        proper resource management. When the `with` block is entered, this
-        method is automatically called.
-
-        Returns:
-            self: The current instance of the class.
+        Enters the recorder context manager.
         """
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         """
-        Method to define behavior when the context manager protocol exits.
-
-        This is called when exiting the `with` block and ensures that any
-        necessary cleanup or resource release processes are executed, such as
-        shutting down the system properly.
+        Exits the recorder context manager and shuts down the recorder.
 
         Args:
-            exc_type (Exception or None): The type of the exception that
-              caused the context to be exited, if any.
-            exc_value (Exception or None): The exception instance that caused
-              the context to be exited, if any.
-            traceback (Traceback or None): The traceback corresponding to the
-              exception, if any.
+        - exc_type: Exception type from the managed block, if any.
+        - exc_value: Exception instance from the managed block, if any.
+        - traceback: Exception traceback from the managed block, if any.
         """
         self.shutdown()
-
-    # Internal compatibility wrappers.
-
-    def _recording_worker(self):
-        return run_recording_worker(self)
-
-    def _realtime_worker(self):
-        return run_realtime_worker(self)
-
-    @staticmethod
-    def _audio_data_worker(
-            audio_queue,
-            target_sample_rate,
-            buffer_size,
-            input_device_index,
-            shutdown_event,
-            interrupt_stop_event,
-            use_microphone):
-        return run_audio_data_worker(
-            audio_queue,
-            target_sample_rate,
-            buffer_size,
-            input_device_index,
-            shutdown_event,
-            interrupt_stop_event,
-            use_microphone,
-        )
-
-    def _is_silero_speech(self, chunk, generation=None):
-        return is_silero_speech(self, chunk, generation)
-
-    def _is_webrtc_speech(self, chunk, all_frames_must_be_true=False):
-        return is_webrtc_speech(self, chunk, all_frames_must_be_true)
-
-    def _check_voice_activity(self, data):
-        return check_voice_activity(
-            self,
-            data,
-            thread_factory=threading.Thread,
-        )
-
-    def _selected_pre_recording_buffer_frames(self):
-        return selected_pre_recording_buffer_frames(self)
-
-    def _set_audio_from_frames(
-            self,
-            frames,
-            backdate_stop_seconds=0.0,
-            backdate_resume_seconds=0.0):
-        return set_audio_from_frames(
-            self,
-            frames,
-            backdate_stop_seconds,
-            backdate_resume_seconds,
-        )
-
-    def _queue_recorded_audio(
-            self,
-            frames,
-            backdate_stop_seconds=0.0,
-            backdate_resume_seconds=0.0):
-        return queue_recorded_audio(
-            self,
-            frames,
-            backdate_stop_seconds,
-            backdate_resume_seconds,
-        )
-
-    def _get_next_recorded_audio(self):
-        return get_next_recorded_audio(self)
-
-    def _is_voice_active(self):
-        return is_voice_active(self)
-
-    def _run_callback(self, cb, *args, **kwargs):
-        return run_callback(self, cb, *args, **kwargs)
-
-    def _set_state(self, new_state):
-        return set_recorder_state(self, new_state)
-
-    def _set_spinner(self, text):
-        return set_spinner(self, text)
-
-    def _preprocess_output(self, text, preview=False):
-        return preprocess_output(
-            text,
-            preview=preview,
-            ensure_sentence_starting_uppercase=(
-                self.ensure_sentence_starting_uppercase
-            ),
-            ensure_sentence_ends_with_period=(
-                self.ensure_sentence_ends_with_period
-            ),
-        )
-
-    def _find_tail_match_in_text(self, text1, text2, length_of_match=10):
-        return find_tail_match_in_text(text1, text2, length_of_match)
-
-    # Internal facade-level helpers.
-
-    # Keep this lifecycle boundary on the facade until worker process/thread
-    # startup has stronger direct test coverage.
-    def _start_thread(self, target=None, args=()):
-        """
-        Implement a consistent threading model across the library.
-
-        This method is used to start any thread in this library. It uses the
-        standard threading. Thread for Linux and for all others uses the pytorch
-        MultiProcessing library 'Process'.
-        Args:
-            target (callable object): is the callable object to be invoked by
-              the run() method. Defaults to None, meaning nothing is called.
-            args (tuple): is a list or tuple of arguments for the target
-              invocation. Defaults to ().
-        """
-        if (platform.system() == 'Linux'):
-            thread = threading.Thread(target=target, args=args)
-            thread.deamon = True
-            thread.start()
-            return thread
-        else:
-            thread = mp.Process(target=target, args=args)
-            thread.start()
-            return thread
-
-    def _read_stdout(self):
-        return read_stdout_pipe(self)
-
-    def _set_state_after_transcription(self):
-        if self.is_recording:
-            set_recorder_state(self, "recording")
-        else:
-            set_recorder_state(self, "inactive")
-
-    def _on_realtime_transcription_stabilized(self, text):
-        """
-        Callback method invoked when the real-time transcription stabilizes.
-
-        This method is called internally when the transcription text is
-        considered "stable" meaning it's less likely to change significantly
-        with additional audio input. It notifies any registered external
-        listener about the stabilized text if recording is still ongoing.
-        This is particularly useful for applications that need to display
-        live transcription results to users and want to highlight parts of the
-        transcription that are less likely to change.
-
-        Args:
-            text (str): The stabilized transcription text.
-        """
-        return publish_realtime_transcription_stabilized(self, text)
-
-    def _on_realtime_transcription_update(self, text):
-        """
-        Callback method invoked when there's an update in the real-time
-        transcription.
-
-        This method is called internally whenever there's a change in the
-        transcription text, notifying any registered external listener about
-        the update if recording is still ongoing. This provides a mechanism
-        for applications to receive and possibly display live transcription
-        updates, which could be partial and still subject to change.
-
-        Args:
-            text (str): The updated transcription text.
-        """
-        return publish_realtime_transcription_update(self, text)

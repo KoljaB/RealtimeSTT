@@ -1,3 +1,5 @@
+"""Adapts faster-whisper models to the transcription engine interface."""
+
 from importlib import import_module
 
 from .base import (
@@ -9,6 +11,7 @@ from .base import (
 
 
 def _load_faster_whisper():
+    """Loads faster-whisper and its optional batched inference pipeline."""
     try:
         faster_whisper = import_module("faster_whisper")
     except ModuleNotFoundError as exc:
@@ -23,9 +26,16 @@ def _load_faster_whisper():
 
 
 class FasterWhisperEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with faster-whisper.
+    """
+
     engine_name = "faster_whisper"
 
     def __init__(self, config):
+        """
+        Initializes the faster-whisper model.
+        """
         super().__init__(config)
         faster_whisper, batched_inference_pipeline = _load_faster_whisper()
         model = faster_whisper.WhisperModel(
@@ -40,6 +50,9 @@ class FasterWhisperEngine(BaseTranscriptionEngine):
         self.model = model
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio and returns normalized faster-whisper output.
+        """
         audio = self._normalize_audio(audio)
         kwargs = {
             "language": language if language else None,

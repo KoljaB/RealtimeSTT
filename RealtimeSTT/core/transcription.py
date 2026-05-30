@@ -1,6 +1,4 @@
-"""
-Internal final-transcription worker runtime.
-"""
+"""Internal final-transcription worker runtime."""
 
 import copy
 import logging
@@ -22,9 +20,16 @@ TIME_SLEEP = 0.02
 
 
 class TranscriptionWorker:
+    """
+    Runs the final-transcription model worker.
+    """
+
     def __init__(self, conn, stdout_pipe, transcription_engine, transcription_engine_options, model_path, download_root, compute_type, gpu_device_index, device,
                  ready_event, shutdown_event, interrupt_stop_event, beam_size, initial_prompt, suppress_tokens,
                  batch_size, faster_whisper_vad_filter, normalize_audio):
+        """
+        Initializes worker state and communication channels.
+        """
         self.conn = conn
         self.stdout_pipe = stdout_pipe
         self.transcription_engine = transcription_engine
@@ -46,6 +51,9 @@ class TranscriptionWorker:
         self.queue = queue.Queue()
 
     def custom_print(self, *args, **kwargs):
+        """
+        Forwards worker print output through the stdout pipe.
+        """
         message = ' '.join(map(str, args))
         try:
             self.stdout_pipe.send(message)
@@ -53,20 +61,24 @@ class TranscriptionWorker:
             pass
 
     def poll_connection(self):
+        """
+        Transfers pipe messages into the worker queue.
+        """
         while not self.shutdown_event.is_set():
             try:
-                # Use a longer timeout to reduce polling frequency
-                if self.conn.poll(0.01):  # Increased from 0.01 to 0.5 seconds
+                if self.conn.poll(0.01):  # Short poll keeps shutdown responsive.
                     data = self.conn.recv()
                     self.queue.put(data)
                 else:
-                    # Sleep only if no data, but use a shorter sleep
                     time.sleep(TIME_SLEEP)
             except Exception as e:
                 logging.error(f"Error receiving data from connection: {e}", exc_info=True)
                 time.sleep(TIME_SLEEP)
 
     def run(self):
+        """
+        Initializes the engine and processes queued transcription requests.
+        """
         if __name__ == "__main__":
              system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
              __builtins__['print'] = self.custom_print
@@ -94,7 +106,7 @@ class TranscriptionWorker:
                 ),
             )
 
-            # Run a warm-up transcription
+            # Warmup pays model startup cost before the first user request.
             current_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
             warmup_audio_path = os.path.join(
                 current_dir, "assets", "warmup_audio.wav"
@@ -112,7 +124,6 @@ class TranscriptionWorker:
             f"{self.transcription_engine} main speech to text transcription model initialized successfully"
         )
 
-        # Start the polling thread
         polling_thread = threading.Thread(target=self.poll_connection)
         polling_thread.start()
 
@@ -153,11 +164,17 @@ class TranscriptionWorker:
 
 
 def run_transcription_worker(*args, **kwargs):
+    """
+    Runs the final-transcription worker process.
+    """
     worker = TranscriptionWorker(*args, **kwargs)
     worker.run()
 
 
 def call_transcription_executor(executor, audio, language, use_prompt):
+    """
+    Calls object-style or function-style transcription executors.
+    """
     if hasattr(executor, "transcribe"):
         return executor.transcribe(
             audio,
@@ -172,6 +189,9 @@ def call_transcription_executor(executor, audio, language, use_prompt):
 
 
 def submit_transcription_request(recorder, audio, language, use_prompt):
+    """
+    Submits audio for final transcription.
+    """
     if recorder._uses_external_transcription_executor:
         audio_copy = copy.deepcopy(audio)
 
@@ -202,6 +222,9 @@ def submit_transcription_request(recorder, audio, language, use_prompt):
 
 
 def receive_transcription_result(recorder, timeout=0.1):
+    """
+    Receives a final-transcription result when one is ready.
+    """
     if recorder._uses_external_transcription_executor:
         try:
             return recorder._external_transcription_results.get(timeout=timeout)

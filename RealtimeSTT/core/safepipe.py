@@ -1,3 +1,5 @@
+"""Thread-safe parent-side wrappers for multiprocessing pipes."""
+
 import sys
 import multiprocessing as mp
 import queue
@@ -5,13 +7,10 @@ import threading
 import time
 import logging
 
-# Configure logging. Adjust level and formatting as needed.
-# logging.basicConfig(level=logging.DEBUG,
-#                     format='[%(asctime)s] %(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger("RealtimeSTT.safepipe")
 
 try:
-    # Only set the start method if it hasn't been set already.
+    # Multiprocessing start method is process-global; leave existing settings intact.
     if sys.platform.startswith('linux') or sys.platform == 'darwin':  # For Linux or macOS
         mp.set_start_method("spawn")
     elif mp.get_start_method(allow_none=True) is None:
@@ -22,23 +21,19 @@ except RuntimeError as e:
 
 class ParentPipe:
     """
-    A thread-safe wrapper around the 'parent end' of a multiprocessing pipe.
-    All actual pipe operations happen in a dedicated worker thread, so it's safe
-    for multiple threads to call send(), recv(), or poll() on the same ParentPipe
-    without interfering.
+    Serializes parent-pipe operations through a dedicated worker thread.
     """
     def __init__(self, parent_synthesize_pipe):
+        """
+        Creates a thread-safe parent wrapper for a multiprocessing pipe.
+        """
         self.name = "ParentPipe"
-        self._pipe = parent_synthesize_pipe  # The raw pipe.
-        self._closed = False  # A flag to mark if close() has been called.
+        self._pipe = parent_synthesize_pipe
+        self._closed = False
 
-        # The request queue for sending operations to the worker.
         self._request_queue = queue.Queue()
-
-        # This event signals the worker thread to stop.
         self._stop_event = threading.Event()
 
-        # Worker thread that executes actual .send(), .recv(), .poll() calls.
         self._worker_thread = threading.Thread(
             target=self._pipe_worker,
             name=f"{self.name}_Worker",
@@ -47,6 +42,9 @@ class ParentPipe:
         self._worker_thread.start()
 
     def _pipe_worker(self):
+        """
+        Executes serialized pipe operations until closed.
+        """
         while not self._stop_event.is_set():
             try:
                 request = self._request_queue.get(timeout=0.1)
@@ -54,7 +52,6 @@ class ParentPipe:
                 continue
 
             if request["type"] == "CLOSE":
-                # Exit worker loop on CLOSE request.
                 break
 
             try:
@@ -76,8 +73,7 @@ class ParentPipe:
                     request["result_queue"].put(result)
 
             except (EOFError, BrokenPipeError, OSError) as e:
-                # When the other end has closed or an error occurs,
-                # log and notify the waiting thread.
+                # Notify the waiting caller when the child end closes first.
                 logger.debug("[%s] Worker: pipe closed or error occurred (%s). Shutting down.", self.name, e)
                 request["result_queue"].put(None)
                 break
@@ -95,7 +91,7 @@ class ParentPipe:
 
     def send(self, data):
         """
-        Synchronously asks the worker thread to perform .send().
+        Sends data through the worker thread.
         """
         if self._closed:
             logger.debug("[%s] send() called but pipe is already closed", self.name)
@@ -113,7 +109,7 @@ class ParentPipe:
 
     def recv(self):
         """
-        Synchronously asks the worker to perform .recv() and returns the data.
+        Receives data through the worker thread.
         """
         if self._closed:
             logger.debug("[%s] recv() called but pipe is already closed", self.name)
@@ -137,8 +133,7 @@ class ParentPipe:
 
     def poll(self, timeout=0.0):
         """
-        Synchronously checks whether data is available.
-        Returns True if data is ready, or False otherwise.
+        Checks whether data is available through the worker thread.
         """
         if self._closed:
             return False
@@ -160,8 +155,7 @@ class ParentPipe:
 
     def close(self):
         """
-        Closes the pipe and stops the worker thread. The _closed flag makes
-        sure no further operations are attempted.
+        Closes the pipe and stops the worker thread.
         """
         if self._closed:
             return
@@ -176,7 +170,7 @@ class ParentPipe:
 
 def SafePipe(debug=False):
     """
-    Returns a pair: (thread-safe parent pipe, raw child pipe).
+    Returns a thread-safe parent pipe and a raw child pipe.
     """
     parent_synthesize_pipe, child_synthesize_pipe = mp.Pipe()
     parent_pipe = ParentPipe(parent_synthesize_pipe)
@@ -185,8 +179,7 @@ def SafePipe(debug=False):
 
 def child_process_code(child_end):
     """
-    Example child process code that receives messages, logs them,
-    sends acknowledgements, and then closes.
+    Runs a small child-process pipe example.
     """
     for i in range(3):
         msg = child_end.recv()
@@ -198,21 +191,22 @@ def child_process_code(child_end):
 if __name__ == "__main__":
     parent_pipe, child_pipe = SafePipe()
 
-    # Create child process with the child_process_code function.
     p = mp.Process(target=child_process_code, args=(child_pipe,))
     p.start()
 
-    # Event to signal sender threads to stop if needed.
     stop_polling_event = threading.Event()
 
     def sender_thread(n):
+        """
+        Sends one example message and waits for an acknowledgement.
+        """
         try:
             parent_pipe.send(f"hello_from_thread_{n}")
         except Exception as e:
             logger.debug("[sender_thread_%s] send exception: %s", n, e)
             return
 
-        # Use a poll loop with error handling.
+        # Polling mirrors callers that must tolerate early child shutdown.
         for _ in range(10):
             try:
                 if parent_pipe.poll(0.1):
@@ -239,7 +233,6 @@ if __name__ == "__main__":
     for t in threads:
         t.join()
 
-    # Signal shutdown to any polling threads, then close the pipe.
     stop_polling_event.set()
     parent_pipe.close()
     p.join()

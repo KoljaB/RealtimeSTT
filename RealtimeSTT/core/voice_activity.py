@@ -1,6 +1,4 @@
-"""
-Internal recorder-level voice activity and pre-roll helpers.
-"""
+"""Internal recorder-level voice activity and pre-roll helpers."""
 
 import logging
 import threading
@@ -27,6 +25,9 @@ class _BColors:
 
 
 def silero_vad_probability(recorder, audio_chunk):
+    """
+    Returns the Silero VAD probability for one audio chunk.
+    """
     result = recorder.silero_vad_model(audio_chunk, SAMPLE_RATE)
     if isinstance(result, (float, int)):
         return float(result)
@@ -37,7 +38,7 @@ def silero_vad_probability(recorder, audio_chunk):
 
 def reset_silero_vad_state(recorder):
     """
-    Reset Silero's recurrent state and the recorder-side Silero flag.
+    Resets Silero's recurrent state and the recorder-side Silero flag.
 
     Silero VAD keeps hidden state between chunk calls. That is useful while
     evaluating one continuous stream, but it must not leak across warmup,
@@ -66,7 +67,7 @@ def reset_silero_vad_state(recorder):
 
 def warmup_voice_activity_detectors(recorder):
     """
-    Prime VAD runtimes without changing recorder state.
+    Primes VAD runtimes without changing recorder state.
 
     The first Silero invocation can otherwise pay lazy Torch/JIT setup
     costs on the first user speech chunk. That delays voice activation and
@@ -103,11 +104,12 @@ def warmup_voice_activity_detectors(recorder):
 
 def is_silero_speech(recorder, chunk, generation=None):
     """
-    Returns true if speech is detected in the provided audio data
+    Reports whether Silero detects speech in an audio chunk.
 
     Args:
-        data (bytes): raw bytes of audio data (1024 raw bytes with
-        16000 sample rate and 16 bits per sample)
+    - recorder: Recorder-like object with Silero VAD state.
+    - chunk: Raw PCM audio bytes.
+    - generation: Silero state generation expected by the caller.
     """
     if generation is None:
         generation = getattr(recorder, "_silero_vad_generation", 0)
@@ -154,11 +156,12 @@ def is_silero_speech(recorder, chunk, generation=None):
 
 def is_webrtc_speech(recorder, chunk, all_frames_must_be_true=False):
     """
-    Returns true if speech is detected in the provided audio data
+    Reports whether WebRTC detects speech in an audio chunk.
 
     Args:
-        data (bytes): raw bytes of audio data (1024 raw bytes with
-        16000 sample rate and 16 bits per sample)
+    - recorder: Recorder-like object with WebRTC VAD state.
+    - chunk: Raw PCM audio bytes.
+    - all_frames_must_be_true: Requires every analyzed frame to be speech.
     """
     speech_str = f"{_BColors.OKGREEN}WebRTC VAD detected speech{_BColors.ENDC}"
     silence_str = f"{_BColors.WARNING}WebRTC VAD detected silence{_BColors.ENDC}"
@@ -168,7 +171,6 @@ def is_webrtc_speech(recorder, chunk, all_frames_must_be_true=False):
             pcm_data, 16000, recorder.sample_rate)
         chunk = data_16000.astype(np.int16).tobytes()
 
-    # Number of audio frames per millisecond
     frame_length = int(16000 * 0.01)  # for 10ms frame
     num_frames = int(len(chunk) / (2 * frame_length))
     speech_frames = 0
@@ -212,10 +214,12 @@ def is_webrtc_speech(recorder, chunk, all_frames_must_be_true=False):
 
 def check_voice_activity(recorder, data, thread_factory=None):
     """
-    Initiate check if voice is active based on the provided data.
+    Starts the recorder voice-activity check for one audio chunk.
 
     Args:
-        data: The audio data to be checked for voice activity.
+    - recorder: Recorder-like object with VAD state.
+    - data: Raw PCM audio bytes to check.
+    - thread_factory: Optional thread factory for the Silero check.
     """
     if thread_factory is None:
         thread_factory = threading.Thread
@@ -223,7 +227,6 @@ def check_voice_activity(recorder, data, thread_factory=None):
     was_webrtc_speech_active = recorder.is_webrtc_speech_active
     is_webrtc_speech(recorder, data)
 
-    # First quick performing check for voice activity using WebRTC
     if recorder.is_webrtc_speech_active:
 
         if not recorder.silero_working:
@@ -232,18 +235,24 @@ def check_voice_activity(recorder, data, thread_factory=None):
             recorder.silero_working = True
             silero_generation = getattr(recorder, "_silero_vad_generation", 0)
 
-            # Run the intensive check in a separate thread
+            # Silero is the expensive confirmation pass after WebRTC wakes it.
             thread_factory(
                 target=is_silero_speech,
                 args=(recorder, data, silero_generation)).start()
 
 
 def pre_recording_buffer_trim_enabled(recorder):
+    """
+    Reports whether pre-recording buffer trimming is enabled.
+    """
     config = getattr(recorder, "pre_recording_buffer_trim_config", None) or {}
     return bool(config.get("enabled", False))
 
 
 def append_to_pre_recording_buffer(recorder, data):
+    """
+    Adds one frame and metadata to the pre-recording buffer.
+    """
     recorder.audio_buffer.append(data)
     metadata_buffer = getattr(recorder, "audio_buffer_metadata", None)
     if metadata_buffer is not None:
@@ -251,6 +260,9 @@ def append_to_pre_recording_buffer(recorder, data):
 
 
 def clear_pre_recording_buffer(recorder):
+    """
+    Clears buffered pre-recording audio and metadata.
+    """
     recorder.audio_buffer.clear()
     metadata_buffer = getattr(recorder, "audio_buffer_metadata", None)
     if metadata_buffer is not None:
@@ -258,6 +270,9 @@ def clear_pre_recording_buffer(recorder):
 
 
 def selected_pre_recording_buffer_frames(recorder):
+    """
+    Returns pre-recording frames selected for the next recording.
+    """
     frames = list(recorder.audio_buffer)
     recorder._pending_preroll_selection = None
     if not frames:
@@ -288,6 +303,9 @@ def selected_pre_recording_buffer_frames(recorder):
 
 
 def preroll_frame_metadata(recorder, data):
+    """
+    Builds pre-roll metadata for one buffered audio frame.
+    """
     sample_count = max(0, len(data) // 2)
     rms = frame_rms(data)
     webrtc_is_speech = bool(getattr(recorder, "is_webrtc_speech_active", False))
@@ -303,6 +321,9 @@ def preroll_frame_metadata(recorder, data):
 
 
 def metadata_for_frame_without_vad(recorder, frame):
+    """
+    Builds fallback pre-roll metadata when VAD history is unavailable.
+    """
     return PrerollFrameMetadata(
         sample_count=max(0, len(frame) // 2),
         is_speech=None,
@@ -311,6 +332,9 @@ def metadata_for_frame_without_vad(recorder, frame):
 
 
 def frame_rms(data):
+    """
+    Calculates the RMS level for an audio frame.
+    """
     if not data:
         return None
     try:
@@ -325,6 +349,9 @@ def frame_rms(data):
 
 
 def webrtc_replay_preroll_diagnostics(recorder, frames):
+    """
+    Replays WebRTC VAD over pre-roll frames for diagnostics.
+    """
     speech_sample_count = 0
     analyzed_sample_count = 0
     frame_length = int(16000 * 0.01)
@@ -365,10 +392,7 @@ def webrtc_replay_preroll_diagnostics(recorder, frames):
 
 def is_voice_active(recorder):
     """
-    Determine if voice is active.
-
-    Returns:
-        bool: True if voice is active, False otherwise.
+    Reports whether both VAD stages currently agree speech is active.
     """
     webrtc_speech_recent = (
         time.time() - getattr(recorder, "last_webrtc_speech_time", 0) <= 1.0

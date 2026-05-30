@@ -1,6 +1,4 @@
-"""
-Internal wake-word backend setup and runtime helpers.
-"""
+"""Internal wake-word backend setup and runtime helpers."""
 
 from importlib import import_module
 import logging
@@ -66,6 +64,9 @@ def setup_wakeword_detection(
     load_porcupine_module=None,
     load_openwakeword_modules=None,
 ):
+    """
+    Configures the selected wake-word backend on the recorder.
+    """
     if not (
         recorder.use_wake_words
         or normalized_wakeword_backend in PORCUPINE_WAKEWORD_BACKENDS
@@ -168,6 +169,9 @@ def setup_wakeword_detection(
 
 
 def process_wakeword(recorder, data):
+    """
+    Processes one audio chunk through the configured wake-word backend.
+    """
     if recorder.wakeword_backend in PORCUPINE_WAKEWORD_BACKENDS:
         pcm = struct.unpack_from(
             "h" * recorder.buffer_size,

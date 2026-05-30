@@ -89,7 +89,9 @@ def build_recorder_init_args(
     silero_onnx_threads,
     deactivity_silence_confirmation_duration,
 ):
-    """Return the legacy constructor argument mapping in signature order."""
+    """
+    Returns the legacy constructor argument mapping in signature order.
+    """
     return {
         "self": recorder,
         "model": model,

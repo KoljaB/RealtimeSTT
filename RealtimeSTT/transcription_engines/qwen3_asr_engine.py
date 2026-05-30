@@ -1,3 +1,5 @@
+"""Adapts Qwen3-ASR models to the transcription engine interface."""
+
 from importlib import import_module
 
 from ._model_utils import language_from_output, text_from_output, torch_dtype_from_compute_type
@@ -28,7 +30,14 @@ QWEN_LANGUAGE_NAMES = {
 
 
 class Qwen3ASRBackend:
+    """
+    Wraps Qwen3-ASR model backends.
+    """
+
     def __init__(self, config, model_factory=None, torch_module=None):
+        """
+        Initializes the Qwen3-ASR backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.model_name = config.model or DEFAULT_QWEN3_ASR_MODEL
@@ -84,6 +93,9 @@ class Qwen3ASRBackend:
             ) from exc
 
     def transcribe(self, audio, language=None, **params):
+        """
+        Runs Qwen3-ASR transcription for one audio input.
+        """
         merged_params = dict(self.transcribe_options)
         merged_params.update(params)
         if not isinstance(audio, (str, list, tuple)):
@@ -96,9 +108,16 @@ class Qwen3ASRBackend:
 
 
 class Qwen3ASREngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with Qwen3-ASR.
+    """
+
     engine_name = "qwen3_asr"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the Qwen3-ASR engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or Qwen3ASRBackend)(config)
 
@@ -110,6 +129,9 @@ class Qwen3ASREngine(BaseTranscriptionEngine):
         return language
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with Qwen3-ASR.
+        """
         audio = self._normalize_audio(audio)
         options = self.config.engine_options or {}
         language_name = self._language_name(language or options.get("language"))

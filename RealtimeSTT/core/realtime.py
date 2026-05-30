@@ -10,6 +10,10 @@ from .realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )
+from .realtime_callbacks import (
+    publish_realtime_transcription_stabilized,
+    publish_realtime_transcription_update,
+)
 from .state import run_callback
 from .text_formatting import preprocess_output
 from .transcription import call_transcription_executor
@@ -23,13 +27,10 @@ INT16_MAX_ABS_VALUE = 32768.0
 
 def run_realtime_worker(recorder):
     """
-    Performs real-time transcription if the feature is enabled.
+    Runs realtime transcription when the feature is enabled.
 
-    This worker is intentionally defensive:
-    - realtime transcription must never crash the recorder
-    - empty/None buffers are skipped
-    - frame buffers are snapshotted before transcription
-    - model/pipe errors are logged and skipped
+    The worker skips empty buffers, snapshots frame buffers before
+    transcription, logs model or pipe errors, and never stops the recorder.
     """
 
     self = recorder
@@ -540,7 +541,8 @@ def run_realtime_worker(recorder):
 
         stabilized_display_text = event.display_text or raw_text.strip()
         _safe_realtime_callback(
-            self._on_realtime_transcription_stabilized,
+            publish_realtime_transcription_stabilized,
+            self,
             preprocess_output(
                 stabilized_display_text,
                 preview=True,
@@ -554,7 +556,8 @@ def run_realtime_worker(recorder):
         )
 
         _safe_realtime_callback(
-            self._on_realtime_transcription_update,
+            publish_realtime_transcription_update,
+            self,
             preprocess_output(
                 raw_text.strip(),
                 preview=True,

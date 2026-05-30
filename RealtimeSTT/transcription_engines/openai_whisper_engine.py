@@ -1,3 +1,5 @@
+"""Adapts OpenAI Whisper Python models to the engine interface."""
+
 from importlib import import_module
 
 from .base import (
@@ -9,7 +11,14 @@ from .base import (
 
 
 class OpenAIWhisperBackend:
+    """
+    Wraps the openai-whisper model object.
+    """
+
     def __init__(self, config, whisper_module=None):
+        """
+        Loads an openai-whisper model backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.transcribe_options = dict(self.engine_options.get("transcribe", {}))
@@ -26,6 +35,7 @@ class OpenAIWhisperBackend:
 
     @staticmethod
     def _load_whisper_module():
+        """Loads the optional openai-whisper module."""
         try:
             return import_module("whisper")
         except ModuleNotFoundError as exc:
@@ -36,19 +46,32 @@ class OpenAIWhisperBackend:
             ) from exc
 
     def transcribe(self, audio, **params):
+        """
+        Runs openai-whisper transcription with merged options.
+        """
         merged_params = dict(params)
         merged_params.update(self.transcribe_options)
         return self.model.transcribe(audio, **merged_params)
 
 
 class OpenAIWhisperEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with OpenAI Whisper Python models.
+    """
+
     engine_name = "openai_whisper"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the OpenAI Whisper engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or OpenAIWhisperBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio and returns normalized Whisper output.
+        """
         audio = self._normalize_audio(audio)
         params = {
             "language": language if language else None,

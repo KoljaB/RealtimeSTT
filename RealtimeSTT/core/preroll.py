@@ -21,7 +21,9 @@ DEFAULT_PREROLL_ENERGY_MARGIN_RMS = 25.0
 
 @dataclass(frozen=True)
 class PrerollFrameMetadata:
-    """Metadata captured for one frame retained in the pre-recording buffer."""
+    """
+    Captures metadata for one frame retained in the pre-recording buffer.
+    """
 
     sample_count: int
     is_speech: Optional[bool]
@@ -33,7 +35,7 @@ class PrerollFrameMetadata:
 
 @dataclass(frozen=True)
 class PrerollSelection:
-    """Selected pre-recording buffer tail and diagnostics.
+    """Describes a selected pre-recording buffer tail and diagnostics.
 
     ``start_index`` identifies the first retained frame in the input metadata.
     ``included_sample_count`` and ``included_seconds`` describe the selected
@@ -59,7 +61,7 @@ def select_preroll_frames(
     noise_floor_multiplier: float=DEFAULT_PREROLL_NOISE_FLOOR_MULTIPLIER,
     energy_margin_rms: float=DEFAULT_PREROLL_ENERGY_MARGIN_RMS,
 ) -> PrerollSelection:
-    """Select a conservative tail from pre-recording frame metadata.
+    """Selects a conservative tail from pre-recording frame metadata.
 
     The selector uses VAD metadata captured while audio flowed forward through
     the recorder. It never runs a second VAD pass. Energy is only a supporting
@@ -67,15 +69,15 @@ def select_preroll_frames(
     VAD speech frame into silence or create a speech onset by itself.
 
     Args:
-        frame_metadata: Prebuffer frame metadata in chronological order.
-        sample_rate: Audio sample rate in samples per second.
-        min_silence_ms: Required contiguous silence before speech onset.
-        guard_ms: Audio to keep before speech onset, in milliseconds.
-        max_gap_ms: Short VAD false gaps to merge into one speech run.
-        min_included_ms: Minimum selected pre-roll tail, in milliseconds.
-        energy_silence_rms: Optional absolute RMS ceiling for silence.
-        noise_floor_multiplier: Multiplier applied to the local noise floor.
-        energy_margin_rms: RMS margin added to the adaptive noise threshold.
+    - frame_metadata: Prebuffer frame metadata in chronological order.
+    - sample_rate: Audio sample rate in samples per second.
+    - min_silence_ms: Required contiguous silence before speech onset.
+    - guard_ms: Audio to keep before speech onset, in milliseconds.
+    - max_gap_ms: Short VAD false gaps to merge into one speech run.
+    - min_included_ms: Minimum selected pre-roll tail, in milliseconds.
+    - energy_silence_rms: Optional absolute RMS ceiling for silence.
+    - noise_floor_multiplier: Multiplier applied to the local noise floor.
+    - energy_margin_rms: RMS margin added to the adaptive noise threshold.
 
     Returns:
         A ``PrerollSelection`` describing selected frame indices, exact sample

@@ -1,3 +1,5 @@
+"""Adapts sherpa-onnx offline recognizers to the engine interface."""
+
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -33,6 +35,10 @@ KNOWN_MODEL_DIRS = {
 
 @dataclass
 class SherpaOnnxDecodedOutput:
+    """
+    Carries sherpa-onnx decoded text and language metadata.
+    """
+
     text: str
     language: str = ""
 
@@ -88,11 +94,18 @@ def _maybe_join(base_dir, value):
 
 
 class SherpaOnnxOfflineBackend:
+    """
+    Provides shared setup for sherpa-onnx offline recognizers.
+    """
+
     family = "sherpa_onnx"
     default_model_dir = ""
     download_url = ""
 
     def __init__(self, config, recognizer_cls=None):
+        """
+        Initializes shared sherpa-onnx recognizer state.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.file_options = dict(self.engine_options.get("files", {}))
@@ -173,6 +186,9 @@ class SherpaOnnxOfflineBackend:
         raise NotImplementedError
 
     def transcribe(self, audio, **params):
+        """
+        Runs sherpa-onnx offline transcription for one audio input.
+        """
         stream = self.recognizer.create_stream()
         stream.accept_waveform(
             int(params.get("sample_rate", self.input_sample_rate)),
@@ -190,6 +206,10 @@ class SherpaOnnxOfflineBackend:
 
 
 class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
+    """
+    Wraps the sherpa-onnx Parakeet recognizer.
+    """
+
     family = "sherpa_onnx_parakeet"
     default_model_dir = DEFAULT_SHERPA_ONNX_PARAKEET_MODEL
     download_url = PARAKEET_DOWNLOAD_URL
@@ -237,6 +257,10 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
 
 
 class SherpaOnnxMoonshineBackend(SherpaOnnxOfflineBackend):
+    """
+    Wraps the sherpa-onnx Moonshine recognizer.
+    """
+
     family = "sherpa_onnx_moonshine"
     default_model_dir = DEFAULT_SHERPA_ONNX_MOONSHINE_MODEL
     download_url = MOONSHINE_DOWNLOAD_URL
@@ -262,13 +286,23 @@ class SherpaOnnxMoonshineBackend(SherpaOnnxOfflineBackend):
 
 
 class SherpaOnnxParakeetEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with the sherpa-onnx Parakeet recognizer.
+    """
+
     engine_name = "sherpa_onnx_parakeet"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the sherpa-onnx Parakeet engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or SherpaOnnxParakeetBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with sherpa-onnx Parakeet.
+        """
         audio = self._normalize_audio(audio)
         output = self.backend.transcribe(audio)
         detected_language = output.language or language
@@ -282,13 +316,23 @@ class SherpaOnnxParakeetEngine(BaseTranscriptionEngine):
 
 
 class SherpaOnnxMoonshineEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with the sherpa-onnx Moonshine recognizer.
+    """
+
     engine_name = "sherpa_onnx_moonshine"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the sherpa-onnx Moonshine engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or SherpaOnnxMoonshineBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with sherpa-onnx Moonshine.
+        """
         if language and language.lower() not in ("en", "english"):
             raise TranscriptionEngineError(
                 "The sherpa-onnx Moonshine tiny INT8 engine supports English "

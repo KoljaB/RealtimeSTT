@@ -1,9 +1,7 @@
-"""Pure realtime text stabilization primitives.
+"""Stabilizes realtime transcription text from structured observations.
 
-This module intentionally has no dependency on audio devices, ASR engines,
-threads, callbacks, FastAPI, or wall-clock reads. Callers provide structured
-observations with deterministic timestamps; the stabilizer returns event
-objects describing stable deltas, unstable preview text, and diagnostics.
+Callers provide deterministic timestamps; the stabilizer returns events with
+stable deltas, unstable preview text, and diagnostics.
 """
 
 from __future__ import annotations
@@ -16,6 +14,10 @@ import unicodedata
 
 @dataclass(frozen=True)
 class RealtimeTextStabilizationConfig:
+    """
+    Configures evidence thresholds for realtime text stabilization.
+    """
+
     min_char_confirmations: int = 2
     min_char_evidence_span_seconds: float = 0.60
     max_char_evidence_window_seconds: float = 8.00
@@ -36,6 +38,10 @@ class RealtimeTextStabilizationConfig:
 
 @dataclass(frozen=True)
 class RealtimeTextObservation:
+    """
+    Captures one realtime transcription observation.
+    """
+
     recording_id: Any
     sequence: int
     raw_text: str
@@ -69,6 +75,10 @@ class RealtimeTextObservation:
 
 @dataclass(frozen=True)
 class RealtimeTextFinalObservation:
+    """
+    Captures a final transcription observation.
+    """
+
     recording_id: Any
     final_text: str
     segment_id: Optional[Any] = None
@@ -79,6 +89,10 @@ class RealtimeTextFinalObservation:
 
 @dataclass(frozen=True)
 class RealtimeTextEvidenceDiagnostics:
+    """
+    Describes evidence used to stabilize text.
+    """
+
     confirmation_count: int = 0
     first_sequence: Optional[int] = None
     latest_sequence: Optional[int] = None
@@ -91,6 +105,10 @@ class RealtimeTextEvidenceDiagnostics:
 
 @dataclass(frozen=True)
 class RealtimeTextObservationTiming:
+    """
+    Carries timing metadata for a realtime observation.
+    """
+
     created_at_monotonic: Optional[float] = None
     completed_at_monotonic: Optional[float] = None
     received_at_wall_time: Optional[float] = None
@@ -101,6 +119,10 @@ class RealtimeTextObservationTiming:
 
 @dataclass(frozen=True)
 class RealtimeTextStabilizationEvent:
+    """
+    Describes the stabilizer result for one realtime observation.
+    """
+
     recording_id: Any
     segment_id: Optional[Any]
     sequence: int
@@ -134,6 +156,10 @@ class RealtimeTextStabilizationEvent:
 
 @dataclass(frozen=True)
 class RealtimeTextFinalizationEvent:
+    """
+    Describes how final text reconciles with stabilized text.
+    """
+
     recording_id: Any
     segment_id: Optional[Any]
     stable_text: str
@@ -147,6 +173,10 @@ class RealtimeTextFinalizationEvent:
 
 @dataclass(frozen=True)
 class RealtimeTextStabilizationSnapshot:
+    """
+    Captures the current realtime stabilization state.
+    """
+
     recording_id: Any
     segment_id: Optional[Any]
     stable_text: str
@@ -186,10 +216,17 @@ class _ObservationRecord:
 
 
 class RealtimeTextStabilizer:
+    """
+    Stabilizes realtime transcription observations into publishable text.
+    """
+
     def __init__(
         self,
         config: Optional[RealtimeTextStabilizationConfig] = None,
     ):
+        """
+        Initializes stabilizer state with optional threshold configuration.
+        """
         self.config = config or RealtimeTextStabilizationConfig()
         self._recording_id = None
         self._segment_id = None
@@ -217,6 +254,9 @@ class RealtimeTextStabilizer:
         started_at_monotonic: Optional[float] = None,
         started_at_wall_time: Optional[float] = None,
     ) -> None:
+        """
+        Resets stabilization state for a new recording.
+        """
         self._recording_id = recording_id
         self._segment_id = segment_id
         self._started_at_monotonic = started_at_monotonic
@@ -240,6 +280,9 @@ class RealtimeTextStabilizer:
         self,
         observation: RealtimeTextObservation,
     ) -> RealtimeTextStabilizationEvent:
+        """
+        Processes one realtime observation and returns a stabilization event.
+        """
         if self._recording_id is None:
             self.reset(
                 observation.recording_id,
@@ -296,6 +339,9 @@ class RealtimeTextStabilizer:
         self,
         final_observation: Optional[RealtimeTextFinalObservation] = None,
     ) -> RealtimeTextFinalizationEvent:
+        """
+        Finalizes stabilization against the completed transcription.
+        """
         final_text = ""
         final_suffix = ""
         agrees = True
@@ -333,6 +379,9 @@ class RealtimeTextStabilizer:
         )
 
     def snapshot(self) -> RealtimeTextStabilizationSnapshot:
+        """
+        Returns the current stabilization snapshot.
+        """
         return RealtimeTextStabilizationSnapshot(
             recording_id=self._recording_id,
             segment_id=self._segment_id,

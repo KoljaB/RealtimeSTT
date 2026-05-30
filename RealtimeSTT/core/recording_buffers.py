@@ -20,27 +20,24 @@ def set_audio_from_frames(
         backdate_stop_seconds=0.0,
         backdate_resume_seconds=0.0,
 ):
+    """
+    Stores recorded frames as float audio and keeps optional resume audio.
+    """
     frames = frames or []
 
-    # Calculate samples needed for backdating resume
     samples_to_keep = int(recorder.sample_rate * backdate_resume_seconds)
 
-    # First convert all current frames to audio array
     full_audio_array = np.frombuffer(b''.join(frames), dtype=np.int16)
     full_audio = full_audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
 
-    # Calculate how many samples we need to keep for backdating resume
     if samples_to_keep > 0:
         samples_to_keep = min(samples_to_keep, len(full_audio))
-        # Keep the last N samples for backdating resume
         frames_to_read_audio = full_audio[-samples_to_keep:]
 
-        # Convert the audio back to int16 bytes for frames
         frames_to_read_int16 = (frames_to_read_audio * INT16_MAX_ABS_VALUE).astype(np.int16)
         frame_bytes = frames_to_read_int16.tobytes()
 
-        # Split into appropriate frame sizes (assuming standard frame size)
-        FRAME_SIZE = 2048  # Typical frame size
+        FRAME_SIZE = 2048  # Historical recorder frame byte size.
         frames_to_read = []
         for i in range(0, len(frame_bytes), FRAME_SIZE):
             frame = frame_bytes[i:i + FRAME_SIZE]
@@ -49,7 +46,6 @@ def set_audio_from_frames(
     else:
         frames_to_read = []
 
-    # Process backdate stop seconds
     samples_to_remove = int(recorder.sample_rate * backdate_stop_seconds)
 
     if samples_to_remove > 0:
@@ -73,6 +69,9 @@ def queue_recorded_audio(
         backdate_stop_seconds=0.0,
         backdate_resume_seconds=0.0,
 ):
+    """
+    Queues a completed recording for final transcription.
+    """
     if not frames:
         return
 
@@ -84,6 +83,9 @@ def queue_recorded_audio(
 
 
 def get_next_recorded_audio(recorder):
+    """
+    Returns the next queued recording, if one is available.
+    """
     try:
         return recorder.recorded_audio_queue.get_nowait()
     except queue.Empty:
@@ -91,10 +93,16 @@ def get_next_recorded_audio(recorder):
 
 
 def has_pending_recordings(recorder):
+    """
+    Reports whether final-transcription audio is queued.
+    """
     return not recorder.recorded_audio_queue.empty()
 
 
 def flush_buffered_audio(recorder, min_abs_level=50):
+    """
+    Queues buffered audio when it contains enough non-silent signal.
+    """
     if recorder.is_recording:
         recorder.stop()
         return True
@@ -117,8 +125,7 @@ def flush_buffered_audio(recorder, min_abs_level=50):
 
 def clear_audio_queue(recorder):
     """
-    Safely empties the audio queue to ensure no remaining audio
-    fragments get processed e.g. after waking up the recorder.
+    Empties queued audio fragments after recorder wakeup or reset.
     """
     clear_pre_recording_buffer(recorder)
     try:
@@ -126,5 +133,5 @@ def clear_audio_queue(recorder):
             recorder.audio_queue.get_nowait()
     except:
         # PyTorch's mp.Queue doesn't have a specific Empty exception
-        # so we catch any exception that might occur when the queue is empty
+        # when the queue is empty.
         pass

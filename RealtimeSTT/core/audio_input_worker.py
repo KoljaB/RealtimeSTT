@@ -19,26 +19,19 @@ def run_audio_data_worker(
     use_microphone
 ):
     """
-    Worker method that handles the audio recording process.
+    Captures microphone audio and queues complete recorder chunks.
 
-    This method runs in a separate process and is responsible for:
-    - Setting up the audio input stream for recording at the highest possible sample rate.
-    - Continuously reading audio data from the input stream, resampling if necessary,
-    preprocessing the data, and placing complete chunks in a queue.
-    - Handling errors during the recording process.
-    - Gracefully terminating the recording process when a shutdown event is set.
+    The worker validates the selected input device, retries recoverable stream
+    failures, resamples microphone audio, and exits when shutdown is requested.
 
     Args:
-        audio_queue (queue.Queue): A queue where recorded audio data is placed.
-        target_sample_rate (int): The desired sample rate for the output audio (for Silero VAD).
-        buffer_size (int): The number of samples expected by the Silero VAD model.
-        input_device_index (int): The index of the audio input device.
-        shutdown_event (threading.Event): An event that, when set, signals this worker method to terminate.
-        interrupt_stop_event (threading.Event): An event to signal keyboard interrupt.
-        use_microphone (multiprocessing.Value): A shared value indicating whether to use the microphone.
-
-    Raises:
-        Exception: If there is an error while initializing the audio recording.
+    - audio_queue: Queue receiving processed audio bytes.
+    - target_sample_rate: Output sample rate expected by downstream VAD.
+    - buffer_size: Number of samples expected by the Silero VAD model.
+    - input_device_index: Optional input device index.
+    - shutdown_event: Event that stops the worker.
+    - interrupt_stop_event: Event set on keyboard interruption.
+    - use_microphone: Shared flag controlling microphone reads.
     """
     import pyaudio
     import numpy as np
@@ -48,7 +41,9 @@ def run_audio_data_worker(
         system_signal.signal(system_signal.SIGINT, system_signal.SIG_IGN)
 
     def get_highest_sample_rate(audio_interface, device_index):
-        """Get the highest supported sample rate for the specified device."""
+        """
+        Returns the highest supported sample rate for an input device.
+        """
         try:
             device_info = audio_interface.get_device_info_by_index(device_index)
             logger.debug(f"Retrieving highest sample rate for device index {device_index}: {device_info}")
@@ -66,10 +61,15 @@ def run_audio_data_worker(
             return 48000  # Fallback to a common high sample rate
 
     def initialize_audio_stream(audio_interface, sample_rate, chunk_size):
+        """
+        Initializes the audio stream with retry-friendly error handling.
+        """
         nonlocal input_device_index
 
         def validate_device(device_index):
-            """Validate that the device exists and is actually available for input."""
+            """
+            Checks whether an input device can be opened and read.
+            """
             try:
                 device_info = audio_interface.get_device_info_by_index(device_index)
                 logger.debug(f"Validating device index {device_index} with info: {device_info}")
@@ -77,7 +77,6 @@ def run_audio_data_worker(
                     logger.debug("Device has no input channels, invalid for recording.")
                     return False
 
-                # Try to actually read from the device
                 test_stream = audio_interface.open(
                     format=pyaudio.paInt16,
                     channels=1,
@@ -104,10 +103,8 @@ def run_audio_data_worker(
                 logger.debug(f"Device validation failed for index {device_index}: {e}")
                 return False
 
-        """Initialize the audio stream with error handling."""
         while not shutdown_event.is_set():
             try:
-                # First, get a list of all available input devices
                 input_devices = []
                 device_count = audio_interface.get_device_count()
                 logger.debug(f"Found {device_count} total audio devices on the system.")
@@ -124,9 +121,7 @@ def run_audio_data_worker(
                 if not input_devices:
                     raise Exception("No input devices found")
 
-                # If input_device_index is None or invalid, try to find a working device
                 if input_device_index is None or input_device_index not in input_devices:
-                    # First try the default device
                     try:
                         default_device = audio_interface.get_default_input_device_info()
                         logger.debug(f"Default device info: {default_device}")
@@ -134,7 +129,6 @@ def run_audio_data_worker(
                             input_device_index = default_device['index']
                             logger.debug(f"Default device {input_device_index} selected.")
                     except Exception:
-                        # If default device fails, try other available input devices
                         logger.debug("Default device validation failed, checking other devices...")
                         for device_index in input_devices:
                             if validate_device(device_index):
@@ -144,11 +138,9 @@ def run_audio_data_worker(
                         else:
                             raise Exception("No working input devices found")
 
-                # Validate the selected device one final time
                 if not validate_device(input_device_index):
                     raise Exception("Selected device validation failed")
 
-                # If we get here, we have a validated device
                 logger.debug(f"Opening stream with device index {input_device_index}, "
                             f"sample_rate={sample_rate}, chunk_size={chunk_size}")
                 stream = audio_interface.open(
@@ -171,13 +163,13 @@ def run_audio_data_worker(
                 continue
 
     def preprocess_audio(chunk, original_sample_rate, target_sample_rate):
-        """Preprocess audio chunk similar to feed_audio method."""
+        """
+        Converts one audio chunk to mono int16 bytes at the target rate.
+        """
         if isinstance(chunk, np.ndarray):
-            # Handle stereo to mono conversion if necessary
             if chunk.ndim == 2:
                 chunk = np.mean(chunk, axis=1)
 
-            # Resample to target_sample_rate if necessary
             if original_sample_rate != target_sample_rate:
                 logger.debug(f"Resampling from {original_sample_rate} Hz to {target_sample_rate} Hz.")
                 num_samples = int(len(chunk) * target_sample_rate / original_sample_rate)
@@ -185,10 +177,8 @@ def run_audio_data_worker(
 
             chunk = chunk.astype(np.int16)
         else:
-            # If chunk is bytes, convert to numpy array
             chunk = np.frombuffer(chunk, dtype=np.int16)
 
-            # Resample if necessary
             if original_sample_rate != target_sample_rate:
                 logger.debug(f"Resampling from {original_sample_rate} Hz to {target_sample_rate} Hz.")
                 num_samples = int(len(chunk) * target_sample_rate / original_sample_rate)
@@ -203,6 +193,9 @@ def run_audio_data_worker(
     chunk_size = 1024  # Increased chunk size for better performance
 
     def setup_audio():
+        """
+        Creates or recreates the microphone stream.
+        """
         nonlocal audio_interface, stream, device_sample_rate, input_device_index
         try:
             if audio_interface is None:
@@ -218,7 +211,7 @@ def run_audio_data_worker(
                     logger.debug(f"Default device retrieval failed: {e}")
                     input_device_index = None
 
-            # We'll try 16000 Hz first, then the highest rate we detect, then fallback if needed
+            # Prefer the VAD-native rate, then fall back to device-supported rates.
             sample_rates_to_try = [16000]
             if input_device_index is not None:
                 highest_rate = get_highest_sample_rate(audio_interface, input_device_index)
@@ -244,7 +237,6 @@ def run_audio_data_worker(
                     logger.warning(f"Failed to initialize audio stream at {device_sample_rate} Hz: {e}")
                     continue
 
-            # If we reach here, none of the sample rates worked
             raise Exception("Failed to initialize audio stream with all sample rates.")
 
         except Exception as e:
@@ -273,13 +265,10 @@ def run_audio_data_worker(
                     processed_data = preprocess_audio(data, device_sample_rate, target_sample_rate)
                     buffer += processed_data
 
-                    # Check if the buffer has reached or exceeded the silero_buffer_size
                     while len(buffer) >= silero_buffer_size:
-                        # Extract silero_buffer_size amount of data from the buffer
                         to_process = buffer[:silero_buffer_size]
                         buffer = buffer[silero_buffer_size:]
 
-                        # Feed the extracted data to the audio_queue
                         if time_since_last_buffer_message:
                             time_passed = time.time() - time_since_last_buffer_message
                             if time_passed > 1:
@@ -295,7 +284,6 @@ def run_audio_data_worker(
                     logger.warning("Input overflowed. Frame dropped.")
                 else:
                     logger.error(f"OSError during recording: {e}", exc_info=True)
-                    # Attempt to reinitialize the stream
                     logger.error("Attempting to reinitialize the audio stream...")
 
                     try:
@@ -318,7 +306,6 @@ def run_audio_data_worker(
                 tb_str = traceback.format_exc()
                 logger.error(f"Traceback: {tb_str}")
                 logger.error(f"Error: {e}")
-                # Attempt to reinitialize the stream
                 logger.info("Attempting to reinitialize the audio stream...")
                 try:
                     if stream:
@@ -339,7 +326,7 @@ def run_audio_data_worker(
         interrupt_stop_event.set()
         logger.debug("Audio data worker process finished due to KeyboardInterrupt")
     finally:
-        # After recording stops, feed any remaining audio data
+        # Preserve partial buffered audio before closing the stream.
         if buffer:
             audio_queue.put(bytes(buffer))
 

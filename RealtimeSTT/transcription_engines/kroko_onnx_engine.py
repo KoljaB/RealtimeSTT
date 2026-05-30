@@ -1,3 +1,5 @@
+"""Adapts Kroko ONNX recognizers to sync and streaming transcription."""
+
 import os
 import re
 import shutil
@@ -36,6 +38,10 @@ _KROKO_OUTPUT_SUPPRESSION_LOCK = threading.RLock()
 
 @dataclass
 class KrokoOnnxDecodedOutput:
+    """
+    Carries Kroko ONNX decoded text and language metadata.
+    """
+
     text: str
     language: str = ""
 
@@ -272,7 +278,14 @@ def _tail_padding_option(options, path):
 
 
 class KrokoOnnxBackend:
+    """
+    Wraps a Kroko ONNX online recognizer.
+    """
+
     def __init__(self, config, recognizer_cls=None, numpy_module=None):
+        """
+        Initializes the Kroko ONNX recognizer backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.np = numpy_module or _load_numpy()
@@ -509,6 +522,9 @@ class KrokoOnnxBackend:
         return text_from_output(result)
 
     def transcribe(self, audio, **params):
+        """
+        Runs Kroko ONNX transcription for one audio input.
+        """
         sample_rate = int(params.get("sample_rate", self.sample_rate))
         with _suppress_native_output(self.suppress_native_output):
             stream = self.recognizer.create_stream()
@@ -534,17 +550,30 @@ class KrokoOnnxBackend:
 
 
 class KrokoOnnxEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with Kroko ONNX.
+    """
+
     engine_name = "kroko_onnx"
     supports_streaming = True
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the Kroko ONNX engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or KrokoOnnxBackend)(config)
 
     def create_streaming_session(self, language=None, use_prompt=True):
+        """
+        Creates a Kroko ONNX streaming transcription session.
+        """
         return KrokoOnnxStreamingSession(self, language=language, use_prompt=use_prompt)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with Kroko ONNX.
+        """
         audio = self._normalize_audio(audio)
         options = self.config.engine_options or {}
         output = self.backend.transcribe(
@@ -562,7 +591,14 @@ class KrokoOnnxEngine(BaseTranscriptionEngine):
 
 
 class KrokoOnnxStreamingSession(StreamingTranscriptionSession):
+    """
+    Streams audio into a Kroko ONNX recognizer session.
+    """
+
     def __init__(self, engine, language=None, use_prompt=True):
+        """
+        Initializes a Kroko ONNX streaming session.
+        """
         self.engine = engine
         self.backend = engine.backend
         self.use_prompt = use_prompt
@@ -575,12 +611,18 @@ class KrokoOnnxStreamingSession(StreamingTranscriptionSession):
         self.reset()
 
     def reset(self):
+        """
+        Resets the streaming recognizer state.
+        """
         with _suppress_native_output(self.backend.suppress_native_output):
             self.stream = self.backend.recognizer.create_stream()
         self.closed = False
         self.finished = False
 
     def accept_audio(self, audio, sample_rate=None):
+        """
+        Accepts one streaming audio chunk.
+        """
         if self.closed:
             raise TranscriptionEngineError("Cannot feed a closed Kroko streaming session.")
         if self.finished:
@@ -600,11 +642,17 @@ class KrokoOnnxStreamingSession(StreamingTranscriptionSession):
         )
 
     def decode(self):
+        """
+        Decodes pending streaming audio.
+        """
         if self.closed or self.stream is None:
             return
         self.backend._decode_ready_stream(self.stream)
 
     def get_result(self):
+        """
+        Returns the current streaming transcription result.
+        """
         if self.closed or self.stream is None:
             return TranscriptionResult(text="")
 
@@ -620,6 +668,9 @@ class KrokoOnnxStreamingSession(StreamingTranscriptionSession):
         )
 
     def finish(self):
+        """
+        Finalizes streaming input and returns the final result.
+        """
         if self.closed:
             return self.get_result()
 
@@ -645,5 +696,8 @@ class KrokoOnnxStreamingSession(StreamingTranscriptionSession):
         return self.get_result()
 
     def close(self):
+        """
+        Closes the streaming session.
+        """
         self.closed = True
         self.stream = None

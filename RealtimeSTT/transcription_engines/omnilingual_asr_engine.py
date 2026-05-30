@@ -1,3 +1,5 @@
+"""Adapts Meta Omnilingual ASR models to the engine interface."""
+
 from importlib import import_module
 from pathlib import Path
 
@@ -169,6 +171,10 @@ def _model_not_known_error_message(model_card):
 
 
 class OmnilingualASRBackend:
+    """
+    Wraps Meta Omnilingual ASR inference pipelines.
+    """
+
     def __init__(
         self,
         config,
@@ -176,6 +182,9 @@ class OmnilingualASRBackend:
         torch_module=None,
         numpy_module=None,
     ):
+        """
+        Initializes the Omnilingual ASR backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.model_card = _model_card_from_config(config, self.engine_options)
@@ -329,6 +338,9 @@ class OmnilingualASRBackend:
         return {"waveform": waveform, "sample_rate": self.sample_rate}
 
     def language_code(self, language=None):
+        """
+        Resolves the Omnilingual language code for a request.
+        """
         selected = (
             language
             or self.engine_options.get("language")
@@ -337,6 +349,9 @@ class OmnilingualASRBackend:
         return _normalize_language_code(selected, self.language_aliases)
 
     def transcribe(self, audio, language=None, **params):
+        """
+        Runs Omnilingual ASR transcription for one audio input.
+        """
         pipeline = self._ensure_pipeline()
         audio_input = self._audio_input(audio)
 
@@ -354,13 +369,23 @@ class OmnilingualASRBackend:
 
 
 class OmnilingualASREngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with Meta Omnilingual ASR.
+    """
+
     engine_name = "omnilingual_asr"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the Omnilingual ASR engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or OmnilingualASRBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio with Omnilingual ASR.
+        """
         if not isinstance(audio, (str, Path, dict)):
             audio = self._normalize_audio(audio)
         output = self.backend.transcribe(audio, language=language)

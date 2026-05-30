@@ -1,3 +1,5 @@
+"""Adapts pywhispercpp models to the transcription engine interface."""
+
 from importlib import import_module
 
 from .base import (
@@ -9,7 +11,14 @@ from .base import (
 
 
 class PyWhisperCppBackend:
+    """
+    Wraps a pywhispercpp model instance.
+    """
+
     def __init__(self, config, model_cls=None):
+        """
+        Loads a pywhispercpp model backend.
+        """
         self.config = config
         self.engine_options = dict(config.engine_options or {})
         self.transcribe_options = dict(self.engine_options.get("transcribe", {}))
@@ -29,6 +38,7 @@ class PyWhisperCppBackend:
 
     @staticmethod
     def _load_model_class():
+        """Loads the optional pywhispercpp model class."""
         try:
             module = import_module("pywhispercpp.model")
         except ModuleNotFoundError as exc:
@@ -40,6 +50,9 @@ class PyWhisperCppBackend:
         return module.Model
 
     def transcribe(self, audio, **params):
+        """
+        Runs pywhispercpp transcription with merged options.
+        """
         merged_params = dict(params)
         merged_params.update(self.transcribe_options)
         n_processors = merged_params.pop("n_processors", None)
@@ -47,13 +60,23 @@ class PyWhisperCppBackend:
 
 
 class WhisperCppEngine(BaseTranscriptionEngine):
+    """
+    Transcribes audio with pywhispercpp.
+    """
+
     engine_name = "whisper_cpp"
 
     def __init__(self, config, backend=None, backend_cls=None):
+        """
+        Initializes the pywhispercpp engine backend.
+        """
         super().__init__(config)
         self.backend = backend or (backend_cls or PyWhisperCppBackend)(config)
 
     def transcribe(self, audio, language=None, use_prompt=True):
+        """
+        Transcribes audio and returns normalized pywhispercpp output.
+        """
         audio = self._normalize_audio(audio)
         params = {
             "language": language if language else None,
