@@ -506,331 +506,8 @@ class AudioToTextRecorder:
             load_openwakeword_modules=_load_openwakeword_modules,
         )
                    
-    def _start_thread(self, target=None, args=()):
-        """
-        Implement a consistent threading model across the library.
 
-        This method is used to start any thread in this library. It uses the
-        standard threading. Thread for Linux and for all others uses the pytorch
-        MultiProcessing library 'Process'.
-        Args:
-            target (callable object): is the callable object to be invoked by
-              the run() method. Defaults to None, meaning nothing is called.
-            args (tuple): is a list or tuple of arguments for the target
-              invocation. Defaults to ().
-        """
-        if (platform.system() == 'Linux'):
-            thread = threading.Thread(target=target, args=args)
-            thread.deamon = True
-            thread.start()
-            return thread
-        else:
-            thread = mp.Process(target=target, args=args)
-            thread.start()
-            return thread
-
-    def _read_stdout(self):
-        while not self.shutdown_event.is_set():
-            try:
-                if self.parent_stdout_pipe.poll(0.1):
-                    logger.debug("Receive from stdout pipe")
-                    message = self.parent_stdout_pipe.recv()
-                    logger.info(message)
-            except (BrokenPipeError, EOFError, OSError):
-                # The pipe probably has been closed, so we ignore the error
-                pass
-            except KeyboardInterrupt:  # handle manual interruption (Ctrl+C)
-                logger.info("KeyboardInterrupt in read from stdout detected, exiting...")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in read from stdout: {e}", exc_info=True)
-                logger.error(traceback.format_exc())  # Log the full traceback here
-                break 
-            time.sleep(0.1)
-
-    def wakeup(self):
-        """
-        If in wake work modus, wake up as if a wake word was spoken.
-        """
-        self.listen_start = time.time()
-
-    def abort(self):
-        state = self.state
-        self.start_recording_on_voice_activity = False
-        self.stop_recording_on_voice_deactivity = False
-        self.interrupt_stop_event.set()
-        if self.state != "inactive": # if inactive, was_interrupted will never be set
-            self.was_interrupted.wait()
-            set_recorder_state(self, "transcribing")
-        self.was_interrupted.clear()
-        if self.is_recording: # if recording, make sure to stop the recorder
-            self.stop()
-
-
-    def wait_audio(self):
-        """
-        Waits for the start and completion of the audio recording process.
-
-        This method is responsible for:
-        - Waiting for voice activity to begin recording if not yet started.
-        - Waiting for voice inactivity to complete the recording.
-        - Setting the audio buffer from the recorded frames.
-        - Resetting recording-related attributes.
-
-        Side effects:
-        - Updates the state of the instance.
-        - Modifies the audio attribute to contain the processed audio data.
-        """
-
-        armed_for_voice_activity = False
-
-        try:
-            logger.info("Setting listen time")
-            if self.listen_start == 0:
-                self.listen_start = time.time()
-
-            queued_recording = get_next_recorded_audio(self)
-
-            # If not yet started recording, wait for voice activity to initiate.
-            if queued_recording is None and not self.is_recording and not self.frames:
-                set_recorder_state(self, "listening")
-                reset_silero_vad_state(self)
-                self.start_recording_on_voice_activity = True
-                armed_for_voice_activity = True
-
-                # Wait until recording starts
-                logger.debug('Waiting for recording start')
-                while not self.interrupt_stop_event.is_set():
-                    if self.start_recording_event.wait(timeout=0.02):
-                        break
-
-            # If recording is ongoing, wait for voice inactivity
-            # to finish recording.
-            if queued_recording is None and self.is_recording:
-                self.stop_recording_on_voice_deactivity = True
-
-                # Wait until recording stops
-                logger.debug('Waiting for recording stop')
-                while not self.interrupt_stop_event.is_set():
-                    if (self.stop_recording_event.wait(timeout=0.02)):
-                        break
-
-            if queued_recording is None:
-                queued_recording = get_next_recorded_audio(self)
-
-            if queued_recording is not None:
-                frames = queued_recording["frames"]
-                backdate_stop_seconds = queued_recording["backdate_stop_seconds"]
-                backdate_resume_seconds = queued_recording["backdate_resume_seconds"]
-            else:
-                frames = self.frames
-                if len(frames) == 0:
-                    frames = self.last_frames
-                backdate_stop_seconds = self.backdate_stop_seconds
-                backdate_resume_seconds = self.backdate_resume_seconds
-
-            frames_to_read = set_audio_from_frames(
-                self,
-                frames,
-                backdate_stop_seconds,
-                backdate_resume_seconds,
-            )
-
-            if not self.is_recording:
-                self.frames.clear()
-                self.last_frames.clear()
-                self.frames.extend(frames_to_read)
-
-            # Reset backdating parameters
-            self.backdate_stop_seconds = 0.0
-            self.backdate_resume_seconds = 0.0
-
-            self.listen_start = 0
-
-            if not self.is_recording:
-                set_recorder_state(self, "inactive")
-
-            if (
-                    armed_for_voice_activity
-                    and not self.use_wake_words
-                    and not self.interrupt_stop_event.is_set()
-                    and not self.is_shut_down):
-                self.continuous_listening = True
-                reset_silero_vad_state(self)
-                self.start_recording_on_voice_activity = True
-                self.stop_recording_on_voice_deactivity = True
-
-        except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt in wait_audio, shutting down")
-            self.shutdown()
-            raise  # Re-raise the exception after cleanup
-
-    def has_pending_recordings(self):
-        return recorder_has_pending_recordings(self)
-
-    def _set_state_after_transcription(self):
-        if self.is_recording:
-            set_recorder_state(self, "recording")
-        else:
-            set_recorder_state(self, "inactive")
-
-    def flush_buffered_audio(self, min_abs_level=50):
-        return flush_recorder_buffered_audio(self, min_abs_level)
-
-
-    def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
-        start_time = 0
-        with self.transcription_lock:
-            if audio_bytes is None:
-                audio_bytes = copy.deepcopy(self.audio)
-
-            if audio_bytes is None or len(audio_bytes) == 0:
-                print("No audio data available for transcription")
-                #logger.info("No audio data available for transcription")
-                return ""
-
-            try:
-                if self.transcribe_count == 0:
-                    logger.debug("Adding transcription request, no early transcription started")
-                    start_time = time.time()  # Start timing
-                    submit_transcription_request(
-                        self,
-                        audio_bytes,
-                        self.language,
-                        use_prompt,
-                    )
-
-                while self.transcribe_count > 0:
-                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
-                    response = receive_transcription_result(self, timeout=0.1)
-                    if response is None: # check if transcription done
-                        if self.interrupt_stop_event.is_set(): # check if interrupted
-                            self.was_interrupted.set()
-                            self._set_state_after_transcription()
-                            return "" # return empty string if interrupted
-                        continue
-                    status, result = response
-                    self.transcribe_count -= 1
-
-                self.allowed_to_early_transcribe = True
-                self._set_state_after_transcription()
-                if status == 'success':
-                    self.detected_language = (
-                        result.info.language if result.info.language_probability > 0 else None
-                    )
-                    self.detected_language_probability = result.info.language_probability
-                    self.last_transcription_bytes = copy.deepcopy(audio_bytes)
-                    self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
-                    self.last_transcription_metadata = getattr(result, "metadata", None)
-                    transcription = preprocess_output(
-                        result.text,
-                        ensure_sentence_starting_uppercase=(
-                            self.ensure_sentence_starting_uppercase
-                        ),
-                        ensure_sentence_ends_with_period=(
-                            self.ensure_sentence_ends_with_period
-                        ),
-                    )
-                    end_time = time.time()  # End timing
-                    transcription_time = end_time - start_time
-
-                    if start_time:
-                        if self.print_transcription_time:
-                            print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                        else:
-                            logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
-                else:
-                    logger.error(f"Transcription error: {result}")
-                    raise Exception(result)
-            except Exception as e:
-                logger.error(f"Error during transcription: {str(e)}", exc_info=True)
-                raise e
-
-
-    def transcribe(self):
-        """
-        Transcribes audio captured by this class instance using the
-        configured transcription engine.
-
-        Automatically starts recording upon voice activity if not manually
-          started using `recorder.start()`.
-        Automatically stops recording upon voice deactivity if not manually
-          stopped with `recorder.stop()`.
-        Processes the recorded audio to generate transcription.
-
-        Args:
-            on_transcription_finished (callable, optional): Callback function
-              to be executed when transcription is ready.
-            If provided, transcription will be performed asynchronously,
-              and the callback will receive the transcription as its argument.
-              If omitted, the transcription will be performed synchronously,
-              and the result will be returned.
-
-        Returns (if no callback is set):
-            str: The transcription of the recorded audio.
-
-        Raises:
-            Exception: If there is an error during the transcription process.
-        """
-        audio_copy = copy.deepcopy(self.audio)
-        set_recorder_state(self, "transcribing")
-        if self.on_transcription_start:
-            abort_value = self.on_transcription_start(audio_copy)
-            if not abort_value:
-                return self.perform_final_transcription(audio_copy)
-            return None
-        else:
-            return self.perform_final_transcription(audio_copy)
-
-
-    def text(self,
-             on_transcription_finished=None,
-             ):
-        """
-        Transcribes audio captured by this class instance
-        using the configured transcription engine.
-
-        - Automatically starts recording upon voice activity if not manually
-          started using `recorder.start()`.
-        - Automatically stops recording upon voice deactivity if not manually
-          stopped with `recorder.stop()`.
-        - Processes the recorded audio to generate transcription.
-
-        Args:
-            on_transcription_finished (callable, optional): Callback function
-              to be executed when transcription is ready.
-            If provided, transcription will be performed asynchronously, and
-              the callback will receive the transcription as its argument.
-              If omitted, the transcription will be performed synchronously,
-              and the result will be returned.
-
-        Returns (if not callback is set):
-            str: The transcription of the recorded audio
-        """
-        self.interrupt_stop_event.clear()
-        self.was_interrupted.clear()
-        try:
-            self.wait_audio()
-        except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt in text() method")
-            self.shutdown()
-            raise  # Re-raise the exception after cleanup
-
-        if self.is_shut_down or self.interrupt_stop_event.is_set():
-            if self.interrupt_stop_event.is_set():
-                self.was_interrupted.set()
-            return ""
-
-        if on_transcription_finished:
-            threading.Thread(target=on_transcription_finished,
-                            args=(self.transcribe(),)).start()
-        else:
-            return self.transcribe()
-
-
-    def format_number(self, num):
-        return format_number(num)
+    # Public lifecycle API.
 
     def start(self, frames = None):
         """
@@ -965,6 +642,252 @@ class AudioToTextRecorder:
         reset_silero_vad_state(self)
         self.start_recording_on_voice_activity = True
 
+    def text(self,
+             on_transcription_finished=None,
+             ):
+        """
+        Transcribes audio captured by this class instance
+        using the configured transcription engine.
+
+        - Automatically starts recording upon voice activity if not manually
+          started using `recorder.start()`.
+        - Automatically stops recording upon voice deactivity if not manually
+          stopped with `recorder.stop()`.
+        - Processes the recorded audio to generate transcription.
+
+        Args:
+            on_transcription_finished (callable, optional): Callback function
+              to be executed when transcription is ready.
+            If provided, transcription will be performed asynchronously, and
+              the callback will receive the transcription as its argument.
+              If omitted, the transcription will be performed synchronously,
+              and the result will be returned.
+
+        Returns (if not callback is set):
+            str: The transcription of the recorded audio
+        """
+        self.interrupt_stop_event.clear()
+        self.was_interrupted.clear()
+        try:
+            self.wait_audio()
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt in text() method")
+            self.shutdown()
+            raise  # Re-raise the exception after cleanup
+
+        if self.is_shut_down or self.interrupt_stop_event.is_set():
+            if self.interrupt_stop_event.is_set():
+                self.was_interrupted.set()
+            return ""
+
+        if on_transcription_finished:
+            threading.Thread(target=on_transcription_finished,
+                            args=(self.transcribe(),)).start()
+        else:
+            return self.transcribe()
+
+    def transcribe(self):
+        """
+        Transcribes audio captured by this class instance using the
+        configured transcription engine.
+
+        Automatically starts recording upon voice activity if not manually
+          started using `recorder.start()`.
+        Automatically stops recording upon voice deactivity if not manually
+          stopped with `recorder.stop()`.
+        Processes the recorded audio to generate transcription.
+
+        Args:
+            on_transcription_finished (callable, optional): Callback function
+              to be executed when transcription is ready.
+            If provided, transcription will be performed asynchronously,
+              and the callback will receive the transcription as its argument.
+              If omitted, the transcription will be performed synchronously,
+              and the result will be returned.
+
+        Returns (if no callback is set):
+            str: The transcription of the recorded audio.
+
+        Raises:
+            Exception: If there is an error during the transcription process.
+        """
+        audio_copy = copy.deepcopy(self.audio)
+        set_recorder_state(self, "transcribing")
+        if self.on_transcription_start:
+            abort_value = self.on_transcription_start(audio_copy)
+            if not abort_value:
+                return self.perform_final_transcription(audio_copy)
+            return None
+        else:
+            return self.perform_final_transcription(audio_copy)
+
+    def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
+        start_time = 0
+        with self.transcription_lock:
+            if audio_bytes is None:
+                audio_bytes = copy.deepcopy(self.audio)
+
+            if audio_bytes is None or len(audio_bytes) == 0:
+                print("No audio data available for transcription")
+                #logger.info("No audio data available for transcription")
+                return ""
+
+            try:
+                if self.transcribe_count == 0:
+                    logger.debug("Adding transcription request, no early transcription started")
+                    start_time = time.time()  # Start timing
+                    submit_transcription_request(
+                        self,
+                        audio_bytes,
+                        self.language,
+                        use_prompt,
+                    )
+
+                while self.transcribe_count > 0:
+                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
+                    response = receive_transcription_result(self, timeout=0.1)
+                    if response is None: # check if transcription done
+                        if self.interrupt_stop_event.is_set(): # check if interrupted
+                            self.was_interrupted.set()
+                            self._set_state_after_transcription()
+                            return "" # return empty string if interrupted
+                        continue
+                    status, result = response
+                    self.transcribe_count -= 1
+
+                self.allowed_to_early_transcribe = True
+                self._set_state_after_transcription()
+                if status == 'success':
+                    self.detected_language = (
+                        result.info.language if result.info.language_probability > 0 else None
+                    )
+                    self.detected_language_probability = result.info.language_probability
+                    self.last_transcription_bytes = copy.deepcopy(audio_bytes)
+                    self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
+                    self.last_transcription_metadata = getattr(result, "metadata", None)
+                    transcription = preprocess_output(
+                        result.text,
+                        ensure_sentence_starting_uppercase=(
+                            self.ensure_sentence_starting_uppercase
+                        ),
+                        ensure_sentence_ends_with_period=(
+                            self.ensure_sentence_ends_with_period
+                        ),
+                    )
+                    end_time = time.time()  # End timing
+                    transcription_time = end_time - start_time
+
+                    if start_time:
+                        if self.print_transcription_time:
+                            print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
+                        else:
+                            logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
+                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
+                else:
+                    logger.error(f"Transcription error: {result}")
+                    raise Exception(result)
+            except Exception as e:
+                logger.error(f"Error during transcription: {str(e)}", exc_info=True)
+                raise e
+
+    def wait_audio(self):
+        """
+        Waits for the start and completion of the audio recording process.
+
+        This method is responsible for:
+        - Waiting for voice activity to begin recording if not yet started.
+        - Waiting for voice inactivity to complete the recording.
+        - Setting the audio buffer from the recorded frames.
+        - Resetting recording-related attributes.
+
+        Side effects:
+        - Updates the state of the instance.
+        - Modifies the audio attribute to contain the processed audio data.
+        """
+
+        armed_for_voice_activity = False
+
+        try:
+            logger.info("Setting listen time")
+            if self.listen_start == 0:
+                self.listen_start = time.time()
+
+            queued_recording = get_next_recorded_audio(self)
+
+            # If not yet started recording, wait for voice activity to initiate.
+            if queued_recording is None and not self.is_recording and not self.frames:
+                set_recorder_state(self, "listening")
+                reset_silero_vad_state(self)
+                self.start_recording_on_voice_activity = True
+                armed_for_voice_activity = True
+
+                # Wait until recording starts
+                logger.debug('Waiting for recording start')
+                while not self.interrupt_stop_event.is_set():
+                    if self.start_recording_event.wait(timeout=0.02):
+                        break
+
+            # If recording is ongoing, wait for voice inactivity
+            # to finish recording.
+            if queued_recording is None and self.is_recording:
+                self.stop_recording_on_voice_deactivity = True
+
+                # Wait until recording stops
+                logger.debug('Waiting for recording stop')
+                while not self.interrupt_stop_event.is_set():
+                    if (self.stop_recording_event.wait(timeout=0.02)):
+                        break
+
+            if queued_recording is None:
+                queued_recording = get_next_recorded_audio(self)
+
+            if queued_recording is not None:
+                frames = queued_recording["frames"]
+                backdate_stop_seconds = queued_recording["backdate_stop_seconds"]
+                backdate_resume_seconds = queued_recording["backdate_resume_seconds"]
+            else:
+                frames = self.frames
+                if len(frames) == 0:
+                    frames = self.last_frames
+                backdate_stop_seconds = self.backdate_stop_seconds
+                backdate_resume_seconds = self.backdate_resume_seconds
+
+            frames_to_read = set_audio_from_frames(
+                self,
+                frames,
+                backdate_stop_seconds,
+                backdate_resume_seconds,
+            )
+
+            if not self.is_recording:
+                self.frames.clear()
+                self.last_frames.clear()
+                self.frames.extend(frames_to_read)
+
+            # Reset backdating parameters
+            self.backdate_stop_seconds = 0.0
+            self.backdate_resume_seconds = 0.0
+
+            self.listen_start = 0
+
+            if not self.is_recording:
+                set_recorder_state(self, "inactive")
+
+            if (
+                    armed_for_voice_activity
+                    and not self.use_wake_words
+                    and not self.interrupt_stop_event.is_set()
+                    and not self.is_shut_down):
+                self.continuous_listening = True
+                reset_silero_vad_state(self)
+                self.start_recording_on_voice_activity = True
+                self.stop_recording_on_voice_deactivity = True
+
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt in wait_audio, shutting down")
+            self.shutdown()
+            raise  # Re-raise the exception after cleanup
+
     def feed_audio(self, chunk, original_sample_rate=16000):
         """
         Feed an audio chunk into the processing pipeline. Chunks are
@@ -1004,13 +927,6 @@ class AudioToTextRecorder:
 
             # Feed the extracted data to the audio_queue
             self.audio_queue.put(to_process)
-
-    def set_microphone(self, microphone_on=True):
-        """
-        Set the microphone on or off.
-        """
-        logger.info("Setting microphone to: " + str(microphone_on))
-        self.use_microphone.value = microphone_on
 
     def shutdown(self):
         """
@@ -1073,12 +989,131 @@ class AudioToTextRecorder:
                     self.realtime_transcription_model = None
             gc.collect()
 
+    # Public compatibility utilities.
+
+    def wakeup(self):
+        """
+        If in wake work modus, wake up as if a wake word was spoken.
+        """
+        self.listen_start = time.time()
+
+    def abort(self):
+        state = self.state
+        self.start_recording_on_voice_activity = False
+        self.stop_recording_on_voice_deactivity = False
+        self.interrupt_stop_event.set()
+        if self.state != "inactive": # if inactive, was_interrupted will never be set
+            self.was_interrupted.wait()
+            set_recorder_state(self, "transcribing")
+        self.was_interrupted.clear()
+        if self.is_recording: # if recording, make sure to stop the recorder
+            self.stop()
+
+    def set_microphone(self, microphone_on=True):
+        """
+        Set the microphone on or off.
+        """
+        logger.info("Setting microphone to: " + str(microphone_on))
+        self.use_microphone.value = microphone_on
+
     def clear_audio_queue(self):
         """
         Safely empties the audio queue to ensure no remaining audio 
         fragments get processed e.g. after waking up the recorder.
         """
         return clear_recorder_audio_queue(self)
+
+    def has_pending_recordings(self):
+        return recorder_has_pending_recordings(self)
+
+    def flush_buffered_audio(self, min_abs_level=50):
+        return flush_recorder_buffered_audio(self, min_abs_level)
+
+    def format_number(self, num):
+        return format_number(num)
+
+    # Context manager API.
+
+    def __enter__(self):
+        """
+        Method to setup the context manager protocol.
+
+        This enables the instance to be used in a `with` statement, ensuring
+        proper resource management. When the `with` block is entered, this
+        method is automatically called.
+
+        Returns:
+            self: The current instance of the class.
+        """
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Method to define behavior when the context manager protocol exits.
+
+        This is called when exiting the `with` block and ensures that any
+        necessary cleanup or resource release processes are executed, such as
+        shutting down the system properly.
+
+        Args:
+            exc_type (Exception or None): The type of the exception that
+              caused the context to be exited, if any.
+            exc_value (Exception or None): The exception instance that caused
+              the context to be exited, if any.
+            traceback (Traceback or None): The traceback corresponding to the
+              exception, if any.
+        """
+        self.shutdown()
+
+    # Internal facade-level helpers.
+
+    def _start_thread(self, target=None, args=()):
+        """
+        Implement a consistent threading model across the library.
+
+        This method is used to start any thread in this library. It uses the
+        standard threading. Thread for Linux and for all others uses the pytorch
+        MultiProcessing library 'Process'.
+        Args:
+            target (callable object): is the callable object to be invoked by
+              the run() method. Defaults to None, meaning nothing is called.
+            args (tuple): is a list or tuple of arguments for the target
+              invocation. Defaults to ().
+        """
+        if (platform.system() == 'Linux'):
+            thread = threading.Thread(target=target, args=args)
+            thread.deamon = True
+            thread.start()
+            return thread
+        else:
+            thread = mp.Process(target=target, args=args)
+            thread.start()
+            return thread
+
+    def _read_stdout(self):
+        while not self.shutdown_event.is_set():
+            try:
+                if self.parent_stdout_pipe.poll(0.1):
+                    logger.debug("Receive from stdout pipe")
+                    message = self.parent_stdout_pipe.recv()
+                    logger.info(message)
+            except (BrokenPipeError, EOFError, OSError):
+                # The pipe probably has been closed, so we ignore the error
+                pass
+            except KeyboardInterrupt:  # handle manual interruption (Ctrl+C)
+                logger.info("KeyboardInterrupt in read from stdout detected, exiting...")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error in read from stdout: {e}", exc_info=True)
+                logger.error(traceback.format_exc())  # Log the full traceback here
+                break
+            time.sleep(0.1)
+
+    def _set_state_after_transcription(self):
+        if self.is_recording:
+            set_recorder_state(self, "recording")
+        else:
+            set_recorder_state(self, "inactive")
 
     def _on_realtime_transcription_stabilized(self, text):
         """
@@ -1116,34 +1151,3 @@ class AudioToTextRecorder:
         if self.on_realtime_transcription_update:
             if self.is_recording:
                 run_callback(self, self.on_realtime_transcription_update, text)
-
-    def __enter__(self):
-        """
-        Method to setup the context manager protocol.
-
-        This enables the instance to be used in a `with` statement, ensuring
-        proper resource management. When the `with` block is entered, this
-        method is automatically called.
-
-        Returns:
-            self: The current instance of the class.
-        """
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        """
-        Method to define behavior when the context manager protocol exits.
-
-        This is called when exiting the `with` block and ensures that any
-        necessary cleanup or resource release processes are executed, such as
-        shutting down the system properly.
-
-        Args:
-            exc_type (Exception or None): The type of the exception that
-              caused the context to be exited, if any.
-            exc_value (Exception or None): The exception instance that caused
-              the context to be exited, if any.
-            traceback (Traceback or None): The traceback corresponding to the
-              exception, if any.
-        """
-        self.shutdown()
