@@ -23,6 +23,10 @@ from .core.realtime_text_stabilizer import RealtimeTextStabilizer
 from .core.initialization import initialize_recorder
 from .core.recorder_config import build_recorder_init_args
 from .core.realtime import run_realtime_worker
+from .core.realtime_callbacks import (
+    publish_realtime_transcription_stabilized,
+    publish_realtime_transcription_update,
+)
 from .core.recording import run_recording_worker
 from .core.lifecycle import (
     abort_recording,
@@ -989,9 +993,7 @@ class AudioToTextRecorder:
         Args:
             text (str): The stabilized transcription text.
         """
-        if self.on_realtime_transcription_stabilized:
-            if self.is_recording:
-                run_callback(self, self.on_realtime_transcription_stabilized, text)
+        return publish_realtime_transcription_stabilized(self, text)
 
     def _on_realtime_transcription_update(self, text):
         """
@@ -1007,6 +1009,4 @@ class AudioToTextRecorder:
         Args:
             text (str): The updated transcription text.
         """
-        if self.on_realtime_transcription_update:
-            if self.is_recording:
-                run_callback(self, self.on_realtime_transcription_update, text)
+        return publish_realtime_transcription_update(self, text)
