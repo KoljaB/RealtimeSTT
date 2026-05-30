@@ -1,4 +1,6 @@
-"""Adapts selected Hugging Face Transformers ASR models."""
+"""
+Adapts selected Hugging Face Transformers ASR models.
+"""
 
 from importlib import import_module
 
@@ -22,7 +24,9 @@ DEFAULT_MOONSHINE_MODEL = "UsefulSensors/moonshine-streaming-medium"
 
 
 def _load_transformers_classes(engine_name, class_names):
-    """Loads required Transformers classes for an engine."""
+    """
+    Loads required Transformers classes for an engine.
+    """
     try:
         transformers = import_module("transformers")
     except ModuleNotFoundError as exc:
@@ -44,7 +48,9 @@ def _load_transformers_classes(engine_name, class_names):
 
 
 def _load_torch(engine_name):
-    """Loads torch for a Transformers-backed engine."""
+    """
+    Loads torch for a Transformers-backed engine.
+    """
     try:
         return import_module("torch")
     except ModuleNotFoundError as exc:
@@ -55,7 +61,9 @@ def _load_torch(engine_name):
 
 
 def _with_cache_dir(options, download_root):
-    """Adds a cache directory to model options when needed."""
+    """
+    Adds a cache directory to model options when needed.
+    """
     options = dict(options)
     if download_root and "cache_dir" not in options:
         options["cache_dir"] = download_root
@@ -235,6 +243,10 @@ class GraniteSpeechBackend:
         self.model = model_cls.from_pretrained(self.model_name, **model_options)
 
     def _audio_tensor(self, audio):
+        """
+        Builds the audio tensor expected by the model.
+        """
+
         if isinstance(audio, str):
             return audio
         tensor = self.torch.as_tensor(audio)
@@ -297,6 +309,10 @@ class GraniteSpeechEngine(BaseTranscriptionEngine):
         self.backend = backend or (backend_cls or GraniteSpeechBackend)(config)
 
     def _prompt(self, language, use_prompt):
+        """
+        Builds a model prompt for the transcription request.
+        """
+
         engine_options = self.config.engine_options or {}
         prompt = engine_options.get("prompt", self.DEFAULT_PROMPT)
         if language and engine_options.get("include_language_in_prompt", False):
@@ -377,6 +393,10 @@ class MoonshineBackend:
         self.dtype = dtype
 
     def _default_max_length(self, inputs):
+        """
+        Returns the default generation length for model inputs.
+        """
+
         try:
             token_limit_factor = 6.5 / self.sample_rate
             seq_lens = inputs.attention_mask.sum(dim=-1)

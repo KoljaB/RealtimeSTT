@@ -1,4 +1,6 @@
-"""Realtime transcription worker loop for :class:`AudioToTextRecorder`."""
+"""
+Realtime transcription worker loop for :class:`AudioToTextRecorder`.
+"""
 
 import logging
 import time
@@ -42,9 +44,17 @@ def run_realtime_worker(recorder):
         return
 
     def _sleep_briefly():
+        """
+        Sleeps for the realtime worker polling interval.
+        """
+
         time.sleep(0.001)
 
     def _safe_get_realtime_pause():
+        """
+        Returns the configured realtime processing pause.
+        """
+
         pause = getattr(self, "realtime_processing_pause", 0.2)
         try:
             return max(0.001, float(pause))
@@ -52,6 +62,10 @@ def run_realtime_worker(recorder):
             return 0.2
 
     def _safe_get_realtime_fallback_pause():
+        """
+        Returns the fallback realtime processing pause.
+        """
+
         pause = getattr(self, "realtime_processing_pause", 0.2)
         try:
             return float(pause)
@@ -59,6 +73,10 @@ def run_realtime_worker(recorder):
             return 0.2
 
     def _safe_get_sample_rate():
+        """
+        Returns the recorder sample rate with a safe fallback.
+        """
+
         for attr_name in (
             "sample_rate",
             "input_device_sample_rate",
@@ -75,6 +93,10 @@ def run_realtime_worker(recorder):
         return 16000
 
     def _snapshot_frames():
+        """
+        Copies buffered realtime frames under the recorder lock.
+        """
+
         frames = getattr(self, "frames", None)
 
         if not frames:
@@ -100,6 +122,10 @@ def run_realtime_worker(recorder):
             return None
 
     def _frames_to_audio_array(frames_snapshot, enforce_min_samples=True):
+        """
+        Converts captured frames into a float audio array.
+        """
+
         if not frames_snapshot:
             return None
 
@@ -174,6 +200,10 @@ def run_realtime_worker(recorder):
         return audio_array
 
     def _count_frame_samples(frames_snapshot):
+        """
+        Counts samples in a frame snapshot.
+        """
+
         sample_count = 0
         for frame in frames_snapshot or ():
             if frame is None:
@@ -185,6 +215,10 @@ def run_realtime_worker(recorder):
         return sample_count
 
     def _extract_text_and_language(transcription_result):
+        """
+        Extracts text and language metadata from a transcription result.
+        """
+
         if transcription_result is None:
             return "", None, 0.0
 
@@ -203,6 +237,10 @@ def run_realtime_worker(recorder):
         return text, language, language_probability
 
     def _transcribe_with_main_model(audio_array):
+        """
+        Runs realtime transcription through the main model.
+        """
+
         try:
             if self._uses_external_transcription_executor:
                 return call_transcription_executor(
@@ -239,6 +277,10 @@ def run_realtime_worker(recorder):
             return None
 
     def _transcribe_with_realtime_model(audio_array):
+        """
+        Runs realtime transcription through the realtime model.
+        """
+
         if self._uses_external_realtime_transcription_executor:
             try:
                 return call_transcription_executor(
@@ -273,6 +315,10 @@ def run_realtime_worker(recorder):
     streaming_session_frame_count = 0
 
     def _streaming_realtime_target():
+        """
+        Selects the active realtime streaming model target.
+        """
+
         if self.use_main_model_for_realtime:
             return None
 
@@ -293,6 +339,10 @@ def run_realtime_worker(recorder):
         return target
 
     def _close_streaming_session():
+        """
+        Closes the active realtime streaming session.
+        """
+
         nonlocal streaming_session
         nonlocal streaming_session_recording_id
         nonlocal streaming_session_frame_count
@@ -311,6 +361,10 @@ def run_realtime_worker(recorder):
         streaming_session_frame_count = 0
 
     def _create_streaming_session(target):
+        """
+        Creates a realtime streaming session for a target model.
+        """
+
         try:
             return target.create_streaming_session(
                 language=self.language if self.language else None,
@@ -320,6 +374,10 @@ def run_realtime_worker(recorder):
             return target.create_streaming_session()
 
     def _ensure_streaming_session(recording_id):
+        """
+        Ensures a streaming session exists for the recording.
+        """
+
         nonlocal streaming_session
         nonlocal streaming_session_recording_id
         nonlocal streaming_session_frame_count
@@ -358,6 +416,10 @@ def run_realtime_worker(recorder):
         return streaming_session
 
     def _finish_streaming_session(frames_snapshot=None):
+        """
+        Finishes the active realtime streaming session.
+        """
+
         nonlocal streaming_session_frame_count
 
         if streaming_session is None:
@@ -394,6 +456,10 @@ def run_realtime_worker(recorder):
         sample_rate,
         recording_id,
     ):
+        """
+        Runs realtime transcription through the streaming model.
+        """
+
         nonlocal streaming_session_frame_count
 
         session = _ensure_streaming_session(recording_id)
@@ -431,6 +497,10 @@ def run_realtime_worker(recorder):
             return None
 
     def _safe_realtime_callback(callback, *args):
+        """
+        Invokes a realtime callback without breaking the worker.
+        """
+
         try:
             run_callback(self, callback, *args)
         except Exception as e:
@@ -452,6 +522,10 @@ def run_realtime_worker(recorder):
         detected_language,
         detected_language_probability,
     ):
+        """
+        Publishes realtime text with timing and language metadata.
+        """
+
         raw_text = "" if realtime_text is None else str(realtime_text)
 
         if recording_start_time is None:
@@ -573,6 +647,10 @@ def run_realtime_worker(recorder):
     last_transcription_time = time.time()
 
     def _run_realtime_transcription(trigger_reason):
+        """
+        Runs one realtime transcription pass for buffered audio.
+        """
+
         nonlocal last_transcription_time
 
         last_transcription_time = time.time()
@@ -690,6 +768,10 @@ def run_realtime_worker(recorder):
     boundary_recording_start_time = None
 
     def _get_boundary_followup_offsets():
+        """
+        Returns follow-up delays for syllable boundary checks.
+        """
+
         delays = getattr(
             self,
             "realtime_boundary_followup_delays",
@@ -721,6 +803,10 @@ def run_realtime_worker(recorder):
         return sorted(set(offsets))
 
     def _reset_boundary_scheduler():
+        """
+        Resets realtime boundary scheduling state.
+        """
+
         nonlocal boundary_detector
         nonlocal boundary_detector_frame_count
         nonlocal boundary_followup_deadlines
@@ -740,6 +826,10 @@ def run_realtime_worker(recorder):
         boundary_followup_deadlines = []
 
     def _process_new_boundary_frames(frames_snapshot):
+        """
+        Processes newly captured frames for boundary detection.
+        """
+
         nonlocal boundary_detector_frame_count
 
         if boundary_detector is None:
@@ -779,6 +869,10 @@ def run_realtime_worker(recorder):
         return boundary_detected
 
     def _run_syllable_boundary_scheduler():
+        """
+        Runs follow-up realtime passes at syllable boundaries.
+        """
+
         nonlocal boundary_followup_deadlines
         nonlocal boundary_recording_start_time
 

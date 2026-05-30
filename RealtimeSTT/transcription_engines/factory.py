@@ -1,4 +1,6 @@
-"""Creates transcription engine instances by configured backend name."""
+"""
+Creates transcription engine instances by configured backend name.
+"""
 
 from importlib import import_module
 
@@ -37,7 +39,9 @@ ENGINE_CLASS_PATHS = {
 
 
 def _load_engine_class(name):
-    """Loads the engine class registered for a normalized name."""
+    """
+    Loads the engine class registered for a normalized name.
+    """
     module_name, class_name = ENGINE_CLASS_PATHS[name]
     module = import_module(module_name, package=__package__)
     return getattr(module, class_name)

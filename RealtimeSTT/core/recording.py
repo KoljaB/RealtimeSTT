@@ -1,4 +1,6 @@
-"""Recording worker loop for :class:`AudioToTextRecorder`."""
+"""
+Recording worker loop for :class:`AudioToTextRecorder`.
+"""
 
 import datetime
 import logging

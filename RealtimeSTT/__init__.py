@@ -1,3 +1,7 @@
+"""
+Exposes the public RealtimeSTT package objects through lazy imports.
+"""
+
 __all__ = [
     "AudioToTextRecorder",
     "AudioToTextRecorderClient",
@@ -9,6 +13,10 @@ __all__ = [
 
 
 def __getattr__(name):
+    """
+    Loads exported package attributes lazily.
+    """
+
     if name == "AudioToTextRecorder":
         from .audio_recorder import AudioToTextRecorder
 

@@ -1,4 +1,6 @@
-"""Adapts NVIDIA Parakeet backends to the transcription engine interface."""
+"""
+Adapts NVIDIA Parakeet backends to the transcription engine interface.
+"""
 
 import os
 import tempfile
@@ -46,6 +48,10 @@ class ParakeetNeMoBackend:
 
     @staticmethod
     def _load_asr_model_class():
+        """
+        Loads the optional NeMo ASR model class.
+        """
+
         try:
             nemo_asr = import_module("nemo.collections.asr")
         except ModuleNotFoundError as exc:
@@ -58,6 +64,10 @@ class ParakeetNeMoBackend:
         return nemo_asr.models.ASRModel
 
     def _load_soundfile(self):
+        """
+        Loads the optional soundfile module.
+        """
+
         if self.soundfile_module is not None:
             return self.soundfile_module
         try:
@@ -70,6 +80,10 @@ class ParakeetNeMoBackend:
         return self.soundfile_module
 
     def _audio_paths(self, audio):
+        """
+        Writes audio inputs to temporary WAV files when needed.
+        """
+
         if isinstance(audio, (str, Path)):
             return [str(audio)], None
 

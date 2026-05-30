@@ -84,6 +84,10 @@ def initialize_recorder(
 
 
 def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
+    """
+    Copies constructor settings onto the recorder instance.
+    """
+
     recorder.language = init_args["language"]
     recorder.compute_type = init_args["compute_type"]
     recorder.input_device_index = init_args["input_device_index"]
@@ -299,7 +303,12 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
 
 
 def _configure_logger(recorder, no_log_file, init_args=None):
-    # Configure the named logger with the package's historical default handlers.
+    """
+    Configures recorder logging and optional file output.
+
+    Uses the package's historical default handlers.
+    """
+
     logger.setLevel(logging.DEBUG)  # We capture all, then filter via handlers
 
     log_format = "RealTimeSTT: %(name)s - %(levelname)s - %(message)s"
@@ -327,11 +336,19 @@ def _configure_logger(recorder, no_log_file, init_args=None):
 
 
 def _initialize_shutdown_state(recorder):
+    """
+    Initializes shutdown flags and synchronization state.
+    """
+
     recorder.is_shut_down = False
     recorder.shutdown_event = mp.Event()
 
 
 def _configure_multiprocessing_start_method():
+    """
+    Configures the multiprocessing start method on Windows.
+    """
+
     try:
         # Multiprocessing start method is process-global; leave existing settings intact.
         if mp.get_start_method(allow_none=True) is None:
@@ -341,6 +358,10 @@ def _configure_multiprocessing_start_method():
 
 
 def _log_extended_initialization(use_extended_logging, init_args):
+    """
+    Logs constructor arguments when extended logging is enabled.
+    """
+
     if use_extended_logging:
         logger.info("RealtimeSTT was called with these parameters:")
         for param, value in init_args.items():
@@ -348,6 +369,10 @@ def _log_extended_initialization(use_extended_logging, init_args):
 
 
 def _initialize_transcription_runtime(recorder, recorder_cls):
+    """
+    Initializes queues and the final transcription worker.
+    """
+
     recorder.interrupt_stop_event = mp.Event()
     recorder.was_interrupted = mp.Event()
     recorder.main_transcription_ready_event = mp.Event()
@@ -395,6 +420,10 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
 
 
 def _start_audio_reader(recorder, recorder_cls):
+    """
+    Starts the background audio reader process.
+    """
+
     if recorder.use_microphone.value:
         logger.info("Initializing audio recording"
                      " (creating pyAudio input stream,"
@@ -416,6 +445,10 @@ def _start_audio_reader(recorder, recorder_cls):
 
 
 def _initialize_realtime_transcription_model(recorder):
+    """
+    Initializes the realtime transcription backend.
+    """
+
     if (
         recorder.enable_realtime_transcription
         and not recorder.use_main_model_for_realtime
@@ -476,6 +509,10 @@ def _initialize_wakeword_detection(
     load_porcupine_module,
     load_openwakeword_modules,
 ):
+    """
+    Initializes wake-word detection backends and callbacks.
+    """
+
     setup_wakeword_detection(
         recorder,
         normalized_wakeword_backend,
@@ -496,6 +533,10 @@ def _initialize_voice_activity_detection(
     silero_onnx_model_path,
     silero_onnx_threads,
 ):
+    """
+    Initializes WebRTC and Silero voice activity detection.
+    """
+
     try:
         logger.info("Initializing WebRTC voice with "
                      f"Sensitivity {webrtc_sensitivity}"
@@ -541,6 +582,10 @@ def _initialize_voice_activity_detection(
 
 
 def _initialize_recording_buffers(recorder):
+    """
+    Initializes recording buffers and pre-roll state.
+    """
+
     recorder.audio_buffer = collections.deque(
         maxlen=int((recorder.sample_rate // recorder.buffer_size) *
                    recorder.pre_recording_buffer_duration)
@@ -562,6 +607,10 @@ def _initialize_recording_buffers(recorder):
 
 
 def _start_worker_threads(recorder):
+    """
+    Starts recorder worker threads.
+    """
+
     recorder.recording_thread = threading.Thread(
         target=run_recording_worker,
         args=(recorder,),
@@ -578,6 +627,10 @@ def _start_worker_threads(recorder):
 
 
 def _finish_initialization(recorder):
+    """
+    Finishes recorder initialization state and startup logging.
+    """
+
     logger.debug('Waiting for main transcription model to start')
     recorder.main_transcription_ready_event.wait()
     logger.debug('Main transcription model ready')

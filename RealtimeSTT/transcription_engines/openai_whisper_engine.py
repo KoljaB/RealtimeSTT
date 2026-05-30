@@ -1,4 +1,6 @@
-"""Adapts OpenAI Whisper Python models to the engine interface."""
+"""
+Adapts OpenAI Whisper Python models to the engine interface.
+"""
 
 from importlib import import_module
 
@@ -35,7 +37,9 @@ class OpenAIWhisperBackend:
 
     @staticmethod
     def _load_whisper_module():
-        """Loads the optional openai-whisper module."""
+        """
+        Loads the optional openai-whisper module.
+        """
         try:
             return import_module("whisper")
         except ModuleNotFoundError as exc:

@@ -1,4 +1,6 @@
-"""Internal final-transcription worker runtime."""
+"""
+Internal final-transcription worker runtime.
+"""
 
 import copy
 import logging
@@ -196,6 +198,10 @@ def submit_transcription_request(recorder, audio, language, use_prompt):
         audio_copy = copy.deepcopy(audio)
 
         def _run_external_transcription():
+            """
+            Runs final transcription through an external executor.
+            """
+
             try:
                 result = call_transcription_executor(
                     recorder.transcription_executor,

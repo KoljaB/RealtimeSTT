@@ -1,4 +1,6 @@
-"""Adapts Qwen3-ASR models to the transcription engine interface."""
+"""
+Adapts Qwen3-ASR models to the transcription engine interface.
+"""
 
 from importlib import import_module
 
@@ -73,6 +75,10 @@ class Qwen3ASRBackend:
 
     @staticmethod
     def _load_model_factory():
+        """
+        Loads the optional Qwen3-ASR model factory.
+        """
+
         try:
             qwen_asr = import_module("qwen_asr")
         except ModuleNotFoundError as exc:
@@ -85,6 +91,10 @@ class Qwen3ASRBackend:
 
     @staticmethod
     def _load_torch():
+        """
+        Loads torch for an optional backend.
+        """
+
         try:
             return import_module("torch")
         except ModuleNotFoundError as exc:
@@ -122,6 +132,10 @@ class Qwen3ASREngine(BaseTranscriptionEngine):
         self.backend = backend or (backend_cls or Qwen3ASRBackend)(config)
 
     def _language_name(self, language):
+        """
+        Resolves a Qwen3-ASR language display name.
+        """
+
         if not language:
             return None
         if len(language) == 2:

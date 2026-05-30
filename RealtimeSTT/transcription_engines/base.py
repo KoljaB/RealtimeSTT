@@ -1,4 +1,6 @@
-"""Defines common transcription engine result types and interfaces."""
+"""
+Defines common transcription engine result types and interfaces.
+"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -141,7 +143,9 @@ class BaseTranscriptionEngine(ABC):
         )
 
     def _normalize_audio(self, audio):
-        """Normalizes audio when the engine configuration requests it."""
+        """
+        Normalizes audio when the engine configuration requests it.
+        """
         if audio is None or audio.size == 0:
             raise TranscriptionEngineError("Received None audio for transcription")
 
@@ -154,7 +158,9 @@ class BaseTranscriptionEngine(ABC):
         return audio
 
     def _get_prompt(self, use_prompt):
-        """Returns the configured prompt when prompting is enabled."""
+        """
+        Returns the configured prompt when prompting is enabled.
+        """
         if use_prompt and self.config.initial_prompt:
             return self.config.initial_prompt
         return None

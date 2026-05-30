@@ -1,3 +1,7 @@
+"""
+Provides PyAudio microphone input setup and chunk capture helpers.
+"""
+
 from colorama import init, Fore, Style
 from scipy.signal import butter, filtfilt, resample_poly
 import pyaudio
@@ -9,6 +13,10 @@ AUDIO_FORMAT = pyaudio.paInt16
 CHANNELS = 1
 
 class AudioInput:
+    """
+    Captures and resamples microphone audio from a PyAudio input device.
+    """
+
     def __init__(
             self,
             input_device_index: int = None,
@@ -19,6 +27,9 @@ class AudioInput:
             channels: int = CHANNELS,
             resample_to_target: bool = True,
         ):
+        """
+        Initializes audio input configuration without opening the stream.
+        """
 
         self.input_device_index = input_device_index
         self.debug_mode = debug_mode
@@ -32,20 +43,22 @@ class AudioInput:
         self.resample_to_target = resample_to_target
 
     def get_supported_sample_rates(self, device_index):
-        """Test which standard sample rates are supported by the specified device."""
+        """
+        Returns standard sample rates supported by the specified device.
+        """
         standard_rates = [8000, 9600, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000]
         supported_rates = []
 
         device_info = self.audio_interface.get_device_info_by_index(device_index)
-        max_channels = device_info.get('maxInputChannels')  # Changed from maxOutputChannels
+        max_channels = device_info.get('maxInputChannels')
 
         for rate in standard_rates:
             try:
                 if self.audio_interface.is_format_supported(
                     rate,
-                    input_device=device_index,  # Changed to input_device
-                    input_channels=max_channels,  # Changed to input_channels
-                    input_format=self.audio_format,  # Changed to input_format
+                    input_device=device_index,
+                    input_channels=max_channels,
+                    input_format=self.audio_format,
                 ):
                     supported_rates.append(rate)
             except:
@@ -53,7 +66,9 @@ class AudioInput:
         return supported_rates
 
     def _get_best_sample_rate(self, actual_device_index, desired_rate):
-        """Determines the best available sample rate for the device."""
+        """
+        Determines the best available sample rate for the device.
+        """
         try:
             device_info = self.audio_interface.get_device_info_by_index(actual_device_index)
             supported_rates = self.get_supported_sample_rates(actual_device_index)
@@ -78,7 +93,9 @@ class AudioInput:
             return 44100  # Safe fallback
 
     def list_devices(self):
-        """List all available audio input devices with supported sample rates."""
+        """
+        Lists all available audio input devices with supported sample rates.
+        """
         try:
             init()  # Initialize colorama
             self.audio_interface = pyaudio.PyAudio()
@@ -95,7 +112,6 @@ class AudioInput:
                     supported_rates = self.get_supported_sample_rates(i)
                     print(f"{Fore.LIGHTGREEN_EX}Device {Style.RESET_ALL}{i}{Fore.LIGHTGREEN_EX}: {device_name}{Style.RESET_ALL}")
                     
-                    # Format each rate in cyan
                     if supported_rates:
                         rates_formatted = ", ".join([f"{Fore.CYAN}{rate}{Style.RESET_ALL}" for rate in supported_rates])
                         print(f"  {Fore.YELLOW}Supported sample rates: {rates_formatted}{Style.RESET_ALL}")
@@ -109,7 +125,9 @@ class AudioInput:
                 self.audio_interface.terminate()
 
     def setup(self):
-        """Initialize audio interface and open stream"""
+        """
+        Opens the configured audio input stream.
+        """
         try:
             self.audio_interface = pyaudio.PyAudio()
 
@@ -150,15 +168,15 @@ class AudioInput:
 
     def lowpass_filter(self, signal, cutoff_freq, sample_rate):
         """
-        Apply a low-pass Butterworth filter to prevent aliasing in the signal.
+        Applies a low-pass Butterworth filter before resampling.
 
         Args:
-            signal (np.ndarray): Input audio signal to filter
-            cutoff_freq (float): Cutoff frequency in Hz
-            sample_rate (float): Sampling rate of the input signal in Hz
+        - signal: Input audio samples to filter.
+        - cutoff_freq: Cutoff frequency in Hz.
+        - sample_rate: Source sample rate in Hz.
 
         Returns:
-            np.ndarray: Filtered audio signal
+        - Filtered audio samples.
 
         Notes:
             - Uses a 5th order Butterworth filter
@@ -179,15 +197,15 @@ class AudioInput:
 
     def resample_audio(self, pcm_data, target_sample_rate, original_sample_rate):
         """
-        Filter and resample audio data to a target sample rate.
+        Filters and resamples audio data to a target sample rate.
 
         Args:
-            pcm_data (np.ndarray): Input audio data
-            target_sample_rate (int): Desired output sample rate in Hz
-            original_sample_rate (int): Original sample rate of input in Hz
+        - pcm_data: Input audio data.
+        - target_sample_rate: Desired output sample rate in Hz.
+        - original_sample_rate: Source sample rate in Hz.
 
         Returns:
-            np.ndarray: Resampled audio data
+        - Resampled audio data.
 
         Notes:
             - Applies anti-aliasing filter before resampling
@@ -203,11 +221,15 @@ class AudioInput:
         return resampled
 
     def read_chunk(self):
-        """Read a chunk of audio data"""
+        """
+        Reads one chunk from the active audio stream.
+        """
         return self.stream.read(self.chunk_size, exception_on_overflow=False)
 
     def cleanup(self):
-        """Clean up audio resources"""
+        """
+        Releases audio resources.
+        """
         try:
             if self.stream:
                 self.stream.stop_stream()

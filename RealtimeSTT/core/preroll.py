@@ -1,4 +1,6 @@
-"""Conservative pre-recording buffer selection helpers."""
+"""
+Conservative pre-recording buffer selection helpers.
+"""
 
 import math
 from dataclasses import dataclass
@@ -205,6 +207,10 @@ def select_preroll_frames(
 
 
 def _empty_selection(sample_rate):
+    """
+    Builds an empty pre-roll selection result.
+    """
+
     return PrerollSelection(
         start_index=0,
         selected_frame_count=0,
@@ -216,6 +222,10 @@ def _empty_selection(sample_rate):
 
 
 def _full_selection(frames, sample_rate, reason, diagnostics):
+    """
+    Builds a pre-roll selection that keeps all frames.
+    """
+
     total_sample_count = _sum_samples(frames)
     return PrerollSelection(
         start_index=0,
@@ -228,6 +238,10 @@ def _full_selection(frames, sample_rate, reason, diagnostics):
 
 
 def _find_merged_speech_onset_index(frames, max_gap_samples):
+    """
+    Finds the first merged speech onset frame.
+    """
+
     current_start_index = None
     current_gap_samples = 0
     latest_run_start_index = None
@@ -245,6 +259,10 @@ def _find_merged_speech_onset_index(frames, max_gap_samples):
 
 
 def _stable_silence_before_onset(frames, onset_index, energy_threshold_rms):
+    """
+    Checks for stable silence before the speech onset.
+    """
+
     pre_speech_tail_samples = 0
     effective_onset_index = onset_index
     index = onset_index - 1
@@ -277,6 +295,10 @@ def _stable_silence_before_onset(frames, onset_index, energy_threshold_rms):
 
 
 def _is_stable_silence_frame(frame, energy_threshold_rms):
+    """
+    Checks whether a frame is stable silence.
+    """
+
     is_speech = _optional_bool(frame.is_speech)
     if is_speech is True:
         return False
@@ -297,10 +319,18 @@ def _is_stable_silence_frame(frame, energy_threshold_rms):
 
 
 def _is_speech_frame(frame):
+    """
+    Checks whether a frame contains speech.
+    """
+
     return _optional_bool(frame.is_speech) is True
 
 
 def _optional_bool(value):
+    """
+    Converts optional metadata values to booleans.
+    """
+
     if value is None:
         return None
     return bool(value)
@@ -312,6 +342,10 @@ def _energy_threshold_rms(
     noise_floor_multiplier,
     energy_margin_rms,
 ) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Computes the RMS threshold used for silence checks.
+    """
+
     rms_values = []
     for frame in frames:
         if frame.rms is None:
@@ -344,10 +378,18 @@ def _energy_threshold_rms(
 
 
 def _sample_offset_for_index(frames, index):
+    """
+    Returns the sample offset for a frame index.
+    """
+
     return _sum_samples(frames[:index])
 
 
 def _index_for_sample_offset(frames, sample_offset):
+    """
+    Returns the frame index for a sample offset.
+    """
+
     running_sample_count = 0
     for index, frame in enumerate(frames):
         running_sample_count += _frame_sample_count(frame)
@@ -357,10 +399,18 @@ def _index_for_sample_offset(frames, sample_offset):
 
 
 def _sum_samples(frames):
+    """
+    Returns the total sample count for a frame sequence.
+    """
+
     return sum(_frame_sample_count(frame) for frame in frames)
 
 
 def _speech_sample_count(frames, attr_name):
+    """
+    Returns the sample count covered by speech metadata.
+    """
+
     sample_count = 0
     for frame in frames:
         if _optional_bool(getattr(frame, attr_name, None)) is True:
@@ -369,8 +419,16 @@ def _speech_sample_count(frames, attr_name):
 
 
 def _frame_sample_count(frame):
+    """
+    Returns the sample count for one frame.
+    """
+
     return max(0, int(frame.sample_count))
 
 
 def _milliseconds_to_samples(milliseconds, sample_rate):
+    """
+    Converts milliseconds to sample count.
+    """
+
     return max(0, int(math.ceil(float(milliseconds) * float(sample_rate) / 1000.0)))

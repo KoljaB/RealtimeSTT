@@ -1,4 +1,6 @@
-"""Adapts Meta Omnilingual ASR models to the engine interface."""
+"""
+Adapts Meta Omnilingual ASR models to the engine interface.
+"""
 
 from importlib import import_module
 from pathlib import Path
@@ -69,6 +71,10 @@ _LANGUAGE_ALIASES = {
 
 
 def _dependency_error_message():
+    """
+    Returns Omnilingual dependency installation guidance.
+    """
+
     return (
         "The 'omnilingual_asr' transcription engine requires Meta's "
         "'omnilingual-asr' package, PyTorch, fairseq2, and fairseq2n. "
@@ -81,6 +87,10 @@ def _dependency_error_message():
 
 
 def _model_card_from_config(config, engine_options):
+    """
+    Resolves the Omnilingual model card from configuration.
+    """
+
     model_card = engine_options.get("model_card")
     if model_card:
         return str(model_card)
@@ -92,18 +102,34 @@ def _model_card_from_config(config, engine_options):
 
 
 def _is_ctc_model(model_card):
+    """
+    Checks whether a model card describes a CTC model.
+    """
+
     return "_CTC_" in model_card.upper()
 
 
 def _is_llm_model(model_card):
+    """
+    Checks whether a model card describes an LLM model.
+    """
+
     return "_LLM_" in model_card.upper()
 
 
 def _boolish_false(value):
+    """
+    Checks whether a value represents a false option.
+    """
+
     return value is False or str(value).lower() in {"0", "false", "no", "off"}
 
 
 def _int_option(options, name, default):
+    """
+    Reads an integer option from backend options.
+    """
+
     value = options.get(name, default)
     try:
         return int(value)
@@ -114,6 +140,10 @@ def _int_option(options, name, default):
 
 
 def _float_option(options, name, default):
+    """
+    Reads a float option from backend options.
+    """
+
     value = options.get(name, default)
     if value is None or _boolish_false(value):
         return None
@@ -126,6 +156,10 @@ def _float_option(options, name, default):
 
 
 def _dtype_from_option(torch_module, value):
+    """
+    Resolves a torch dtype from an option value.
+    """
+
     if value is None:
         return None
     if not isinstance(value, str):
@@ -147,6 +181,10 @@ def _dtype_from_option(torch_module, value):
 
 
 def _normalize_language_code(language, aliases):
+    """
+    Normalizes an Omnilingual language code.
+    """
+
     if not language:
         return None
     language = str(language)
@@ -156,10 +194,18 @@ def _normalize_language_code(language, aliases):
 
 
 def _is_model_not_known_error(exc):
+    """
+    Checks whether an exception reports an unknown model.
+    """
+
     return exc.__class__.__name__ == "ModelNotKnownError"
 
 
 def _model_not_known_error_message(model_card):
+    """
+    Builds the Omnilingual unknown-model error message.
+    """
+
     return (
         "Meta Omnilingual ASR does not know model card '%s'. RealtimeSTT "
         "keeps the requested model card instead of silently falling back to "
@@ -211,6 +257,10 @@ class OmnilingualASRBackend:
 
     @staticmethod
     def _load_pipeline_cls():
+        """
+        Loads the optional Omnilingual pipeline class.
+        """
+
         try:
             module = import_module("omnilingual_asr.models.inference.pipeline")
         except (ImportError, OSError) as exc:
@@ -219,6 +269,10 @@ class OmnilingualASRBackend:
 
     @staticmethod
     def _load_torch():
+        """
+        Loads torch for an optional backend.
+        """
+
         try:
             return import_module("torch")
         except (ImportError, OSError) as exc:
@@ -226,6 +280,10 @@ class OmnilingualASRBackend:
 
     @staticmethod
     def _load_numpy():
+        """
+        Loads NumPy for an optional backend.
+        """
+
         try:
             return import_module("numpy")
         except ModuleNotFoundError as exc:
@@ -235,6 +293,10 @@ class OmnilingualASRBackend:
             ) from exc
 
     def _resolve_device(self):
+        """
+        Resolves the torch device for Omnilingual ASR.
+        """
+
         device = self.engine_options.get("device", self.config.device)
         if not device:
             return None
@@ -248,6 +310,10 @@ class OmnilingualASRBackend:
         return device
 
     def _resolve_dtype(self, torch_module):
+        """
+        Resolves the torch dtype for Omnilingual ASR.
+        """
+
         dtype = _dtype_from_option(
             torch_module,
             self.engine_options.get("dtype", self.engine_options.get("torch_dtype")),
@@ -265,6 +331,10 @@ class OmnilingualASRBackend:
         return getattr(torch_module, "float32", None)
 
     def _ensure_pipeline(self):
+        """
+        Initializes the Omnilingual pipeline when needed.
+        """
+
         if self.pipeline is not None:
             return self.pipeline
 
@@ -293,11 +363,19 @@ class OmnilingualASRBackend:
         return self.pipeline
 
     def _numpy(self):
+        """
+        Loads NumPy for Omnilingual audio preparation.
+        """
+
         if self._numpy_module is None:
             self._numpy_module = self._load_numpy()
         return self._numpy_module
 
     def _check_duration(self, waveform, sample_rate):
+        """
+        Validates Omnilingual audio duration constraints.
+        """
+
         if self.max_audio_seconds is None:
             return
         if sample_rate <= 0:
@@ -310,6 +388,10 @@ class OmnilingualASRBackend:
             )
 
     def _audio_input(self, audio):
+        """
+        Builds the Omnilingual audio input payload.
+        """
+
         if isinstance(audio, (str, Path)):
             return str(audio)
 

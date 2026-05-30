@@ -1,4 +1,6 @@
-"""Internal recording buffer and queued-audio helpers."""
+"""
+Internal recording buffer and queued-audio helpers.
+"""
 
 import copy
 import logging

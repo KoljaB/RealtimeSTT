@@ -1,4 +1,6 @@
-"""Internal public transcription API helpers."""
+"""
+Internal public transcription API helpers.
+"""
 
 import base64
 import copy

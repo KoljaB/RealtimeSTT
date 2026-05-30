@@ -1,4 +1,6 @@
-"""Exports the Cohere Transcribe engine adapter."""
+"""
+Exports the Cohere Transcribe engine adapter.
+"""
 
 from . import hf_transformers_engines as _hf
 from .hf_transformers_engines import (

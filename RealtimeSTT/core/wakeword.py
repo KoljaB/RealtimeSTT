@@ -1,4 +1,6 @@
-"""Internal wake-word backend setup and runtime helpers."""
+"""
+Internal wake-word backend setup and runtime helpers.
+"""
 
 from importlib import import_module
 import logging
@@ -20,6 +22,10 @@ OPENWAKEWORD_BACKENDS = {
 
 
 def _normalize_wakeword_backend(wakeword_backend, wake_words):
+    """
+    Normalizes the configured wake-word backend.
+    """
+
     backend = (wakeword_backend or "").strip().lower().replace("-", "_")
     if not backend and wake_words:
         return "pvporcupine"
@@ -27,6 +33,10 @@ def _normalize_wakeword_backend(wakeword_backend, wake_words):
 
 
 def _load_porcupine_module(importer=None):
+    """
+    Loads the optional Porcupine wake-word module.
+    """
+
     if importer is None:
         importer = import_module
     try:
@@ -40,6 +50,10 @@ def _load_porcupine_module(importer=None):
 
 
 def _load_openwakeword_modules(importer=None):
+    """
+    Loads optional OpenWakeWord modules.
+    """
+
     if importer is None:
         importer = import_module
     try:

@@ -64,6 +64,10 @@ class SpeechBoundaryEvent:
         }
 
     def __repr__(self) -> str:
+        """
+        Returns a debug representation of the object.
+        """
+
         return (
             "SpeechBoundaryEvent("
             "time={:.3f}s, score={:.2f}, reason={!r}, "
@@ -267,6 +271,10 @@ class RealtimeSpeechBoundaryDetector:
         )
 
     def _empty_result(self) -> SpeechBoundaryResult:
+        """
+        Builds an empty boundary detection result.
+        """
+
         return SpeechBoundaryResult(
             events=[],
             current_energy_db=self._current_energy_db,
@@ -279,6 +287,10 @@ class RealtimeSpeechBoundaryDetector:
         )
 
     def _samples_to_float32(self, samples) -> np.ndarray:
+        """
+        Converts audio samples to normalized float32 values.
+        """
+
         if samples is None:
             return np.empty(0, dtype=np.float32)
 
@@ -300,6 +312,10 @@ class RealtimeSpeechBoundaryDetector:
         return np.clip(samples, -1.0, 1.0)
 
     def _analyze_frame(self, frame: np.ndarray) -> Dict[str, float]:
+        """
+        Computes acoustic features for one boundary frame.
+        """
+
         rms = float(np.sqrt(np.mean(np.square(frame))) + 1e-12)
         energy_db = 20.0 * math.log10(rms + 1e-12)
         zero_crossing_rate = self._zero_crossing_rate(frame)
@@ -343,12 +359,20 @@ class RealtimeSpeechBoundaryDetector:
         }
 
     def _zero_crossing_rate(self, frame: np.ndarray) -> float:
+        """
+        Computes the zero-crossing rate for one frame.
+        """
+
         if frame.size < 2:
             return 0.0
         signs = np.signbit(frame)
         return float(np.count_nonzero(signs[1:] != signs[:-1])) / float(frame.size - 1)
 
     def _voicing_score(self, frame: np.ndarray, rms: float) -> float:
+        """
+        Computes the voicing score for one frame.
+        """
+
         if frame.size < 3 or rms < self.min_rms:
             return 0.0
 
@@ -376,6 +400,10 @@ class RealtimeSpeechBoundaryDetector:
         return self._clamp(best, 0.0, 1.0)
 
     def _update_noise_floor(self, energy_db: float) -> None:
+        """
+        Updates the rolling noise floor estimate.
+        """
+
         if self._frame_index < 10:
             self._noise_floor_db = min(self._noise_floor_db, energy_db)
             return
@@ -389,6 +417,10 @@ class RealtimeSpeechBoundaryDetector:
         self._noise_floor_db = self._clamp(self._noise_floor_db, -100.0, -20.0)
 
     def _maybe_detect_boundary(self) -> Optional[SpeechBoundaryEvent]:
+        """
+        Detects a boundary when acoustic evidence is strong enough.
+        """
+
         candidate_pos = len(self._frames) - self.lookahead_frames - 1
         if candidate_pos < 1:
             return None
@@ -502,14 +534,26 @@ class RealtimeSpeechBoundaryDetector:
         )
 
     def _trim_history(self) -> None:
+        """
+        Trims old boundary detector history.
+        """
+
         max_frames = self.history_frames + self.lookahead_frames + 4
         if len(self._frames) > max_frames:
             del self._frames[:len(self._frames) - max_frames]
 
     def _score_component(self, value: float, threshold: float) -> float:
+        """
+        Scores a feature value against a threshold.
+        """
+
         if threshold <= 0:
             return 1.0
         return self._clamp(value / threshold, 0.0, 1.25)
 
     def _clamp(self, value: float, low: float, high: float) -> float:
+        """
+        Clamps a value into a numeric range.
+        """
+
         return max(low, min(high, value))

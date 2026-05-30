@@ -1,3 +1,7 @@
+"""
+Provides a websocket client for the RealtimeSTT recorder server.
+"""
+
 log_outgoing_chunks = False
 debug_mode = False
 
@@ -19,7 +23,6 @@ import time
 import sys
 import os
 
-# Import the AudioInput class
 from .audio_input import AudioInput
 
 DEFAULT_CONTROL_URL = "ws://127.0.0.1:8011"
@@ -49,8 +52,11 @@ INIT_HANDLE_BUFFER_OVERFLOW = False
 if platform.system() != 'Darwin':
     INIT_HANDLE_BUFFER_OVERFLOW = True
 
-# Define ANSI color codes for terminal output
 class bcolors:
+    """
+    Stores ANSI color escape sequences for console output.
+    """
+
     HEADER = '\033[95m'   # Magenta
     OKBLUE = '\033[94m'   # Blue
     OKCYAN = '\033[96m'   # Cyan
@@ -62,17 +68,17 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 def format_timestamp_ns(timestamp_ns: int) -> str:
-    # Split into whole seconds and the nanosecond remainder
+    """
+    Formats a nanosecond timestamp as a local time string.
+    """
+
     seconds = timestamp_ns // 1_000_000_000
     remainder_ns = timestamp_ns % 1_000_000_000
 
-    # Convert seconds part into a datetime object (local time)
     dt = datetime.fromtimestamp(seconds)
 
-    # Format the main time as HH:MM:SS
     time_str = dt.strftime("%H:%M:%S")
 
-    # For instance, if you want milliseconds, divide the remainder by 1e6 and format as 3-digit
     milliseconds = remainder_ns // 1_000_000
     formatted_timestamp = f"{time_str}.{milliseconds:03d}"
 
@@ -80,9 +86,7 @@ def format_timestamp_ns(timestamp_ns: int) -> str:
 
 class AudioToTextRecorderClient:
     """
-    A class responsible for capturing audio from the microphone, detecting
-    voice activity, and then transcribing the captured audio using the
-    `faster_whisper` model.
+    Captures audio and exchanges transcription requests with a recorder server.
     """
 
     def __init__(self,
@@ -178,8 +182,10 @@ class AudioToTextRecorderClient:
                      DEACTIVITY_SILENCE_CONFIRMATION_DURATION
                  ),
                  ):
+        """
+        Initializes recorder client configuration and connection state.
+        """
 
-        # Set instance variables from constructor parameters
         self.model = model
         self.language = language
         self.compute_type = compute_type
@@ -301,6 +307,10 @@ class AudioToTextRecorderClient:
                 print(f"Wake word activation delay set to {self.wake_word_activation_delay}")
 
     def text(self, on_transcription_finished=None):
+        """
+        Waits for a final transcription result from the server.
+        """
+
         self.realtime_text = ""
         self.submitted_realtime_text = ""
         self.final_text = ""
@@ -351,10 +361,12 @@ class AudioToTextRecorderClient:
             return ""
 
     def feed_audio(self, chunk, audio_meta_data, original_sample_rate=16000):
-        # Start with the base metadata
+        """
+        Sends one audio chunk to the recorder server.
+        """
+
         metadata = {"sampleRate": original_sample_rate}
 
-        # Merge additional metadata if provided
         if audio_meta_data:
             server_sent_to_stt_ns = time.time_ns()
             audio_meta_data["server_sent_to_stt"] = server_sent_to_stt_ns
@@ -362,37 +374,59 @@ class AudioToTextRecorderClient:
 
             metadata.update(audio_meta_data)
 
-        # Convert metadata to JSON and prepare the message
         metadata_json = json.dumps(metadata)
         metadata_length = len(metadata_json)
         message = struct.pack('<I', metadata_length) + metadata_json.encode('utf-8') + chunk
 
-        # Send the message if the connection is running
         if self.is_running:
             self.data_ws.send(message, opcode=ABNF.OPCODE_BINARY)
 
     def set_microphone(self, microphone_on=True):
         """
-        Set the microphone on or off.
+        Sets whether microphone capture is muted.
         """
         self.muted = not microphone_on
 
     def abort(self):
+        """
+        Requests the server to abort the active recording.
+        """
+
         self.call_method("abort")
 
     def wakeup(self):
+        """
+        Requests the server to bypass wake-word gating.
+        """
+
         self.call_method("wakeup")
 
     def clear_audio_queue(self):
+        """
+        Requests the server to clear queued audio.
+        """
+
         self.call_method("clear_audio_queue")
 
     def perform_final_transcription(self):
+        """
+        Requests a final transcription from the server.
+        """
+
         self.call_method("perform_final_transcription")
 
     def stop(self):
+        """
+        Requests the server to stop recording.
+        """
+
         self.call_method("stop")
 
     def connect(self):
+        """
+        Opens websocket connections to the recorder server.
+        """
+
         if not self.ensure_server_running():
             print("Cannot start STT server. Exiting.")
             return False
@@ -433,6 +467,10 @@ class AudioToTextRecorderClient:
             return False
 
     def start_server(self):
+        """
+        Starts the local recorder server process when needed.
+        """
+
         args = ['stt-server']
 
         # Map constructor parameters to server arguments
@@ -548,6 +586,10 @@ class AudioToTextRecorderClient:
         print("STT server start command issued. Please wait a moment for it to initialize.", file=sys.stderr)
 
     def is_server_running(self):
+        """
+        Checks whether the recorder control endpoint is reachable.
+        """
+
         try:
             # Attempt a proper WebSocket handshake to the control URL.
             from websocket import create_connection
@@ -560,6 +602,10 @@ class AudioToTextRecorderClient:
             return False
 
     def ensure_server_running(self):
+        """
+        Starts the recorder server when it is not already reachable.
+        """
+
         if not self.is_server_running():
             if self.debug_mode:
                 print("STT server is not running.", file=sys.stderr)
@@ -586,17 +632,25 @@ class AudioToTextRecorderClient:
         return True
     
     def list_devices(self):
-        """List all available audio input devices."""
+        """
+        Lists available audio input devices.
+        """
         audio = AudioInput(debug_mode=self.debug_mode)
         audio.list_devices()
 
     def start_recording(self):
+        """
+        Starts websocket audio capture and message processing.
+        """
+
         self.recording_thread = threading.Thread(target=self.record_and_send_audio)
         self.recording_thread.daemon = False
         self.recording_thread.start()
 
     def setup_audio(self):
-        """Initialize audio input"""
+        """
+        Initializes audio input for microphone capture.
+        """
         self.audio_input = AudioInput(
             input_device_index=self.input_device_index,
             debug_mode=self.debug_mode
@@ -604,7 +658,9 @@ class AudioToTextRecorderClient:
         return self.audio_input.setup()
 
     def record_and_send_audio(self):
-        """Record and stream audio data"""
+        """
+        Records and streams audio data to the server.
+        """
         self._recording = True
 
         try:
@@ -666,11 +722,17 @@ class AudioToTextRecorderClient:
             self._recording = False
 
     def cleanup_audio(self):
-        """Clean up audio resources"""
+        """
+        Releases client audio resources.
+        """
         if hasattr(self, 'audio_input'):
             self.audio_input.cleanup()
 
     def on_control_message(self, ws, message):
+        """
+        Handles control websocket messages from the server.
+        """
+
         try:
             data = json.loads(message)
             # Handle server response with status
@@ -694,6 +756,10 @@ class AudioToTextRecorderClient:
 
     # Handle real-time transcription and full sentence updates
     def on_data_message(self, ws, message):
+        """
+        Handles data websocket messages from the server.
+        """
+
         try:
             data = json.loads(message)
             # Handle real-time transcription updates
@@ -774,9 +840,17 @@ class AudioToTextRecorderClient:
             print(f"Error processing data message: {e}")
 
     def on_error(self, ws, error):
+        """
+        Logs websocket errors.
+        """
+
         print(f"WebSocket error: {error}")
 
     def on_close(self, ws, close_status_code, close_msg):
+        """
+        Handles websocket close notifications.
+        """
+
         if self.debug_mode:
             if ws == self.data_ws:
                 print(f"Data WebSocket connection closed: {close_status_code} - {close_msg}")
@@ -786,15 +860,27 @@ class AudioToTextRecorderClient:
         self.is_running = False
 
     def on_control_open(self, ws):
+        """
+        Marks the control websocket as connected.
+        """
+
         if self.debug_mode:
             print("Control WebSocket connection opened.")
         self.connection_established.set()
 
     def on_data_open(self, ws):
+        """
+        Marks the data websocket as connected.
+        """
+
         if self.debug_mode:
             print("Data WebSocket connection opened.")
 
     def set_parameter(self, parameter, value):
+        """
+        Sends a recorder parameter update to the server.
+        """
+
         command = {
             "command": "set_parameter",
             "parameter": parameter,
@@ -803,11 +889,13 @@ class AudioToTextRecorderClient:
         self.control_ws.send(json.dumps(command))
 
     def get_parameter(self, parameter):
-        # Generate a unique request_id
+        """
+        Requests a recorder parameter value from the server.
+        """
+
         request_id = self.request_counter
         self.request_counter += 1
 
-        # Prepare the command with the request_id
         command = {
             "command": "get_parameter",
             "parameter": parameter,
@@ -834,6 +922,10 @@ class AudioToTextRecorderClient:
             return None
 
     def call_method(self, method, args=None, kwargs=None):
+        """
+        Calls a recorder method through the control websocket.
+        """
+
         command = {
             "command": "call_method",
             "method": method,
@@ -843,7 +935,9 @@ class AudioToTextRecorderClient:
         self.control_ws.send(json.dumps(command))
 
     def shutdown(self):
-        """Shutdown all resources"""
+        """
+        Shuts down all client resources.
+        """
         self.is_running = False
         if self.control_ws:
             self.control_ws.close()

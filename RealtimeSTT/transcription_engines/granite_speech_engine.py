@@ -1,4 +1,6 @@
-"""Exports the Granite Speech engine adapter."""
+"""
+Exports the Granite Speech engine adapter.
+"""
 
 from . import hf_transformers_engines as _hf
 from .hf_transformers_engines import (

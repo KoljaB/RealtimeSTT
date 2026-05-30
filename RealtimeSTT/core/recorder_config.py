@@ -1,4 +1,6 @@
-"""Recorder constructor argument helpers."""
+"""
+Recorder constructor argument helpers.
+"""
 
 
 def build_recorder_init_args(

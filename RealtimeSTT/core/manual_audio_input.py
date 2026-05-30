@@ -1,4 +1,6 @@
-"""Internal manual audio input helpers."""
+"""
+Internal manual audio input helpers.
+"""
 
 from scipy.signal import resample
 import numpy as np

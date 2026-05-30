@@ -1,4 +1,6 @@
-"""Internal realtime callback publication helpers."""
+"""
+Internal realtime callback publication helpers.
+"""
 
 from .state import run_callback
 

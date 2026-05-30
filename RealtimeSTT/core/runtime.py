@@ -1,4 +1,6 @@
-"""Internal runtime helpers for recorder worker plumbing."""
+"""
+Internal runtime helpers for recorder worker plumbing.
+"""
 
 import logging
 import platform

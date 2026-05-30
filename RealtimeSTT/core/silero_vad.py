@@ -154,6 +154,10 @@ def _create_auto_vad(
     chunk_samples,
     logger,
 ):
+    """
+    Creates the best available Silero VAD backend.
+    """
+
     errors = []
     candidates = (
         (
@@ -205,6 +209,10 @@ def _create_raw_onnx_vad(
     sample_rate,
     chunk_samples,
 ):
+    """
+    Creates the raw ONNX Runtime Silero VAD backend.
+    """
+
     if int(sample_rate) != 16000 or int(chunk_samples) != 512:
         raise SileroVadError(
             "%s requires 16 kHz audio and 512-sample chunks; got %s Hz and %s "
@@ -227,6 +235,10 @@ def _create_raw_onnx_vad(
 
 
 def _create_official_onnx_vad(onnx_model_path=None):
+    """
+    Creates the official Silero ONNX backend.
+    """
+
     if onnx_model_path:
         try:
             utils_vad = import_module("silero_vad.utils_vad")
@@ -250,6 +262,10 @@ def _create_official_onnx_vad(onnx_model_path=None):
 
 
 def _create_legacy_vad(onnx=False):
+    """
+    Creates the legacy torch hub Silero backend.
+    """
+
     return SileroCallableVad(
         _load_torch_hub_model(onnx=onnx),
         SILERO_BACKEND_LEGACY,
@@ -257,6 +273,10 @@ def _create_legacy_vad(onnx=False):
 
 
 def _create_pytorch_vad(device):
+    """
+    Creates a PyTorch Silero VAD backend.
+    """
+
     if device == "cuda":
         torch = import_module("torch")
         if not torch.cuda.is_available():
@@ -276,6 +296,10 @@ def _create_pytorch_vad(device):
 
 
 def _load_silero_package_model(onnx=False):
+    """
+    Loads a Silero model from the installed package.
+    """
+
     module = import_module("silero_vad")
     loader = getattr(module, "load_silero_vad", None)
     if loader is None:
@@ -287,6 +311,10 @@ def _load_silero_package_model(onnx=False):
 
 
 def _load_torch_hub_model(onnx=False):
+    """
+    Loads a Silero model through torch hub.
+    """
+
     torch = import_module("torch")
     loaded = torch.hub.load(
         repo_or_dir="snakers4/silero-vad",
@@ -298,6 +326,10 @@ def _load_torch_hub_model(onnx=False):
 
 
 def _first_model(loaded):
+    """
+    Returns the first model object from a loader result.
+    """
+
     if isinstance(loaded, tuple):
         return loaded[0]
     return loaded
@@ -326,6 +358,10 @@ def find_silero_model_file(filename):
 
 
 def _silero_package_roots():
+    """
+    Returns package roots that may contain Silero assets.
+    """
+
     try:
         spec = find_spec("silero_vad")
     except Exception:
@@ -341,6 +377,10 @@ def _silero_package_roots():
 
 
 def _find_file_under(root, filename):
+    """
+    Finds a named file below a root directory.
+    """
+
     if not root or not os.path.isdir(root):
         return None
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -481,6 +521,10 @@ class RawSileroOnnxVad:
 
 
 def _select_audio_input_name(inputs):
+    """
+    Selects the ONNX audio input name.
+    """
+
     names = [item.name for item in inputs]
     if "input" in names:
         return "input"
@@ -490,6 +534,10 @@ def _select_audio_input_name(inputs):
 
 
 def _select_sample_rate_input_name(inputs):
+    """
+    Selects the ONNX sample-rate input name.
+    """
+
     for item in inputs:
         if item.name in ("sr", "sample_rate"):
             return item.name
@@ -497,6 +545,10 @@ def _select_sample_rate_input_name(inputs):
 
 
 def _state_shape(input_info):
+    """
+    Returns an ONNX recurrent state shape.
+    """
+
     shape = []
     fallback = (2, 1, 128)
     lower_name = input_info.name.lower()
@@ -515,6 +567,10 @@ def _state_shape(input_info):
 
 
 def _as_float32_audio(audio):
+    """
+    Converts audio data to float32 samples.
+    """
+
     if hasattr(audio, "detach"):
         audio = audio.detach().cpu().numpy()
     array = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -522,6 +578,10 @@ def _as_float32_audio(audio):
 
 
 def _result_to_float(result):
+    """
+    Converts model output to a Python float.
+    """
+
     if isinstance(result, (float, int)):
         return float(result)
     if hasattr(result, "detach"):

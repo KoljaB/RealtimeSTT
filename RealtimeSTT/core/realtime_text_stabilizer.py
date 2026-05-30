@@ -195,6 +195,10 @@ class RealtimeTextStabilizationSnapshot:
 
 @dataclass(frozen=True)
 class _Projection:
+    """
+    Stores the projected relationship between normalized and raw text.
+    """
+
     raw: str
     comparison_text: str
     raw_starts: Tuple[int, ...]
@@ -203,6 +207,10 @@ class _Projection:
 
 @dataclass(frozen=True)
 class _EvidencePoint:
+    """
+    Stores one accepted evidence observation for a text offset.
+    """
+
     sequence: int
     completed_at_monotonic: float
     audio_start_sample: int
@@ -211,6 +219,10 @@ class _EvidencePoint:
 
 @dataclass(frozen=True)
 class _ObservationRecord:
+    """
+    Stores one realtime text observation and its projection metadata.
+    """
+
     observation: RealtimeTextObservation
     projection: _Projection
 
@@ -403,6 +415,10 @@ class RealtimeTextStabilizer:
         self,
         record: _ObservationRecord,
     ) -> RealtimeTextStabilizationEvent:
+        """
+        Builds an event for an accepted realtime observation.
+        """
+
         projection = record.projection
         observation = record.observation
         old_public_frontier = len(self._stable_comparison_text)
@@ -520,6 +536,10 @@ class RealtimeTextStabilizer:
         is_outlier: bool = False,
         stable_prefix_conflict: bool = False,
     ) -> RealtimeTextStabilizationEvent:
+        """
+        Builds an event for an ignored realtime observation.
+        """
+
         stable_raw_end_offset = (
             self._stable_raw_end_offset(projection) if projection is not None else None
         )
@@ -560,6 +580,10 @@ class RealtimeTextStabilizer:
         projection: _Projection,
         observation: RealtimeTextObservation,
     ) -> int:
+        """
+        Computes the confirmed stable text frontier.
+        """
+
         comparison_text = projection.comparison_text
         frontier = 0
         while frontier < len(comparison_text):
@@ -590,6 +614,10 @@ class RealtimeTextStabilizer:
         char: str,
         now: float,
     ) -> bool:
+        """
+        Checks whether a character has enough stable evidence.
+        """
+
         evidence = self._evidence_for_offset(offset, char, now)
         if not self._stable_comparison_text:
             return _evidence_passes(
@@ -610,6 +638,10 @@ class RealtimeTextStabilizer:
         comparison_text: str,
         now: float,
     ) -> bool:
+        """
+        Checks whether a space has enough stable evidence.
+        """
+
         evidence = self._evidence_for_offset(offset, " ", now)
         if not _evidence_passes(
             evidence,
@@ -639,6 +671,10 @@ class RealtimeTextStabilizer:
         char: str,
         now: float,
     ) -> RealtimeTextEvidenceDiagnostics:
+        """
+        Returns stability evidence for one text offset.
+        """
+
         points = self._evidence.get((offset, char), [])
         window = self.config.max_char_evidence_window_seconds
         if window > 0:
@@ -666,6 +702,10 @@ class RealtimeTextStabilizer:
         )
 
     def _add_evidence(self, record: _ObservationRecord) -> None:
+        """
+        Records stability evidence from an accepted observation.
+        """
+
         observation = record.observation
         for offset, char in enumerate(record.projection.comparison_text):
             key = (offset, char)
@@ -694,6 +734,10 @@ class RealtimeTextStabilizer:
         old_frontier: int,
         new_frontier: int,
     ) -> str:
+        """
+        Builds the public delta for newly stable text.
+        """
+
         parts: List[str] = []
         for offset in range(old_frontier, new_frontier):
             char = projection.comparison_text[offset]
@@ -710,12 +754,20 @@ class RealtimeTextStabilizer:
         return "".join(parts).rstrip()
 
     def _raw_suffix_after_stable(self, projection: _Projection) -> str:
+        """
+        Returns the raw suffix after the stable frontier.
+        """
+
         return self._raw_suffix_after_comparison(
             projection,
             self._stable_comparison_text,
         )
 
     def _public_unstable_preview(self, projection: _Projection) -> str:
+        """
+        Returns the public unstable preview text.
+        """
+
         if not self._stable_comparison_text:
             return projection.raw
         if projection.comparison_text.startswith(self._stable_comparison_text):
@@ -730,6 +782,10 @@ class RealtimeTextStabilizer:
         return " ... " + suffix
 
     def _raw_suffix_after_shared_word_prefix(self, projection: _Projection) -> str:
+        """
+        Returns raw text after the shared word prefix.
+        """
+
         shared_offset = _shared_word_prefix_length(
             self._stable_comparison_text,
             projection.comparison_text,
@@ -746,6 +802,10 @@ class RealtimeTextStabilizer:
         projection: _Projection,
         comparison_prefix: str,
     ) -> str:
+        """
+        Returns raw text after a comparison prefix.
+        """
+
         if not projection.comparison_text.startswith(comparison_prefix):
             return self._unstable_text
         if not comparison_prefix:
@@ -759,6 +819,10 @@ class RealtimeTextStabilizer:
         self,
         projection: Optional[_Projection],
     ) -> Optional[int]:
+        """
+        Returns the raw end offset for stable text.
+        """
+
         if projection is None:
             return None
         if not projection.comparison_text.startswith(self._stable_comparison_text):
@@ -770,6 +834,10 @@ class RealtimeTextStabilizer:
         return projection.raw_ends[len(self._stable_comparison_text) - 1]
 
     def _outlier_decision(self, record: _ObservationRecord) -> str:
+        """
+        Determines whether an observation is an outlier.
+        """
+
         comparison_text = record.projection.comparison_text
         if not comparison_text:
             return "accept"
@@ -810,12 +878,20 @@ class RealtimeTextStabilizer:
         return "outlier"
 
     def _has_stable_prefix_conflict(self, projection: _Projection) -> bool:
+        """
+        Checks whether a projection conflicts with stable text.
+        """
+
         return bool(
             self._stable_comparison_text
             and not projection.comparison_text.startswith(self._stable_comparison_text)
         )
 
     def _remember_accepted(self, record: _ObservationRecord) -> None:
+        """
+        Stores an accepted observation in recent history.
+        """
+
         self._recent_accepted.append(record)
         max_recent = max(1, int(self.config.max_recent_observations))
         while len(self._recent_accepted) > max_recent:
@@ -823,12 +899,20 @@ class RealtimeTextStabilizer:
             self._dropped_observation_count += 1
 
     def _remember_ignored(self, record: _ObservationRecord) -> None:
+        """
+        Stores an ignored observation in recent history.
+        """
+
         self._recent_ignored.append(record)
         max_recent = max(1, int(self.config.max_recent_observations))
         while len(self._recent_ignored) > max_recent:
             self._recent_ignored.pop(0)
 
     def _clear_unstable_branch(self) -> None:
+        """
+        Clears unstable branch tracking state.
+        """
+
         self._evidence = {}
         self._recent_accepted = []
         self._consensus_text = ""
@@ -837,12 +921,20 @@ class RealtimeTextStabilizer:
         self._display_text = self._stable_text
 
     def _public_consensus_aligned(self) -> bool:
+        """
+        Returns the public stable text aligned to consensus.
+        """
+
         return self._consensus_comparison_text.startswith(
             self._stable_comparison_text
         )
 
 
 def _project_text(text: str) -> _Projection:
+    """
+    Projects raw text into comparable normalized text.
+    """
+
     raw = text or ""
     comparison_chars: List[str] = []
     raw_starts: List[int] = []
@@ -892,10 +984,18 @@ def _project_text(text: str) -> _Projection:
 
 
 def _is_punctuation(char: str) -> bool:
+    """
+    Checks whether a character is punctuation.
+    """
+
     return unicodedata.category(char).startswith("P")
 
 
 def _similarity(left: str, right: str) -> float:
+    """
+    Returns the sequence similarity between two strings.
+    """
+
     if not left and not right:
         return 1.0
     if not left or not right:
@@ -904,6 +1004,10 @@ def _similarity(left: str, right: str) -> float:
 
 
 def _shared_word_prefix_length(left: str, right: str) -> int:
+    """
+    Returns the shared word-prefix length for two strings.
+    """
+
     limit = min(len(left), len(right))
     common = 0
     while common < limit and left[common] == right[common]:
@@ -923,6 +1027,10 @@ def _evidence_passes(
     min_confirmations: int,
     min_span_seconds: float,
 ) -> bool:
+    """
+    Checks whether stability evidence meets thresholds.
+    """
+
     if evidence.confirmation_count < min_confirmations:
         return False
     if evidence.first_completed_at_monotonic is None:
@@ -938,6 +1046,10 @@ def _evidence_passes(
 def _timing_from_observation(
     observation: RealtimeTextObservation,
 ) -> RealtimeTextObservationTiming:
+    """
+    Extracts timing values from a realtime observation.
+    """
+
     return RealtimeTextObservationTiming(
         created_at_monotonic=observation.created_at_monotonic,
         completed_at_monotonic=observation.completed_at_monotonic,

@@ -1,4 +1,6 @@
-"""Adapts sherpa-onnx offline recognizers to the engine interface."""
+"""
+Adapts sherpa-onnx offline recognizers to the engine interface.
+"""
 
 from dataclasses import dataclass
 from importlib import import_module
@@ -44,6 +46,10 @@ class SherpaOnnxDecodedOutput:
 
 
 def _load_offline_recognizer_class():
+    """
+    Loads the optional sherpa-onnx recognizer class.
+    """
+
     try:
         sherpa_onnx = import_module("sherpa_onnx")
     except ModuleNotFoundError as exc:
@@ -62,6 +68,10 @@ def _load_offline_recognizer_class():
 
 
 def _bool_option(options, name, default=False):
+    """
+    Reads a boolean option from backend options.
+    """
+
     value = options.get(name, default)
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
@@ -69,6 +79,10 @@ def _bool_option(options, name, default=False):
 
 
 def _int_option(options, name, default):
+    """
+    Reads an integer option from backend options.
+    """
+
     try:
         return int(options.get(name, default))
     except (TypeError, ValueError):
@@ -78,6 +92,10 @@ def _int_option(options, name, default):
 
 
 def _float_option(options, name, default):
+    """
+    Reads a float option from backend options.
+    """
+
     try:
         return float(options.get(name, default))
     except (TypeError, ValueError):
@@ -87,6 +105,10 @@ def _float_option(options, name, default):
 
 
 def _maybe_join(base_dir, value):
+    """
+    Resolves a file path relative to a base directory when needed.
+    """
+
     path = Path(str(value)).expanduser()
     if path.is_absolute():
         return path
@@ -119,6 +141,10 @@ class SherpaOnnxOfflineBackend:
         self.recognizer = self._create_recognizer(recognizer_cls)
 
     def _resolve_model_dir(self):
+        """
+        Resolves the sherpa-onnx model directory.
+        """
+
         model_value = (
             self.engine_options.get("model_dir")
             or self.config.model
@@ -142,6 +168,10 @@ class SherpaOnnxOfflineBackend:
         return candidates[0]
 
     def _file(self, option_name, default_name):
+        """
+        Resolves a sherpa-onnx model file path.
+        """
+
         value = self.file_options.get(option_name, self.engine_options.get(option_name))
         path = _maybe_join(self.model_dir, value or default_name)
         if path.is_file():
@@ -158,6 +188,10 @@ class SherpaOnnxOfflineBackend:
         )
 
     def _common_recognizer_kwargs(self):
+        """
+        Builds shared sherpa-onnx recognizer keyword arguments.
+        """
+
         model_options = self.engine_options.get("model", {})
         if not isinstance(model_options, dict):
             model_options = {}
@@ -183,6 +217,10 @@ class SherpaOnnxOfflineBackend:
         }
 
     def _create_recognizer(self, recognizer_cls):
+        """
+        Creates a recognizer instance from resolved options.
+        """
+
         raise NotImplementedError
 
     def transcribe(self, audio, **params):
@@ -215,6 +253,10 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
     download_url = PARAKEET_DOWNLOAD_URL
 
     def _create_recognizer(self, recognizer_cls):
+        """
+        Creates a recognizer instance from resolved options.
+        """
+
         kwargs = self._common_recognizer_kwargs()
         kwargs.update(
             {
@@ -266,6 +308,10 @@ class SherpaOnnxMoonshineBackend(SherpaOnnxOfflineBackend):
     download_url = MOONSHINE_DOWNLOAD_URL
 
     def _create_recognizer(self, recognizer_cls):
+        """
+        Creates a recognizer instance from resolved options.
+        """
+
         kwargs = self._common_recognizer_kwargs()
         kwargs.update(
             {

@@ -1,4 +1,6 @@
-"""Internal recorder-level voice activity and pre-roll helpers."""
+"""
+Internal recorder-level voice activity and pre-roll helpers.
+"""
 
 import logging
 import threading
@@ -19,6 +21,10 @@ INT16_MAX_ABS_VALUE = 32768.0
 
 
 class _BColors:
+    """
+    Stores ANSI color escape sequences for console output.
+    """
+
     OKGREEN = '\033[92m'
     WARNING = '\033[93m'
     ENDC = '\033[0m'

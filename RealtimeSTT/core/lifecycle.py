@@ -1,4 +1,6 @@
-"""Internal recorder lifecycle API helpers."""
+"""
+Internal recorder lifecycle API helpers.
+"""
 
 import copy
 import logging

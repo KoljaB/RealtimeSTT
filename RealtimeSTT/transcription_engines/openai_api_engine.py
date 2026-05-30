@@ -1,4 +1,6 @@
-"""Defines the placeholder OpenAI API transcription engine."""
+"""
+Defines the placeholder OpenAI API transcription engine.
+"""
 
 from .base import BaseTranscriptionEngine, TranscriptionEngineError
 

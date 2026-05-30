@@ -1,4 +1,6 @@
-"""Thread-safe parent-side wrappers for multiprocessing pipes."""
+"""
+Thread-safe parent-side wrappers for multiprocessing pipes.
+"""
 
 import sys
 import multiprocessing as mp

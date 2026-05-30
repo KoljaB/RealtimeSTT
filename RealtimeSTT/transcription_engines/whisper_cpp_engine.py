@@ -1,4 +1,6 @@
-"""Adapts pywhispercpp models to the transcription engine interface."""
+"""
+Adapts pywhispercpp models to the transcription engine interface.
+"""
 
 from importlib import import_module
 
@@ -38,7 +40,9 @@ class PyWhisperCppBackend:
 
     @staticmethod
     def _load_model_class():
-        """Loads the optional pywhispercpp model class."""
+        """
+        Loads the optional pywhispercpp model class.
+        """
         try:
             module = import_module("pywhispercpp.model")
         except ModuleNotFoundError as exc:

@@ -1,4 +1,6 @@
-"""Provides small helpers for normalizing model inputs and outputs."""
+"""
+Provides small helpers for normalizing model inputs and outputs.
+"""
 
 from collections.abc import Mapping
 

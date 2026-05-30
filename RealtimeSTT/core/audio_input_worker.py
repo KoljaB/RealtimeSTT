@@ -1,4 +1,6 @@
-"""Audio input worker for microphone capture."""
+"""
+Audio input worker for microphone capture.
+"""
 
 import logging
 import signal as system_signal

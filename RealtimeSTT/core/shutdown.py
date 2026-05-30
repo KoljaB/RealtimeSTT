@@ -1,4 +1,6 @@
-"""Internal recorder shutdown helpers."""
+"""
+Internal recorder shutdown helpers.
+"""
 
 import gc
 import logging

@@ -1,4 +1,6 @@
-"""Adapts Kroko ONNX recognizers to sync and streaming transcription."""
+"""
+Adapts Kroko ONNX recognizers to sync and streaming transcription.
+"""
 
 import os
 import re
@@ -47,6 +49,10 @@ class KrokoOnnxDecodedOutput:
 
 
 def _load_numpy():
+    """
+    Loads NumPy for an optional backend.
+    """
+
     try:
         return import_module("numpy")
     except ModuleNotFoundError as exc:
@@ -56,6 +62,10 @@ def _load_numpy():
 
 
 def _load_online_recognizer_class():
+    """
+    Loads the optional Kroko online recognizer class.
+    """
+
     try:
         kroko_onnx = import_module("kroko_onnx")
     except ModuleNotFoundError as exc:
@@ -77,6 +87,10 @@ def _load_online_recognizer_class():
 
 
 def _bool_option(options, name, default=False):
+    """
+    Reads a boolean option from backend options.
+    """
+
     value = options.get(name, default)
     if isinstance(value, str):
         return value.strip().lower() in ("1", "true", "yes", "on")
@@ -84,6 +98,10 @@ def _bool_option(options, name, default=False):
 
 
 def _output_suppression_enabled(options):
+    """
+    Returns whether Kroko native output should be suppressed.
+    """
+
     return _bool_option(
         options,
         "suppress_native_output",
@@ -96,6 +114,10 @@ def _output_suppression_enabled(options):
 
 
 def _enable_kroko_license_quiet(enabled):
+    """
+    Configures Kroko license output suppression.
+    """
+
     if not enabled:
         return
 
@@ -119,6 +141,10 @@ def _enable_kroko_license_quiet(enabled):
 
 @contextmanager
 def _suppress_native_output(enabled):
+    """
+    Temporarily suppresses native stdout and stderr output.
+    """
+
     if not enabled:
         yield
         return
@@ -167,6 +193,10 @@ def _suppress_native_output(enabled):
 
 
 def _int_option(options, name, default):
+    """
+    Reads an integer option from backend options.
+    """
+
     try:
         return int(options.get(name, default))
     except (TypeError, ValueError):
@@ -174,6 +204,10 @@ def _int_option(options, name, default):
 
 
 def _float_option(options, name, default):
+    """
+    Reads a float option from backend options.
+    """
+
     try:
         return float(options.get(name, default))
     except (TypeError, ValueError):
@@ -181,6 +215,10 @@ def _float_option(options, name, default):
 
 
 def _provider_from_config(config, options):
+    """
+    Selects the Kroko ONNX execution provider.
+    """
+
     explicit = options.get("provider")
     if explicit:
         return str(explicit)
@@ -189,6 +227,10 @@ def _provider_from_config(config, options):
 
 
 def _maybe_under_download_root(download_root, value):
+    """
+    Resolves a path under the download root when needed.
+    """
+
     path = Path(str(value)).expanduser()
     if path.is_absolute() or not download_root:
         return path
@@ -196,14 +238,26 @@ def _maybe_under_download_root(download_root, value):
 
 
 def _default_cache_path(filename):
+    """
+    Returns the default cache path for a model file.
+    """
+
     return KROKO_ONNX_DEFAULT_CACHE_DIR / filename
 
 
 def _looks_like_kroko_data_file(filename):
+    """
+    Checks whether a filename looks like Kroko model data.
+    """
+
     return filename.startswith("Kroko-") and filename.endswith(".data")
 
 
 def _download_url(repo_id, filename, revision="main"):
+    """
+    Builds a Hugging Face download URL.
+    """
+
     repo = quote(str(repo_id).strip("/"), safe="/")
     rev = quote(str(revision or "main"), safe="")
     name = quote(filename, safe="")
@@ -211,6 +265,10 @@ def _download_url(repo_id, filename, revision="main"):
 
 
 def _download_file(url, target_path, token=""):
+    """
+    Downloads a model file to the target path.
+    """
+
     target_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target_path.with_name("%s.part" % target_path.name)
     headers = {}
@@ -234,6 +292,10 @@ def _download_file(url, target_path, token=""):
 
 
 def _first_existing_data_file(model_dir):
+    """
+    Finds the first existing Kroko data file.
+    """
+
     try:
         data_files = sorted(model_dir.glob("*.data"))
     except OSError:
@@ -242,11 +304,19 @@ def _first_existing_data_file(model_dir):
 
 
 def _language_from_model_path(path):
+    """
+    Infers the language code from a Kroko model path.
+    """
+
     match = re.search(r"(?:^|[-_/\\])Kroko-([A-Za-z]{2})-", str(path))
     return match.group(1).lower() if match else ""
 
 
 def _chunk_seconds_from_model_path(path):
+    """
+    Infers chunk duration from a Kroko model path.
+    """
+
     match = re.search(r"-(\d+)-[LMS](?:[-_/\\]|$)", str(path))
     if not match:
         return None
@@ -254,6 +324,10 @@ def _chunk_seconds_from_model_path(path):
 
 
 def _default_tail_padding_seconds(path):
+    """
+    Returns the default Kroko tail-padding duration.
+    """
+
     chunk_seconds = _chunk_seconds_from_model_path(path)
     if chunk_seconds is None:
         return KROKO_ONNX_FALLBACK_TAIL_PADDING_SECONDS
@@ -264,6 +338,10 @@ def _default_tail_padding_seconds(path):
 
 
 def _tail_padding_option(options, path):
+    """
+    Resolves the Kroko tail-padding option.
+    """
+
     value = options.get("tail_padding_seconds", options.get("finalization_padding_seconds"))
     if value is None:
         return _default_tail_padding_seconds(path)
@@ -298,6 +376,10 @@ class KrokoOnnxBackend:
         self.recognizer = self._create_recognizer(recognizer_cls)
 
     def _resolve_model_path(self):
+        """
+        Resolves the Kroko model path.
+        """
+
         model_path_value = self.engine_options.get("model_path") or self.engine_options.get("model_file")
         model_dir_value = self.engine_options.get("model_dir")
         filename = None
@@ -350,6 +432,10 @@ class KrokoOnnxBackend:
         return path
 
     def _maybe_download_model(self, path, filename):
+        """
+        Downloads a Kroko model file when needed.
+        """
+
         if filename is None:
             return path
 
@@ -413,6 +499,10 @@ class KrokoOnnxBackend:
         return path
 
     def _recognizer_kwargs(self):
+        """
+        Builds Kroko recognizer keyword arguments.
+        """
+
         options = self.engine_options
         kwargs = {
             "model_path": str(self.model_path),
@@ -460,6 +550,10 @@ class KrokoOnnxBackend:
         return kwargs
 
     def _create_recognizer(self, recognizer_cls):
+        """
+        Creates a recognizer instance from resolved options.
+        """
+
         try:
             with _suppress_native_output(self.suppress_native_output):
                 return recognizer_cls.from_transducer(**self._recognizer_kwargs())
@@ -470,6 +564,10 @@ class KrokoOnnxBackend:
             ) from exc
 
     def _as_float32_audio(self, audio):
+        """
+        Converts audio data to float32 samples.
+        """
+
         if hasattr(audio, "values"):
             audio = audio.values
         array = self.np.asarray(audio, dtype=self.np.float32)
@@ -478,6 +576,10 @@ class KrokoOnnxBackend:
         return array
 
     def _accept_waveform(self, stream, sample_rate, audio):
+        """
+        Feeds audio into a recognizer stream.
+        """
+
         try:
             with _suppress_native_output(self.suppress_native_output):
                 stream.accept_waveform(sample_rate, audio)
@@ -486,6 +588,10 @@ class KrokoOnnxBackend:
                 stream.accept_waveform(sample_rate=sample_rate, waveform=audio)
 
     def _decode_ready_stream(self, stream):
+        """
+        Decodes a stream while the recognizer has ready frames.
+        """
+
         if not hasattr(self.recognizer, "is_ready"):
             if hasattr(self.recognizer, "decode_stream"):
                 with _suppress_native_output(self.suppress_native_output):
@@ -514,6 +620,10 @@ class KrokoOnnxBackend:
                 )
 
     def _result_text(self, stream):
+        """
+        Returns stripped text from a recognizer stream result.
+        """
+
         if hasattr(self.recognizer, "get_result"):
             with _suppress_native_output(self.suppress_native_output):
                 result = self.recognizer.get_result(stream)

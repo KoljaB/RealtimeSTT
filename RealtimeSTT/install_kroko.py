@@ -1,4 +1,6 @@
-"""Build and install Kroko-ONNX for the active RealtimeSTT environment."""
+"""
+Build and install Kroko-ONNX for the active RealtimeSTT environment.
+"""
 
 from __future__ import print_function
 
@@ -21,10 +23,18 @@ KROKO_LICENSE_QUIET_ENV = "KROKO_ONNX_SUPPRESS_LICENSE_OUTPUT"
 
 
 class KrokoInstallError(RuntimeError):
+    """
+    Reports Kroko installation failures.
+    """
+
     pass
 
 
 def parse_args(argv=None):
+    """
+    Parses command-line arguments for Kroko installation.
+    """
+
     parser = argparse.ArgumentParser(
         prog="stt-install-kroko",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -87,12 +97,20 @@ def parse_args(argv=None):
 
 
 def quote_cmd(cmd):
+    """
+    Formats a command for readable logging.
+    """
+
     if os.name == "nt":
         return subprocess.list2cmdline([str(part) for part in cmd])
     return " ".join(shlex.quote(str(part)) for part in cmd)
 
 
 def run(cmd, cwd=None, env=None):
+    """
+    Runs a subprocess command and reports failures.
+    """
+
     print("+ " + quote_cmd(cmd))
     try:
         subprocess.check_call(
@@ -110,11 +128,19 @@ def run(cmd, cwd=None, env=None):
 
 
 def ensure_program(name, message):
+    """
+    Verifies that a required program is available.
+    """
+
     if shutil.which(name) is None:
         raise KrokoInstallError(message)
 
 
 def default_work_dir():
+    """
+    Returns the default Kroko builder work directory.
+    """
+
     if os.name == "nt":
         root = os.environ.get("LOCALAPPDATA")
         if root:
@@ -129,6 +155,10 @@ def default_work_dir():
 
 
 def resolve_work_dir(args):
+    """
+    Resolves the Kroko builder work directory.
+    """
+
     if args.work_dir is not None:
         return args.work_dir.expanduser().resolve()
 
@@ -151,6 +181,10 @@ def resolve_work_dir(args):
 
 
 def ensure_work_dir_writable(work_dir):
+    """
+    Verifies that the builder work directory is writable.
+    """
+
     try:
         work_dir.mkdir(parents=True, exist_ok=True)
         probe = work_dir / ".realtimestt-kroko-write-test"
@@ -167,6 +201,10 @@ def ensure_work_dir_writable(work_dir):
 
 
 def preflight_build(args):
+    """
+    Checks host prerequisites before building Kroko.
+    """
+
     ensure_program("git", "Git is required to download Kroko-ONNX.")
     work_dir = resolve_work_dir(args)
     ensure_work_dir_writable(work_dir)
@@ -180,12 +218,20 @@ def preflight_build(args):
 
 
 def remove_tree_inside(path, root):
+    """
+    Removes a directory tree after validating its parent root.
+    """
+
     path = path.resolve()
     root = root.resolve()
     if path == root or root not in path.parents:
         raise KrokoInstallError("Refusing to remove path outside builder cache: {0}".format(path))
 
     def clear_readonly(func, failed_path, _exc_info):
+        """
+        Clears read-only file attributes during tree removal.
+        """
+
         os.chmod(failed_path, stat.S_IWRITE)
         func(failed_path)
 
@@ -193,6 +239,10 @@ def remove_tree_inside(path, root):
 
 
 def prepare_checkout(args, work_dir=None):
+    """
+    Prepares the Kroko source checkout.
+    """
+
     work_dir = work_dir or resolve_work_dir(args)
     repo_dir = work_dir / "kroko-onnx"
     ensure_work_dir_writable(work_dir)
@@ -223,16 +273,28 @@ def prepare_checkout(args, work_dir=None):
 
 
 def read_text(path):
+    """
+    Reads a UTF-8 text file.
+    """
+
     with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
         return handle.read()
 
 
 def write_text(path, text):
+    """
+    Writes a UTF-8 text file.
+    """
+
     with path.open("w", encoding="utf-8", newline="") as handle:
         handle.write(text)
 
 
 def normalize_lf(path):
+    """
+    Normalizes a text file to LF line endings.
+    """
+
     data = path.read_bytes()
     normalized = data.replace(b"\r\n", b"\n")
     if normalized != data:
@@ -241,6 +303,10 @@ def normalize_lf(path):
 
 
 def sanitize_batch_ascii(path):
+    """
+    Replaces non-ASCII batch file characters with safe text.
+    """
+
     text = read_text(path)
     sanitized = "".join(char if ord(char) < 128 else "-" for char in text)
     if sanitized != text:
@@ -250,6 +316,10 @@ def sanitize_batch_ascii(path):
 
 
 def patch_windows_bat(repo_dir):
+    """
+    Patches the Kroko Windows build batch file.
+    """
+
     path = repo_dir / "build_windows.bat"
     if not path.exists():
         raise KrokoInstallError("Missing Kroko Windows build script: {0}".format(path))
@@ -292,6 +362,10 @@ def patch_windows_bat(repo_dir):
 
 
 def patch_windows_dockerfile(repo_dir):
+    """
+    Patches the Kroko Windows Dockerfile.
+    """
+
     path = repo_dir / "Dockerfile.windows"
     if not path.exists():
         raise KrokoInstallError("Missing Kroko Windows Dockerfile: {0}".format(path))
@@ -320,6 +394,10 @@ def patch_windows_dockerfile(repo_dir):
 
 
 def _insert_after_line(text, line_text, insertion):
+    """
+    Inserts text after a matching source line.
+    """
+
     lines = text.splitlines(True)
     for index, line in enumerate(lines):
         if line.strip() == line_text:
@@ -332,6 +410,10 @@ def _insert_after_line(text, line_text, insertion):
 
 
 def _wrap_license_output_line(text, marker):
+    """
+    Wraps license output behind the quiet-mode environment flag.
+    """
+
     lines = text.splitlines(True)
     changed = False
     for index, line in enumerate(lines):
@@ -360,6 +442,10 @@ def _wrap_license_output_line(text, marker):
 
 
 def patch_license_quiet_env(repo_dir):
+    """
+    Patches Kroko sources to support quiet license output.
+    """
+
     path = repo_dir / "sherpa-onnx" / "csrc" / "license.h"
     if not path.exists():
         print("Could not find Kroko license client source; native license logs may remain noisy.")
@@ -441,6 +527,10 @@ def patch_license_quiet_env(repo_dir):
 
 
 def prepare_windows_checkout(repo_dir):
+    """
+    Prepares Windows-specific Kroko build files.
+    """
+
     script = repo_dir / "in_windows_container.sh"
     if not script.exists():
         raise KrokoInstallError("Missing Kroko container build script: {0}".format(script))
@@ -452,6 +542,10 @@ def prepare_windows_checkout(repo_dir):
 
 
 def ensure_windows_host():
+    """
+    Verifies that the current host is Windows.
+    """
+
     if sys.version_info[:2] != (3, 12):
         raise KrokoInstallError(
             "Kroko's current Windows wheel build targets CPython 3.12 x64.\n"
@@ -500,6 +594,10 @@ def ensure_windows_host():
 
 
 def find_windows_wheel(repo_dir, variant):
+    """
+    Finds the built Kroko Windows wheel.
+    """
+
     tag = "cp{0}{1}".format(sys.version_info.major, sys.version_info.minor)
     wheel_dir = repo_dir / "release_artifacts" / "windows"
     patterns = [
@@ -523,6 +621,10 @@ def find_windows_wheel(repo_dir, variant):
 
 
 def install_windows(args, repo_dir):
+    """
+    Builds and installs Kroko on Windows.
+    """
+
     ensure_windows_host()
     prepare_windows_checkout(repo_dir)
     run(["cmd.exe", "/c", str(repo_dir / "build_windows.bat"), "--variant", args.variant], cwd=repo_dir)
@@ -533,6 +635,10 @@ def install_windows(args, repo_dir):
 
 
 def install_linux(args, repo_dir):
+    """
+    Installs Kroko from source on Linux.
+    """
+
     ensure_program("cmake", "CMake is required to build Kroko-ONNX from source on Linux.")
     patch_license_quiet_env(repo_dir)
     env = os.environ.copy()
@@ -562,6 +668,10 @@ def install_linux(args, repo_dir):
 
 
 def main(argv=None):
+    """
+    Runs the Kroko installer command.
+    """
+
     args = parse_args(argv)
     if not args.build:
         raise SystemExit("Pass --build to build and install Kroko-ONNX.")

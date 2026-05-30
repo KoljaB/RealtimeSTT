@@ -1,4 +1,6 @@
-"""Internal recorder state, callback, and spinner helpers."""
+"""
+Internal recorder state, callback, and spinner helpers.
+"""
 
 import logging
 import threading

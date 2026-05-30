@@ -1,4 +1,6 @@
-"""Exports transcription engine interfaces and factory helpers."""
+"""
+Exports transcription engine interfaces and factory helpers.
+"""
 
 from .base import (
     BaseTranscriptionEngine,

@@ -1,4 +1,6 @@
-"""Internal text formatting helpers for recorder output."""
+"""
+Internal text formatting helpers for recorder output.
+"""
 
 import re
 

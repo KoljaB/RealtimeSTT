@@ -1,4 +1,6 @@
-"""Adapts faster-whisper models to the transcription engine interface."""
+"""
+Adapts faster-whisper models to the transcription engine interface.
+"""
 
 from importlib import import_module
 
@@ -11,7 +13,9 @@ from .base import (
 
 
 def _load_faster_whisper():
-    """Loads faster-whisper and its optional batched inference pipeline."""
+    """
+    Loads faster-whisper and its optional batched inference pipeline.
+    """
     try:
         faster_whisper = import_module("faster_whisper")
     except ModuleNotFoundError as exc:
