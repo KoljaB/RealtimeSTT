@@ -52,12 +52,14 @@ from ._audio_recorder.transcription import (
     run_transcription_worker,
     submit_transcription_request,
 )
-from .wakeword_dependencies import (
+from ._audio_recorder.wakeword import (
     OPENWAKEWORD_BACKENDS,
     PORCUPINE_WAKEWORD_BACKENDS,
     _load_openwakeword_modules as _wakeword_load_openwakeword_modules,
     _load_porcupine_module as _wakeword_load_porcupine_module,
     _normalize_wakeword_backend as _wakeword_normalize_backend,
+    process_wakeword,
+    setup_wakeword_detection,
 )
 import soundfile as sf
 import collections
@@ -868,96 +870,16 @@ class AudioToTextRecorder:
             )
 
         # Setup wake word detection
-        if self.use_wake_words or normalized_wakeword_backend in PORCUPINE_WAKEWORD_BACKENDS:
-            self.wakeword_backend = normalized_wakeword_backend
-
-            self.wake_words_list = [
-                word.strip() for word in wake_words.lower().split(',')
-                if word.strip()
-            ] if wake_words else []
-            self.wake_words_sensitivity = wake_words_sensitivity
-            self.wake_words_sensitivities = [
-                float(wake_words_sensitivity)
-                for _ in range(len(self.wake_words_list))
-            ]
-
-            if self.wakeword_backend in PORCUPINE_WAKEWORD_BACKENDS:
-                if not self.wake_words_list:
-                    raise ValueError(
-                        "Porcupine wake word detection requires wake_words. "
-                        "Pass a comma-separated Porcupine keyword list, or use "
-                        "wakeword_backend='openwakeword' for OpenWakeWord models."
-                    )
-
-                try:
-                    pvporcupine = _load_porcupine_module()
-                    self.porcupine = pvporcupine.create(
-                        keywords=self.wake_words_list,
-                        sensitivities=self.wake_words_sensitivities
-                    )
-                    self.buffer_size = self.porcupine.frame_length
-                    self.sample_rate = self.porcupine.sample_rate
-
-                except Exception as e:
-                    logger.exception(
-                        "Error initializing porcupine "
-                        f"wake word detection engine: {e}. "
-                        f"Wakewords: {self.wake_words_list}."
-                    )
-                    raise
-
-                logger.debug(
-                    "Porcupine wake word detection engine initialized successfully"
-                )
-
-            elif self.wakeword_backend in OPENWAKEWORD_BACKENDS:
-                    
-                try:
-                    openwakeword, Model = _load_openwakeword_modules()
-                    openwakeword.utils.download_models()
-
-                    if openwakeword_model_paths:
-                        model_paths = openwakeword_model_paths.split(',')
-                        self.owwModel = Model(
-                            wakeword_models=model_paths,
-                            inference_framework=openwakeword_inference_framework
-                        )
-                        logger.info(
-                            "Successfully loaded wakeword model(s): "
-                            f"{openwakeword_model_paths}"
-                        )
-                    else:
-                        self.owwModel = Model(
-                            inference_framework=openwakeword_inference_framework)
-                    
-                    self.oww_n_models = len(self.owwModel.models.keys())
-                    if not self.oww_n_models:
-                        logger.error(
-                            "No wake word models loaded."
-                        )
-
-                    for model_key in self.owwModel.models.keys():
-                        logger.info(
-                            "Successfully loaded openwakeword model: "
-                            f"{model_key}"
-                        )
-
-                except Exception as e:
-                    logger.exception(
-                        "Error initializing openwakeword "
-                        f"wake word detection engine: {e}"
-                    )
-                    raise
-
-                logger.debug(
-                    "Open wake word detection engine initialized successfully"
-                )
-            
-            else:
-                raise ValueError(
-                    f"Wakeword engine {self.wakeword_backend} unknown or unsupported. "
-                    "Please specify one of: pvporcupine, openwakeword."
-                )
+        setup_wakeword_detection(
+            self,
+            normalized_wakeword_backend,
+            wake_words,
+            wake_words_sensitivity,
+            openwakeword_model_paths,
+            openwakeword_inference_framework,
+            load_porcupine_module=_load_porcupine_module,
+            load_openwakeword_modules=_load_openwakeword_modules,
+        )
 
 
         # Setup voice activity detection model WebRTC
@@ -1773,41 +1695,7 @@ class AudioToTextRecorder:
         """
         Processes audio data to detect wake words.
         """
-        if self.wakeword_backend in PORCUPINE_WAKEWORD_BACKENDS:
-            pcm = struct.unpack_from(
-                "h" * self.buffer_size,
-                data
-            )
-            porcupine_index = self.porcupine.process(pcm)
-            if self.debug_mode:
-                logger.info(f"wake words porcupine_index: {porcupine_index}")
-            return porcupine_index
-
-        elif self.wakeword_backend in OPENWAKEWORD_BACKENDS:
-            pcm = np.frombuffer(data, dtype=np.int16)
-            prediction = self.owwModel.predict(pcm)
-            max_score = -1
-            max_index = -1
-            wake_words_in_prediction = len(self.owwModel.prediction_buffer.keys())
-            self.wake_words_sensitivities
-            if wake_words_in_prediction:
-                for idx, mdl in enumerate(self.owwModel.prediction_buffer.keys()):
-                    scores = list(self.owwModel.prediction_buffer[mdl])
-                    if scores[-1] >= self.wake_words_sensitivity and scores[-1] > max_score:
-                        max_score = scores[-1]
-                        max_index = idx
-                if self.debug_mode:
-                    logger.info(f"wake words oww max_index, max_score: {max_index} {max_score}")
-                return max_index  
-            else:
-                if self.debug_mode:
-                    logger.info(f"wake words oww_index: -1")
-                return -1
-
-        if self.debug_mode:        
-            logger.info("wake words no match")
-
-        return -1
+        return process_wakeword(self, data)
 
     def text(self,
              on_transcription_finished=None,
@@ -3386,179 +3274,6 @@ class AudioToTextRecorder:
             _finish_streaming_session(_snapshot_frames())
 
         logger.debug("Realtime worker stopped")
-
-
-    # def _realtime_worker(self):
-    #     """
-    #     Performs real-time transcription if the feature is enabled.
-
-    #     The method is responsible transcribing recorded audio frames
-    #       in real-time based on the specified resolution interval.
-    #     The transcribed text is stored in `self.realtime_transcription_text`
-    #       and a callback
-    #     function is invoked with this text if specified.
-    #     """
-
-    #     try:
-
-    #         logger.debug('Starting realtime worker')
-
-    #         # Return immediately if real-time transcription is not enabled
-    #         if not self.enable_realtime_transcription:
-    #             return
-
-    #         # Track time of last transcription
-    #         last_transcription_time = time.time()
-
-    #         while self.is_running:
-
-    #             if self.is_recording:
-
-    #                 # MODIFIED SLEEP LOGIC:
-    #                 # Wait until realtime_processing_pause has elapsed,
-    #                 # but check often so we can respond to changes quickly.
-    #                 while (
-    #                     time.time() - last_transcription_time
-    #                 ) < self.realtime_processing_pause:
-    #                     time.sleep(0.001)
-    #                     if not self.is_running or not self.is_recording:
-    #                         break
-
-    #                 if self.awaiting_speech_end:
-    #                     time.sleep(0.001)
-    #                     continue
-
-    #                 # Update transcription time
-    #                 last_transcription_time = time.time()
-
-    #                 # Convert the buffer frames to a NumPy array
-    #                 audio_array = np.frombuffer(
-    #                     b''.join(self.frames),
-    #                     dtype=np.int16
-    #                     )
-
-    #                 logger.debug(f"Current realtime buffer size: {len(audio_array)}")
-
-    #                 # Normalize the array to a [-1, 1] range
-    #                 audio_array = audio_array.astype(np.float32) / \
-    #                     INT16_MAX_ABS_VALUE
-
-    #                 if self.use_main_model_for_realtime:
-    #                     with self.transcription_lock:
-    #                         try:
-    #                             self.parent_transcription_pipe.send((audio_array, self.language, True))
-    #                             if self.parent_transcription_pipe.poll(timeout=5):  # Wait for 5 seconds
-    #                                 logger.debug("Receive from realtime worker after transcription request to main model")
-    #                                 status, result = self.parent_transcription_pipe.recv()
-    #                                 if status == 'success':
-    #                                     self.detected_realtime_language = (
-    #                                         result.info.language if result.info.language_probability > 0 else None
-    #                                     )
-    #                                     self.detected_realtime_language_probability = result.info.language_probability
-    #                                     realtime_text = result.text
-    #                                     logger.debug(f"Realtime text detected with main model: {realtime_text}")
-    #                                 else:
-    #                                     logger.error(f"Realtime transcription error: {result}")
-    #                                     continue
-    #                             else:
-    #                                 logger.warning("Realtime transcription timed out")
-    #                                 continue
-    #                         except Exception as e:
-    #                             logger.error(f"Error in realtime transcription: {str(e)}", exc_info=True)
-    #                             continue
-    #                 else:
-    #                     transcription_result = self.realtime_transcription_model.transcribe(
-    #                         audio_array,
-    #                         language=self.language if self.language else None,
-    #                         use_prompt=True,
-    #                     )
-    #                     self.detected_realtime_language = (
-    #                         transcription_result.info.language
-    #                         if transcription_result.info.language_probability > 0
-    #                         else None
-    #                     )
-    #                     self.detected_realtime_language_probability = (
-    #                         transcription_result.info.language_probability
-    #                     )
-    #                     realtime_text = transcription_result.text
-    #                     logger.debug(f"Realtime text detected: {realtime_text}")
-
-    #                 # double check recording state
-    #                 # because it could have changed mid-transcription
-    #                 if self.is_recording and time.time() - \
-    #                         self.recording_start_time > self.init_realtime_after_seconds:
-
-    #                     self.realtime_transcription_text = realtime_text
-    #                     self.realtime_transcription_text = \
-    #                         self.realtime_transcription_text.strip()
-
-    #                     self.text_storage.append(
-    #                         self.realtime_transcription_text
-    #                         )
-
-    #                     # Take the last two texts in storage, if they exist
-    #                     if len(self.text_storage) >= 2:
-    #                         last_two_texts = self.text_storage[-2:]
-
-    #                         # Find the longest common prefix
-    #                         # between the two texts
-    #                         prefix = os.path.commonprefix(
-    #                             [last_two_texts[0], last_two_texts[1]]
-    #                             )
-
-    #                         # This prefix is the text that was transcripted
-    #                         # two times in the same way
-    #                         # Store as "safely detected text"
-    #                         if len(prefix) >= \
-    #                                 len(self.realtime_stabilized_safetext):
-
-    #                             # Only store when longer than the previous
-    #                             # as additional security
-    #                             self.realtime_stabilized_safetext = prefix
-
-    #                     # Find parts of the stabilized text
-    #                     # in the freshly transcripted text
-    #                     matching_pos = self._find_tail_match_in_text(
-    #                         self.realtime_stabilized_safetext,
-    #                         self.realtime_transcription_text
-    #                         )
-
-    #                     if matching_pos < 0:
-    #                         # pick which text to send
-    #                         text_to_send = (
-    #                             self.realtime_stabilized_safetext
-    #                             if self.realtime_stabilized_safetext
-    #                             else self.realtime_transcription_text
-    #                         )
-    #                         # preprocess once
-    #                         processed = self._preprocess_output(text_to_send, True)
-    #                         # invoke on its own thread
-    #                         self._run_callback(self._on_realtime_transcription_stabilized, processed)
-
-    #                     else:
-    #                         # We found parts of the stabilized text
-    #                         # in the transcripted text
-    #                         # We now take the stabilized text
-    #                         # and add only the freshly transcripted part to it
-    #                         output_text = self.realtime_stabilized_safetext + \
-    #                             self.realtime_transcription_text[matching_pos:]
-
-    #                         # This yields us the "left" text part as stabilized
-    #                         # AND at the same time delivers fresh detected
-    #                         # parts on the first run without the need for
-    #                         # two transcriptions
-    #                         self._run_callback(self._on_realtime_transcription_stabilized, self._preprocess_output(output_text, True))
-
-    #                     # Invoke the callback with the transcribed text
-    #                     self._run_callback(self._on_realtime_transcription_update, self._preprocess_output(self.realtime_transcription_text,True))
-
-    #             # If not recording, sleep briefly before checking again
-    #             else:
-    #                 time.sleep(TIME_SLEEP)
-
-    #     except Exception as e:
-    #         logger.error(f"Unhandled exeption in _realtime_worker: {e}", exc_info=True)
-    #         raise
 
     def _silero_vad_probability(self, audio_chunk):
         result = self.silero_vad_model(audio_chunk, SAMPLE_RATE)
