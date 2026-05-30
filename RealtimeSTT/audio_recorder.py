@@ -654,7 +654,7 @@ class AudioToTextRecorder:
         )
                    
 
-    # Public lifecycle API.
+    # Public recording API.
 
     def start(self, frames = None):
         """
@@ -690,6 +690,24 @@ class AudioToTextRecorder:
         Once voice is detected we enter "recording" state.
         """
         return listen_for_voice_activity(self)
+
+    def wait_audio(self):
+        """
+        Waits for the start and completion of the audio recording process.
+
+        This method is responsible for:
+        - Waiting for voice activity to begin recording if not yet started.
+        - Waiting for voice inactivity to complete the recording.
+        - Setting the audio buffer from the recorded frames.
+        - Resetting recording-related attributes.
+
+        Side effects:
+        - Updates the state of the instance.
+        - Modifies the audio attribute to contain the processed audio data.
+        """
+        return wait_for_recorded_audio(self)
+
+    # Public transcription API.
 
     def text(self,
              on_transcription_finished=None,
@@ -747,21 +765,7 @@ class AudioToTextRecorder:
     def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
         return perform_final_transcription_api(self, audio_bytes, use_prompt)
 
-    def wait_audio(self):
-        """
-        Waits for the start and completion of the audio recording process.
-
-        This method is responsible for:
-        - Waiting for voice activity to begin recording if not yet started.
-        - Waiting for voice inactivity to complete the recording.
-        - Setting the audio buffer from the recorded frames.
-        - Resetting recording-related attributes.
-
-        Side effects:
-        - Updates the state of the instance.
-        - Modifies the audio attribute to contain the processed audio data.
-        """
-        return wait_for_recorded_audio(self)
+    # Public manual input API.
 
     def feed_audio(self, chunk, original_sample_rate=16000):
         """
@@ -771,14 +775,7 @@ class AudioToTextRecorder:
         """
         return feed_manual_audio(self, chunk, original_sample_rate)
 
-    def shutdown(self):
-        """
-        Safely shuts down the audio recording by stopping the
-        recording worker and closing the audio stream.
-        """
-        return shutdown_recorder(self)
-
-    # Public compatibility utilities.
+    # Public lifecycle/control API.
 
     def wakeup(self):
         """
@@ -808,6 +805,13 @@ class AudioToTextRecorder:
 
     def flush_buffered_audio(self, min_abs_level=50):
         return flush_recorder_buffered_audio(self, min_abs_level)
+
+    def shutdown(self):
+        """
+        Safely shuts down the audio recording by stopping the
+        recording worker and closing the audio stream.
+        """
+        return shutdown_recorder(self)
 
     def format_number(self, num):
         return format_number(num)
