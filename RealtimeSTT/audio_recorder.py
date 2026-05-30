@@ -51,6 +51,11 @@ from .core.text_formatting import (
     format_number,
     preprocess_output,
 )
+from .core.transcription_api import (
+    perform_final_transcription as perform_final_transcription_api,
+    text as transcribe_text,
+    transcribe as transcribe_recorded_audio,
+)
 from .core.transcription import (
     TranscriptionWorker,
     receive_transcription_result,
@@ -707,25 +712,7 @@ class AudioToTextRecorder:
         Returns (if not callback is set):
             str: The transcription of the recorded audio
         """
-        self.interrupt_stop_event.clear()
-        self.was_interrupted.clear()
-        try:
-            self.wait_audio()
-        except KeyboardInterrupt:
-            logger.info("KeyboardInterrupt in text() method")
-            self.shutdown()
-            raise  # Re-raise the exception after cleanup
-
-        if self.is_shut_down or self.interrupt_stop_event.is_set():
-            if self.interrupt_stop_event.is_set():
-                self.was_interrupted.set()
-            return ""
-
-        if on_transcription_finished:
-            threading.Thread(target=on_transcription_finished,
-                            args=(self.transcribe(),)).start()
-        else:
-            return self.transcribe()
+        return transcribe_text(self, on_transcription_finished)
 
     def transcribe(self):
         """
@@ -752,84 +739,10 @@ class AudioToTextRecorder:
         Raises:
             Exception: If there is an error during the transcription process.
         """
-        audio_copy = copy.deepcopy(self.audio)
-        set_recorder_state(self, "transcribing")
-        if self.on_transcription_start:
-            abort_value = self.on_transcription_start(audio_copy)
-            if not abort_value:
-                return self.perform_final_transcription(audio_copy)
-            return None
-        else:
-            return self.perform_final_transcription(audio_copy)
+        return transcribe_recorded_audio(self)
 
     def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
-        start_time = 0
-        with self.transcription_lock:
-            if audio_bytes is None:
-                audio_bytes = copy.deepcopy(self.audio)
-
-            if audio_bytes is None or len(audio_bytes) == 0:
-                print("No audio data available for transcription")
-                #logger.info("No audio data available for transcription")
-                return ""
-
-            try:
-                if self.transcribe_count == 0:
-                    logger.debug("Adding transcription request, no early transcription started")
-                    start_time = time.time()  # Start timing
-                    submit_transcription_request(
-                        self,
-                        audio_bytes,
-                        self.language,
-                        use_prompt,
-                    )
-
-                while self.transcribe_count > 0:
-                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {self.transcribe_count}")
-                    response = receive_transcription_result(self, timeout=0.1)
-                    if response is None: # check if transcription done
-                        if self.interrupt_stop_event.is_set(): # check if interrupted
-                            self.was_interrupted.set()
-                            self._set_state_after_transcription()
-                            return "" # return empty string if interrupted
-                        continue
-                    status, result = response
-                    self.transcribe_count -= 1
-
-                self.allowed_to_early_transcribe = True
-                self._set_state_after_transcription()
-                if status == 'success':
-                    self.detected_language = (
-                        result.info.language if result.info.language_probability > 0 else None
-                    )
-                    self.detected_language_probability = result.info.language_probability
-                    self.last_transcription_bytes = copy.deepcopy(audio_bytes)
-                    self.last_transcription_bytes_b64 = base64.b64encode(self.last_transcription_bytes.tobytes()).decode('utf-8')
-                    self.last_transcription_metadata = getattr(result, "metadata", None)
-                    transcription = preprocess_output(
-                        result.text,
-                        ensure_sentence_starting_uppercase=(
-                            self.ensure_sentence_starting_uppercase
-                        ),
-                        ensure_sentence_ends_with_period=(
-                            self.ensure_sentence_ends_with_period
-                        ),
-                    )
-                    end_time = time.time()  # End timing
-                    transcription_time = end_time - start_time
-
-                    if start_time:
-                        if self.print_transcription_time:
-                            print(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                        else:
-                            logger.debug(f"Model {self.main_model_type} completed transcription in {transcription_time:.2f} seconds")
-                    return "" if self.interrupt_stop_event.is_set() else transcription # if interrupted return empty string
-                else:
-                    logger.error(f"Transcription error: {result}")
-                    raise Exception(result)
-            except Exception as e:
-                logger.error(f"Error during transcription: {str(e)}", exc_info=True)
-                raise e
+        return perform_final_transcription_api(self, audio_bytes, use_prompt)
 
     def wait_audio(self):
         """
