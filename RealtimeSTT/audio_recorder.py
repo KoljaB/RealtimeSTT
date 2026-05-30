@@ -1181,6 +1181,8 @@ class AudioToTextRecorder:
 
     # Internal facade-level helpers.
 
+    # Keep this lifecycle boundary on the facade until worker process/thread
+    # startup has stronger direct test coverage.
     def _start_thread(self, target=None, args=()):
         """
         Implement a consistent threading model across the library.
