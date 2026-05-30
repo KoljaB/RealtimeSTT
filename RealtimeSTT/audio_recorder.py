@@ -15,13 +15,13 @@ from typing import Callable, Iterable, List, Optional, Union
 import torch.multiprocessing as mp
 from scipy.signal import resample
 import numpy as np
-import halo
 
 from .core.realtime_text_stabilizer import RealtimeTextStabilizer
 from .core.audio_input_worker import run_audio_data_worker
 from .core.initialization import initialize_recorder
 from .core.recording import run_recording_worker
 from .core.realtime import run_realtime_worker
+from .core.state import run_callback, set_recorder_state, set_spinner
 from .core.text_formatting import (
     find_tail_match_in_text,
     format_number,
@@ -552,12 +552,7 @@ class AudioToTextRecorder:
             time.sleep(0.1)
 
     def _run_callback(self, cb, *args, **kwargs):
-        if self.start_callback_in_new_thread:
-            # Run the callback in a new thread to avoid blocking the main thread
-            threading.Thread(target=cb, args=args, kwargs=kwargs, daemon=True).start()
-        else:
-            # Run the callback in the main thread to avoid threading issues
-            cb(*args, **kwargs)
+        return run_callback(self, cb, *args, **kwargs)
 
     @staticmethod
     def _audio_data_worker(
@@ -1269,52 +1264,7 @@ class AudioToTextRecorder:
             new_state (str): The new state to set.
 
         """
-        # Check if the state has actually changed
-        if new_state == self.state:
-            return
-
-        # Store the current state for later comparison
-        old_state = self.state
-
-        # Update to the new state
-        self.state = new_state
-
-        # Log the state change
-        logger.info(f"State changed from '{old_state}' to '{new_state}'")
-
-        # Execute callbacks based on transitioning FROM a particular state
-        if old_state == "listening":
-            if self.on_vad_detect_stop:
-                self._run_callback(self.on_vad_detect_stop)
-        elif old_state == "wakeword":
-            if self.on_wakeword_detection_end:
-                self._run_callback(self.on_wakeword_detection_end)
-
-        # Execute callbacks based on transitioning TO a particular state
-        if new_state == "listening":
-            if self.on_vad_detect_start:
-                self._run_callback(self.on_vad_detect_start)
-            self._set_spinner("speak now")
-            if self.spinner and self.halo:
-                self.halo._interval = 250
-        elif new_state == "wakeword":
-            if self.on_wakeword_detection_start:
-                self._run_callback(self.on_wakeword_detection_start)
-            self._set_spinner(f"say {self.wake_words}")
-            if self.spinner and self.halo:
-                self.halo._interval = 500
-        elif new_state == "transcribing":
-            self._set_spinner("transcribing")
-            if self.spinner and self.halo:
-                self.halo._interval = 50
-        elif new_state == "recording":
-            self._set_spinner("recording")
-            if self.spinner and self.halo:
-                self.halo._interval = 100
-        elif new_state == "inactive":
-            if self.spinner and self.halo:
-                self.halo.stop()
-                self.halo = None
+        return set_recorder_state(self, new_state)
 
     def _set_spinner(self, text):
         """
@@ -1324,14 +1274,7 @@ class AudioToTextRecorder:
         Args:
             text (str): The text to be displayed alongside the spinner.
         """
-        if self.spinner:
-            # If the Halo spinner doesn't exist, create and start it
-            if self.halo is None:
-                self.halo = halo.Halo(text=text)
-                self.halo.start()
-            # If the Halo spinner already exists, just update the text
-            else:
-                self.halo.text = text
+        return set_spinner(self, text)
 
     def _preprocess_output(self, text, preview=False):
         return preprocess_output(
