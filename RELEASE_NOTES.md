@@ -1,5 +1,22 @@
 # Release Notes
 
+## 1.0.2 - 2026-05-31
+
+### Changed
+
+- Split the `AudioToTextRecorder` implementation behind the existing public
+  facade into focused core modules for lifecycle, recording, realtime
+  transcription, voice activity, wake-word handling, initialization, shutdown,
+  and formatting.
+- Refreshed recorder architecture and compatibility documentation so the public
+  facade, threading boundaries, and regression checks are easier to audit.
+- Normalized package docstrings and comments to use block-style summaries and
+  focused runtime explanations.
+
+### Removed
+
+- Removed an unused internal console color helper from `audio_recorder.py`.
+
 ## 1.0.1 - 2026-05-20
 
 ### Added

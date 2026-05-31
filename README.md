@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/797e6552-27cd-41b1-a7f3-e5cbc72094f5
 
 ## Featured Integration: Kroko/Banafo ASR
 
-RealtimeSTT 1.0.1 adds native support for `kroko_onnx`, the local streaming ASR
+RealtimeSTT includes native support for `kroko_onnx`, the local streaming ASR
 engine from the Kroko/Banafo team.
 
 This integration has been on my wishlist for a long time. Kroko is a strong fit

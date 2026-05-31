@@ -84,13 +84,6 @@ TIME_SLEEP = 0.02
 INT16_MAX_ABS_VALUE = 32768.0
 
 
-# Console color constants used by debug speech detection output.
-class bcolors:
-    OKGREEN = '\033[92m'  # Green for active speech detection
-    WARNING = '\033[93m'  # Yellow for silence detection
-    ENDC = '\033[0m'      # Reset to default color
-
-
 class AudioToTextRecorder:
     """
     A class responsible for capturing audio from the microphone, detecting
