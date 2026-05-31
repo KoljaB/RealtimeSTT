@@ -193,6 +193,10 @@ venv.bak/
 
 # Local diagnostic outputs
 test_outputs/
+audio-recorder-refactoring-map.md
+audio-recorder-refactoring-plan.md
+ARCHITECTURE.md
+REFACTORING.md
 
 # mypy
 .mypy_cache/
