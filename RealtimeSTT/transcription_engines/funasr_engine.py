@@ -27,25 +27,42 @@ def _load_FunASR_():
 class FunASREngine(BaseTranscriptionEngine):
 
     def __init__(self, config):
+        """
+            Initializes the funasr model.
+        """
+
         super().__init__(config)
 
         funasr = _load_FunASR_()
 
-        self.model = funasr.AutoModel(
-            model=self.config.model,
-            device=self.config.device,
-        )
+        kwargs = {
+            "model": self.config.model,
+            "device": self.config.device,
+            "batch_size": self.config.batch_size,
+            "beam_size": self.config.beam_size,
+        }
+
+        print(self.config.engine_options)
+
+        vad_model = self.config.engine_options.get("vad_model")
+
+        if self.config.engine_options.get("vad_filter") is not None and self.config.engine_options.get("vad_filter") and vad_model is not None:
+            kwargs["vad_model"] = vad_model
+
+        self.model = funasr.AutoModel(**kwargs)
+
 
     def transcribe(self, audio, language=None, use_prompt=False, **kwargs):
+        """
+            Transcribes audio and returns funasr output.
+        """
         audio = self._normalize_audio(audio)
 
         res = self.model.generate(input=audio)
 
         text = res[0]["text"].strip() if res else ""
-        language = res[0]["text"].split(">")[0].strip("<") if res else "None"
 
         return TranscriptionResult(
             text=text,
-            info=TranscriptionInfo(language=language),
         )
 
