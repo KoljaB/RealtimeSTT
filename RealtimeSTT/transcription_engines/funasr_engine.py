@@ -42,12 +42,11 @@ class FunASREngine(BaseTranscriptionEngine):
             "beam_size": self.config.beam_size,
         }
 
-        print(self.config.engine_options)
+        if self.config.engine_options is not None:
+            vad_model = self.config.engine_options.get("vad_model")
 
-        vad_model = self.config.engine_options.get("vad_model")
-
-        if self.config.engine_options.get("vad_filter") is not None and self.config.engine_options.get("vad_filter") and vad_model is not None:
-            kwargs["vad_model"] = vad_model
+            if self.config.engine_options.get("vad_filter") is not None and self.config.engine_options.get("vad_filter") and vad_model is not None:
+                kwargs["vad_model"] = vad_model
 
         self.model = funasr.AutoModel(**kwargs)
 
