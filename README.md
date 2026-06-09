@@ -179,6 +179,7 @@ Engine-specific references:
 - [Meta Omnilingual ASR](docs/engines/omnilingual-asr.md)
 - [Granite/Qwen Transformers engines](docs/engines/hf-transformers.md)
 - [Cohere Transcribe](docs/engines/cohere.md)
+- [FunASR](docs/engines/funasr.md)
 
 ## Server Example
 
