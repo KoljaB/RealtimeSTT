@@ -5,6 +5,8 @@ from typing import Any, Dict
 
 
 MAX_METADATA_BYTES = 64 * 1024
+MAX_AUDIO_BYTES = 10 * 1024 * 1024
+MAX_AUDIO_PACKET_BYTES = 4 + MAX_METADATA_BYTES + MAX_AUDIO_BYTES
 
 
 class AudioPacketError(ValueError):
@@ -46,12 +48,17 @@ def encode_audio_packet(metadata, audio):
     metadata_bytes = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
     if len(metadata_bytes) > MAX_METADATA_BYTES:
         raise AudioPacketError("metadata is too large")
+    if len(audio) > MAX_AUDIO_BYTES:
+        raise AudioPacketError("audio is too large")
     return struct.pack("<I", len(metadata_bytes)) + metadata_bytes + bytes(audio)
 
 
 def decode_audio_packet(message):
     if not isinstance(message, (bytes, bytearray, memoryview)):
         raise AudioPacketError("audio packet must be binary")
+
+    if len(message) > MAX_AUDIO_PACKET_BYTES:
+        raise AudioPacketError("audio packet is too large")
 
     data = bytes(message)
     if len(data) < 4:
@@ -62,6 +69,8 @@ def decode_audio_packet(message):
         raise AudioPacketError("audio packet metadata is too large")
     if len(data) < 4 + metadata_length:
         raise AudioPacketError("audio packet metadata is incomplete")
+    if len(data) - 4 - metadata_length > MAX_AUDIO_BYTES:
+        raise AudioPacketError("audio packet audio is too large")
 
     metadata_bytes = data[4:4 + metadata_length]
     audio = data[4 + metadata_length:]
