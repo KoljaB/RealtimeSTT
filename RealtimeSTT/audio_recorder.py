@@ -307,7 +307,7 @@ class AudioToTextRecorder:
         Voice activity and turn detection:
         - silero_sensitivity (float, default=SILERO_SENSITIVITY): Sensitivity
             for the Silero Voice Activity Detection model ranging from 0
-            (least sensitive) to 1 (most sensitive). Default is 0.5.
+            (least sensitive) to 1 (most sensitive). Default is 0.4.
         - silero_use_onnx (bool, default=None): Legacy Silero backend switch.
             If True, keeps the previous torch.hub ONNX path. If False, keeps
             the previous torch.hub PyTorch path. If None, silero_backend
