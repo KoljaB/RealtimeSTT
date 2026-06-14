@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Run ruff (lint)
+        run: ruff check .
+
+      - name: Run ruff (format check)
+        run: ruff format --check .
+
+  import-smoke:
+    name: Import smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package (no audio deps)
+        run: |
+          python -m pip install --upgrade pip
+          # Skip heavy audio/ML deps; just verify the package tree imports
+          python -m pip install faster-whisper halo soundfile numpy
+          python -m pip install -e . --no-deps
+
+      - name: Verify package metadata
+        run: |
+          python -c "import RealtimeSTT" && echo "RealtimeSTT import OK"
+          python -c "import setup; print('setup.py parses OK')"
