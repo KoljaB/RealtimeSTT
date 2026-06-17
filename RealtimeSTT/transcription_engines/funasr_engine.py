@@ -2,6 +2,7 @@
 Adapts FunASR to the transcription engine interface.
 """
 
+import re
 from importlib import import_module
 
 from .base import (
@@ -24,7 +25,24 @@ def _load_FunASR_():
 
     return funasr
 
+_SENSEVOICE_TAG = re.compile(r"<\|[^|]*\|>")
+
+def _clean_text(text):
+    """
+        Strips SenseVoice special tags (e.g. ``<|zh|><|NEUTRAL|>``) so the
+        engine returns clean text. Uses FunASR's official postprocessor
+        when available and falls back to a tag regex otherwise. A no-op for
+        models that already emit plain text (Paraformer, Fun-ASR).
+    """
+    try:
+        from funasr.utils.postprocess_utils import rich_transcription_postprocess
+        return rich_transcription_postprocess(text)
+    except Exception:
+        return _SENSEVOICE_TAG.sub("", text)
+
 class FunASREngine(BaseTranscriptionEngine):
+
+    engine_name = "funasr"
 
     def __init__(self, config):
         """
@@ -59,7 +77,7 @@ class FunASREngine(BaseTranscriptionEngine):
 
         res = self.model.generate(input=audio)
 
-        text = res[0]["text"].strip() if res else ""
+        text = _clean_text(res[0]["text"]).strip() if res else ""
 
         return TranscriptionResult(
             text=text,
