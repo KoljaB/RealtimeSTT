@@ -1,6 +1,7 @@
 # FunASR
 
-FunASR provides a fast multilingual ASR path for models such as SenseVoice.
+FunASR provides an experimental multilingual ASR path for models such as
+SenseVoice.
 
 ## Install
 
@@ -31,6 +32,11 @@ recorder = AudioToTextRecorder(
     },
 )
 ```
+
+The adapter currently returns backend text mostly as FunASR provides it. Some
+SenseVoice models include control tags such as language, emotion, speech type,
+or inverse text-normalization markers in the transcript text; treat that output
+format as backend-specific while the adapter is experimental.
 
 For CPU:
 

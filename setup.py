@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 
 import setuptools
 from setuptools.command.build_py import build_py as _build_py
@@ -50,7 +51,7 @@ Available extras include:
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend
 - qwen-vllm: Qwen ASR with vLLM extras
-- funasr: FunASR/SenseVoice backend
+- funasr: experimental FunASR/SenseVoice backend
 - kroko-builder: helper command for building/installing Kroko-ONNX plus Hugging Face model downloads
 - porcupine: Porcupine wake-word backend
 - openwakeword: OpenWakeWord wake-word backend
@@ -141,6 +142,16 @@ def is_local_backup_file(path):
 
 
 class build_py(_build_py):
+    def run(self):
+        for package_name in ("RealtimeSTT", "RealtimeSTT_server"):
+            package_build_dir = os.path.join(
+                self.build_lib,
+                *package_name.split("."),
+            )
+            if os.path.isdir(package_build_dir):
+                shutil.rmtree(package_build_dir)
+        super().run()
+
     def find_package_modules(self, package, package_dir):
         modules = super().find_package_modules(package, package_dir)
         return [
@@ -240,7 +251,6 @@ extras_require = {
     "qwen-vllm": qwen_vllm_requirements,
     "funasr": funasr_requirements,
     "fun-asr": funasr_requirements,
-    "fun_asr": funasr_requirements,
     "sensevoice": funasr_requirements,
     "kroko-builder": kroko_builder_requirements,
     "porcupine": porcupine_requirements,

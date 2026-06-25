@@ -1,6 +1,6 @@
 {
   "created_at": "2026-05-07T03:39:34",
-  "audio_file": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.wav",
+  "audio_file": "tests/unit/audio/asr-reference.wav",
   "audio_duration_seconds": 51.9253125,
   "sample_rate": 16000,
   "settings": {
@@ -13,7 +13,7 @@
     "pre_recording_buffer_duration": 2.0,
     "post_speech_silence_duration": 0.6,
     "min_length_of_recording": 0.5,
-    "snippet_dir": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets"
+    "snippet_dir": "tests/unit/audio/asr-reference.expected_sentences.snippets"
   },
   "utterances": [
     {
@@ -22,7 +22,7 @@
       "normalized": "hey guys",
       "received_at_seconds": 2.53248929977417,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\00_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/00_gpu_expected_pass.wav",
         "duration_seconds": 1.984,
         "samples": 31744
       }
@@ -33,7 +33,7 @@
       "normalized": "welcome to the new demo of my real time transcription library designed to showcase its lightning fast capabilities",
       "received_at_seconds": 9.590616941452026,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\01_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/01_gpu_expected_pass.wav",
         "duration_seconds": 6.72,
         "samples": 107520
       }
@@ -44,7 +44,7 @@
       "normalized": "as you ll see speech is transcribed almost instantly into text which i think is a pretty cool achievement given the challenges of working with whisper",
       "received_at_seconds": 18.18908190727234,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\02_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/02_gpu_expected_pass.wav",
         "duration_seconds": 8.064,
         "samples": 129024
       }
@@ -55,7 +55,7 @@
       "normalized": "i ve put a lot of effort into making this tool stable efficient and easy to use and i really hope you find it valuable in your projects",
       "received_at_seconds": 25.610867738723755,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\03_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/03_gpu_expected_pass.wav",
         "duration_seconds": 7.168,
         "samples": 114688
       }
@@ -66,7 +66,7 @@
       "normalized": "this library is completely open source and it would mean a lot to me if you could support it by giving a star on github",
       "received_at_seconds": 31.09714651107788,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\04_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/04_gpu_expected_pass.wav",
         "duration_seconds": 5.984,
         "samples": 95744
       }
@@ -77,7 +77,7 @@
       "normalized": "visibility and community feedback are key to making it even better and every bit of engagement helps improve its future development",
       "received_at_seconds": 38.771795988082886,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\05_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/05_gpu_expected_pass.wav",
         "duration_seconds": 7.392,
         "samples": 118272
       }
@@ -88,7 +88,7 @@
       "normalized": "whether you are working on a small project or something bigger i hope this tool becomes a helpful resource and sparks some innovation",
       "received_at_seconds": 46.64077639579773,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\06_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/06_gpu_expected_pass.wav",
         "duration_seconds": 7.616,
         "samples": 121856
       }
@@ -99,7 +99,7 @@
       "normalized": "so feel free to download it use it in your apps and let me know if you have any feedback",
       "received_at_seconds": 51.67757534980774,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\07_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/07_gpu_expected_pass.wav",
         "duration_seconds": 5.088,
         "samples": 81408
       }
@@ -110,7 +110,7 @@
       "normalized": "thanks for watching and i hope you enjoyed the demo",
       "received_at_seconds": 54.48071551322937,
       "snippet": {
-        "wav": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.expected_sentences.snippets\\gpu_expected_pass\\08_gpu_expected_pass.wav",
+        "wav": "tests/unit/audio/asr-reference.expected_sentences.snippets/gpu_expected_pass/08_gpu_expected_pass.wav",
         "duration_seconds": 2.912,
         "samples": 46592
       }

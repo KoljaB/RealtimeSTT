@@ -10,6 +10,7 @@ import time
 
 import numpy as np
 
+from .recording_buffers import get_frames_lock, snapshot_frames
 from .transcription import submit_transcription_request
 from .state import run_callback, set_recorder_state
 from .voice_activity import (
@@ -232,7 +233,8 @@ def run_recording_worker(recorder):
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Adding buffered audio to frames')
-                        self.frames.extend(pre_recording_frames)
+                        with get_frames_lock(self):
+                            self.frames.extend(pre_recording_frames)
                         clear_pre_recording_buffer(self)
 
                         if self.use_extended_logging:
@@ -262,17 +264,18 @@ def run_recording_worker(recorder):
                         logger.debug('Debug: Removing wakeword samples')
                     # Drop configured wake-word audio before user speech.
                     samples_removed = 0
-                    while wakeword_samples_to_remove > 0 and self.frames:
-                        frame = self.frames[0]
-                        frame_samples = len(frame) // 2  # Assuming 16-bit audio
-                        if wakeword_samples_to_remove >= frame_samples:
-                            self.frames.pop(0)
-                            samples_removed += frame_samples
-                            wakeword_samples_to_remove -= frame_samples
-                        else:
-                            self.frames[0] = frame[wakeword_samples_to_remove * 2:]
-                            samples_removed += wakeword_samples_to_remove
-                            samples_to_remove = 0
+                    with get_frames_lock(self):
+                        while wakeword_samples_to_remove > 0 and self.frames:
+                            frame = self.frames[0]
+                            frame_samples = len(frame) // 2  # Assuming 16-bit audio
+                            if wakeword_samples_to_remove >= frame_samples:
+                                self.frames.pop(0)
+                                samples_removed += frame_samples
+                                wakeword_samples_to_remove -= frame_samples
+                            else:
+                                self.frames[0] = frame[wakeword_samples_to_remove * 2:]
+                                samples_removed += wakeword_samples_to_remove
+                                samples_to_remove = 0
 
                     wakeword_samples_to_remove = 0
 
@@ -326,12 +329,13 @@ def run_recording_worker(recorder):
 
                         if self.use_extended_logging:
                             logger.debug('Debug: Checking early transcription conditions')
-                        if self.speech_end_silence_start and self.early_transcription_on_silence and len(self.frames) > 0 and \
+                        frames_snapshot = snapshot_frames(self)
+                        if self.speech_end_silence_start and self.early_transcription_on_silence and frames_snapshot and \
                             (time.time() - self.speech_end_silence_start > self.early_transcription_on_silence) and \
                             self.allowed_to_early_transcribe:
                                 if self.use_extended_logging:
                                     logger.debug("Debug:Adding early transcription request")
-                                audio_array = np.frombuffer(b''.join(self.frames), dtype=np.int16)
+                                audio_array = np.frombuffer(b''.join(frames_snapshot), dtype=np.int16)
                                 audio = audio_array.astype(np.float32) / INT16_MAX_ABS_VALUE
 
                                 if self.use_extended_logging:
@@ -387,7 +391,8 @@ def run_recording_worker(recorder):
                                     f"time since silence start: {time_diff:.3f} seconds")
 
                             logger.debug('Debug: Appending data to frames and stopping recording')
-                        self.frames.append(data)
+                        with get_frames_lock(self):
+                            self.frames.append(data)
                         self.stop()
                         if not self.is_recording:
                             if self.speech_end_silence_start != 0:
@@ -446,7 +451,8 @@ def run_recording_worker(recorder):
             if self.is_recording and not failed_stop_attempt:
                 if self.use_extended_logging:
                     logger.debug('Debug: Appending data to frames')
-                self.frames.append(data)
+                with get_frames_lock(self):
+                    self.frames.append(data)
 
             if self.use_extended_logging:
                 logger.debug('Debug: Checking if not recording or speech end silence start')

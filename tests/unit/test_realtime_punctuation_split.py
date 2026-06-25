@@ -331,6 +331,39 @@ class RealtimePunctuationSplitTests(unittest.TestCase):
             if thread.is_alive():
                 self.stop_worker(recorder, thread)
 
+    def test_punctuation_split_skips_internal_engines_without_word_timestamps(self):
+        recorder = self.make_recorder_stub()
+        recorder._uses_external_transcription_executor = False
+        recorder.transcription_engine = "funasr"
+        recorder.parent_transcription_pipe = FakeParentPipe()
+        thread = self.run_worker(recorder)
+
+        try:
+            for _ in range(8):
+                recorder.frames.append(self.make_frame(samples=8000))
+                time.sleep(0.05)
+                if getattr(recorder, "_last_realtime_punctuation_split_attempt_text", ""):
+                    break
+
+            self.assertTrue(
+                wait_until(
+                    lambda: bool(
+                        getattr(
+                            recorder,
+                            "_last_realtime_punctuation_split_attempt_text",
+                            "",
+                        )
+                    ),
+                    timeout=1.0,
+                )
+            )
+            self.assertFalse(recorder.parent_transcription_pipe.sent)
+            self.assertEqual(recorder.recorded_audio_queue.qsize(), 0)
+        finally:
+            recorder.is_recording = False
+            if thread.is_alive():
+                self.stop_worker(recorder, thread)
+
     def test_display_comma_can_trigger_when_stable_text_lost_punctuation(self):
         event = type("Event", (), {
             "stable_text": "The first clause is stable and the next",

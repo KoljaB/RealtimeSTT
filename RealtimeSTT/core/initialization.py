@@ -606,6 +606,7 @@ def _initialize_recording_buffers(recorder):
         maxlen=int((recorder.sample_rate // recorder.buffer_size) *
                    0.3)
     )
+    recorder.frames_lock = threading.RLock()
     recorder.frames = []
     recorder.last_frames = []
 

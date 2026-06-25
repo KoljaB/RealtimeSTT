@@ -4,7 +4,8 @@
 
 ### Added
 
-- Added the optional FunASR/SenseVoice transcription backend and install extra.
+- Added the experimental optional FunASR/SenseVoice transcription backend and
+  install extra.
 - Added `AudioToTextRecorder.feed_audio_file()` for feeding audio files through
   the manual audio input path.
 - Added `TranscriptionResult.metadata` support and word timestamp plumbing for
@@ -25,6 +26,9 @@
 
 - Comma, dash, ellipsis, and `all` punctuation split modes remain available for
   experiments but are not promoted as production-supported in this release.
+- Realtime punctuation splitting requires word timestamps. Built-in support is
+  currently wired through `faster_whisper`; other built-in engines skip the
+  split path.
 
 ## 1.0.2 - 2026-05-31
 

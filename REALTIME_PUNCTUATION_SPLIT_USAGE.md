@@ -31,6 +31,10 @@ The parser also accepts `"comma"`, `"dash"`, `"ellipsis"`, and `"all"` presets,
 or an iterable of explicit marks. Those modes are available for experiments but
 are not promoted as production-supported in this release.
 
+Splitting needs word-level timestamps from the main transcription engine.
+RealtimeSTT currently wires that path for `faster_whisper`; other built-in
+engines skip punctuation splitting rather than failing the recorder.
+
 Useful examples:
 
 ```python

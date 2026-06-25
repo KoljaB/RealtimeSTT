@@ -8,9 +8,11 @@ import time
 
 from .realtime_text_stabilizer import RealtimeTextStabilizer
 from .recording_buffers import (
+    get_frames_lock,
     get_next_recorded_audio,
     queue_recorded_audio,
     set_audio_from_frames,
+    snapshot_frames,
 )
 from .state import run_callback, set_recorder_state
 from .voice_activity import reset_silero_vad_state
@@ -52,9 +54,8 @@ def start_recording(recorder, frames=None):
     recorder._pending_preroll_selection = None
     recorder.wakeword_detected = False
     recorder.wake_word_detect_time = 0
-    recorder.frames = []
-    if frames:
-        recorder.frames = frames
+    with get_frames_lock(recorder):
+        recorder.frames = list(frames) if frames else []
 
     recorder.recording_start_time = time.time()
     recorder.speech_end_silence_candidate_start = 0
@@ -105,8 +106,11 @@ def stop_recording(
         return recorder
 
     logger.info("recording stopped")
-    stopped_frames = copy.deepcopy(recorder.frames)
-    recorder.last_frames = copy.deepcopy(stopped_frames)
+    with get_frames_lock(recorder):
+        stopped_frames = copy.deepcopy(recorder.frames)
+        recorder.last_frames = copy.deepcopy(stopped_frames)
+        recorder.frames = []
+        recorder.is_recording = False
     recorder.backdate_stop_seconds = backdate_stop_seconds
     recorder.backdate_resume_seconds = backdate_resume_seconds
     queue_recorded_audio(
@@ -115,8 +119,6 @@ def stop_recording(
         backdate_stop_seconds,
         backdate_resume_seconds,
     )
-    recorder.frames = []
-    recorder.is_recording = False
     recorder.recording_stop_time = time.time()
     realtime_text_stabilizer = getattr(
         recorder,
@@ -163,7 +165,10 @@ def wait_for_recorded_audio(recorder):
 
         queued_recording = get_next_recorded_audio(recorder)
 
-        if queued_recording is None and not recorder.is_recording and not recorder.frames:
+        if (
+                queued_recording is None
+                and not recorder.is_recording
+                and not snapshot_frames(recorder)):
             set_recorder_state(recorder, "listening")
             reset_silero_vad_state(recorder)
             recorder.start_recording_on_voice_activity = True
@@ -197,9 +202,9 @@ def wait_for_recorded_audio(recorder):
             if recorder.is_recording:
                 recorder.stop_recording_event.clear()
         else:
-            frames = recorder.frames
+            frames = list(snapshot_frames(recorder))
             if len(frames) == 0:
-                frames = recorder.last_frames
+                frames = list(snapshot_frames(recorder, "last_frames"))
             backdate_stop_seconds = recorder.backdate_stop_seconds
             backdate_resume_seconds = recorder.backdate_resume_seconds
             recorder._current_transcription_force_lowercase_start = getattr(
@@ -216,9 +221,10 @@ def wait_for_recorded_audio(recorder):
         )
 
         if not recorder.is_recording:
-            recorder.frames.clear()
-            recorder.last_frames.clear()
-            recorder.frames.extend(frames_to_read)
+            with get_frames_lock(recorder):
+                recorder.frames.clear()
+                recorder.last_frames.clear()
+                recorder.frames.extend(frames_to_read)
 
         recorder.backdate_stop_seconds = 0.0
         recorder.backdate_resume_seconds = 0.0

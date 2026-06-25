@@ -3,6 +3,7 @@ Realtime transcription worker loop for :class:`AudioToTextRecorder`.
 """
 
 import logging
+import inspect
 import re
 import threading
 import time
@@ -18,7 +19,7 @@ from .realtime_callbacks import (
     publish_realtime_transcription_stabilized,
     publish_realtime_transcription_update,
 )
-from .recording_buffers import queue_recorded_audio
+from .recording_buffers import get_frames_lock, queue_recorded_audio, snapshot_frames
 from .state import run_callback
 from .text_formatting import preprocess_output
 from .transcription import call_transcription_executor
@@ -347,25 +348,9 @@ def run_realtime_worker(recorder):
         Copies buffered realtime frames under the recorder lock.
         """
 
-        frames = getattr(self, "frames", None)
-
-        if not frames:
-            return None
-
-        # Use a frame lock if the class provides one.
-        # Different RealtimeSTT versions may name this differently,
-        # so keep this optional.
-        frame_lock = (
-            getattr(self, "frames_lock", None)
-            or getattr(self, "frame_lock", None)
-            or getattr(self, "audio_lock", None)
-        )
-
         try:
-            if frame_lock:
-                with frame_lock:
-                    return tuple(self.frames)
-            return tuple(self.frames)
+            frames = snapshot_frames(self)
+            return frames if frames else None
 
         except Exception as e:
             logger.debug(f"Could not snapshot realtime frames: {e}", exc_info=True)
@@ -486,6 +471,53 @@ def run_realtime_worker(recorder):
 
         return text, language, language_probability
 
+    def _callable_accepts_word_timestamps(callback):
+        """
+        Returns whether an external executor accepts word timestamp requests.
+        """
+
+        try:
+            signature = inspect.signature(callback)
+        except (TypeError, ValueError):
+            return False
+
+        for parameter in signature.parameters.values():
+            if parameter.kind == parameter.VAR_KEYWORD:
+                return True
+            if parameter.name == "word_timestamps":
+                return True
+        return False
+
+    def _main_transcription_supports_word_timestamps():
+        """
+        Returns whether the main transcription path can return word timings.
+        """
+
+        if self._uses_external_transcription_executor:
+            executor = getattr(self, "transcription_executor", None)
+            callback = getattr(executor, "transcribe", executor)
+            return _callable_accepts_word_timestamps(callback)
+
+        engine_name = (
+            getattr(self, "transcription_engine", None)
+            or "faster_whisper"
+        )
+        engine_name = str(engine_name).strip().lower().replace("-", "_")
+        return engine_name == "faster_whisper"
+
+    def _log_word_timestamp_skip_once():
+        """
+        Logs one debug message when punctuation splitting lacks word timings.
+        """
+
+        if getattr(self, "_realtime_word_timestamp_skip_logged", False):
+            return
+        self._realtime_word_timestamp_skip_logged = True
+        logger.debug(
+            "Skipping realtime punctuation split because the main "
+            "transcription engine does not expose word timestamps"
+        )
+
     def _transcribe_with_main_model(audio_array):
         """
         Runs realtime transcription through the main model.
@@ -532,6 +564,10 @@ def run_realtime_worker(recorder):
         """
 
         try:
+            if not _main_transcription_supports_word_timestamps():
+                _log_word_timestamp_skip_once()
+                return None
+
             if self._uses_external_transcription_executor:
                 return call_transcription_executor(
                     self.transcription_executor,
@@ -684,7 +720,7 @@ def run_realtime_worker(recorder):
         ):
             if streaming_session is not None:
                 try:
-                    previous_frames = tuple(getattr(self, "last_frames", None) or ())
+                    previous_frames = snapshot_frames(self, "last_frames")
                 except Exception:
                     previous_frames = None
                 _finish_streaming_session(previous_frames)
@@ -831,8 +867,9 @@ def run_realtime_worker(recorder):
         """
 
         remaining_seconds = _count_frame_samples(right_frames) / float(sample_rate)
-        self.frames = list(right_frames)
-        self.last_frames = []
+        with get_frames_lock(self):
+            self.frames = list(right_frames)
+            self.last_frames = []
         self.text_storage = []
         self.realtime_transcription_text = ""
         self.realtime_stabilized_text = ""
@@ -934,7 +971,7 @@ def run_realtime_worker(recorder):
             daemon=True,
             name="RealtimeSTTPunctuationSplit",
         ).start()
-        return False
+        return True
 
     def _publish_realtime_text(
         realtime_text,
@@ -1365,7 +1402,7 @@ def run_realtime_worker(recorder):
             if not self.is_recording:
                 if streaming_session is not None:
                     try:
-                        finished_frames = tuple(getattr(self, "last_frames", None) or ())
+                        finished_frames = snapshot_frames(self, "last_frames")
                     except Exception:
                         finished_frames = None
                     if not finished_frames:
