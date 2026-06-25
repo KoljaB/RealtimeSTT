@@ -86,6 +86,7 @@ def build_recorder_init_args(
     transcription_executor,
     realtime_transcription_executor,
     on_realtime_text_stabilization_update,
+    realtime_punctuation_split_marks,
     silero_backend,
     silero_onnx_model_path,
     silero_onnx_threads,
@@ -186,6 +187,7 @@ def build_recorder_init_args(
         "on_realtime_text_stabilization_update": (
             on_realtime_text_stabilization_update
         ),
+        "realtime_punctuation_split_marks": realtime_punctuation_split_marks,
         "silero_backend": silero_backend,
         "silero_onnx_model_path": silero_onnx_model_path,
         "silero_onnx_threads": silero_onnx_threads,

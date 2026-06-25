@@ -3,6 +3,8 @@ Realtime transcription worker loop for :class:`AudioToTextRecorder`.
 """
 
 import logging
+import re
+import threading
 import time
 
 import numpy as np
@@ -16,6 +18,7 @@ from .realtime_callbacks import (
     publish_realtime_transcription_stabilized,
     publish_realtime_transcription_update,
 )
+from .recording_buffers import queue_recorded_audio
 from .state import run_callback
 from .text_formatting import preprocess_output
 from .transcription import call_transcription_executor
@@ -25,6 +28,253 @@ logger = logging.getLogger("realtimestt")
 
 TIME_SLEEP = 0.02
 INT16_MAX_ABS_VALUE = 32768.0
+_PUNCTUATION_SPLIT_REQUIRED_OBSERVATIONS = 3
+_PUNCTUATION_SPLIT_MARK_PRESETS = {
+    "off": (),
+    "none": (),
+    "false": (),
+    "sentence": (".", "?", "!"),
+    "terminal": (".", "?", "!"),
+    "comma": (",",),
+    "ellipsis": ("...",),
+    "dash": ("\u2014", "\u2013", "-"),
+    "all": (".", "?", "!", ",", "...", "\u2014", "\u2013", "-"),
+}
+_SUPPORTED_PUNCTUATION_SPLIT_MARKS = {
+    ",",
+    ".",
+    "?",
+    "!",
+    "...",
+    "\u2014",
+    "\u2013",
+    "-",
+}
+_ABBREVIATIONS_BEFORE_PERIOD = {
+    "dr",
+    "mr",
+    "mrs",
+    "ms",
+    "prof",
+    "sr",
+    "jr",
+    "st",
+    "vs",
+}
+
+
+def _normalize_realtime_punctuation_split_marks(marks="sentence,comma"):
+    if marks is None:
+        return ()
+    if isinstance(marks, str):
+        value = marks.strip().casefold()
+        if not value:
+            return ()
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+    else:
+        try:
+            parts = list(marks)
+        except TypeError as exc:
+            raise TypeError(
+                "realtime_punctuation_split_marks must be a string or iterable"
+            ) from exc
+
+    normalized = []
+    for part in parts:
+        if not isinstance(part, str):
+            raise TypeError("punctuation split marks must be strings")
+        part = part.strip()
+        if not part:
+            continue
+        preset = _PUNCTUATION_SPLIT_MARK_PRESETS.get(part.casefold())
+        values = preset if preset is not None else (part,)
+        for value in values:
+            if value not in _SUPPORTED_PUNCTUATION_SPLIT_MARKS:
+                raise ValueError(f"Unsupported punctuation split mark: {value!r}")
+            if value not in normalized:
+                normalized.append(value)
+
+    order = {value: index for index, value in enumerate(normalized)}
+    return tuple(sorted(normalized, key=lambda value: (-len(value), order[value])))
+
+
+def _normalized_words(text):
+    return re.findall(r"[a-z0-9]+", (text or "").casefold())
+
+
+def _last_strong_punctuation_index(text, before_index):
+    return max(text.rfind(".", 0, before_index), text.rfind("?", 0, before_index), text.rfind("!", 0, before_index))
+
+
+def _is_digit_punctuation(text, index):
+    left = index - 1
+    right = index + 1
+    while left >= 0 and text[left].isspace():
+        left -= 1
+    while right < len(text) and text[right].isspace():
+        right += 1
+    return left >= 0 and right < len(text) and text[left].isdigit() and text[right].isdigit()
+
+
+def _is_compound_hyphen(text, index):
+    return (
+        index > 0
+        and index + 1 < len(text)
+        and text[index - 1].isalnum()
+        and text[index + 1].isalnum()
+    )
+
+
+def _has_abbreviation_period(text):
+    folded = (text or "").casefold()
+    return any(
+        re.search(rf"\b{re.escape(abbreviation)}\.\s", folded)
+        for abbreviation in _ABBREVIATIONS_BEFORE_PERIOD
+    )
+
+
+def _iter_punctuation_split_candidates(text, marks):
+    text = text or ""
+    stripped_length = len(text.rstrip())
+    for index in range(len(text)):
+        for punctuation in marks:
+            if not text.startswith(punctuation, index):
+                continue
+            end_index = index + len(punctuation)
+            if end_index >= stripped_length:
+                continue
+            yield index, punctuation, end_index
+            break
+
+
+def _punctuation_split_hint(text, marks="sentence,comma"):
+    marks = _normalize_realtime_punctuation_split_marks(marks)
+    if not marks:
+        return None
+
+    candidates = []
+    for index, punctuation, end_index in _iter_punctuation_split_candidates(text, marks):
+        if punctuation in {".", ",", "-"} and _is_digit_punctuation(text, index):
+            continue
+        if punctuation == "-" and _is_compound_hyphen(text, index):
+            continue
+
+        before_words = _normalized_words(text[:index])
+        after_words = _normalized_words(text[end_index:])
+        if not before_words or len(after_words) < 2:
+            continue
+
+        boundary = _last_strong_punctuation_index(text, index) + 1
+        segment_before = text[boundary:index]
+        segment_words = _normalized_words(segment_before)
+        if punctuation == "." and before_words[-1] in _ABBREVIATIONS_BEFORE_PERIOD:
+            continue
+        if punctuation in ".?!" and len(segment_words) < 3:
+            continue
+        if punctuation == "..." and len(segment_words) < 2:
+            continue
+        if punctuation in {"-", "\u2014", "\u2013"} and len(segment_words) < 3:
+            continue
+        if punctuation == ",":
+            if len(segment_words) < 4 or "," in segment_before:
+                continue
+            if _has_abbreviation_period(text[:index]):
+                continue
+            if (
+                after_words[0] in {"and", "or"}
+                and after_words[1] not in {"a", "an", "the", "this", "that", "these", "those", "it", "there", "we", "i"}
+            ):
+                continue
+
+        candidates.append((punctuation, tuple(before_words[-3:])))
+
+    return candidates[-1] if candidates else None
+
+
+def _select_realtime_punctuation_split_hint(event, marks="sentence,comma"):
+    for name in ("stable_text", "consensus_display_text", "display_text", "raw_observation_text"):
+        text = getattr(event, name, "") or ""
+        if _punctuation_split_hint(text, marks):
+            return text
+    return ""
+
+
+def _find_word_end_for_suffix(words, suffix):
+    normalized = [_normalized_words(str(word.get("word", ""))) for word in words]
+    flat = [items[-1] if items else "" for items in normalized]
+    suffix = tuple(word for word in suffix if word)
+    if not suffix:
+        return None
+
+    for size in range(min(3, len(suffix)), 0, -1):
+        needle = suffix[-size:]
+        for index in range(len(flat) - size, -1, -1):
+            if tuple(flat[index:index + size]) == needle:
+                end_time = words[index + size - 1].get("end")
+                if end_time is None:
+                    return None
+                end_time = float(end_time)
+                if index + size < len(words):
+                    next_start = words[index + size].get("start")
+                    if next_start is not None and float(next_start) > end_time:
+                        return (end_time + float(next_start)) / 2
+                return end_time
+    return None
+
+
+def _find_punctuation_split(
+    transcription_result,
+    hint_text=None,
+    marks="sentence,comma",
+):
+    metadata = getattr(transcription_result, "metadata", None) or {}
+    words = metadata.get("words") or []
+    if not words:
+        return None
+
+    hint = _punctuation_split_hint(hint_text, marks)
+    if hint:
+        punctuation, suffix = hint
+        end_time = _find_word_end_for_suffix(words, suffix)
+        if end_time is not None:
+            return punctuation, end_time
+
+    text = "".join(str(word.get("word", "")) for word in words)
+    hint = _punctuation_split_hint(text, marks)
+    if not hint:
+        return None
+
+    punctuation, suffix = hint
+    end_time = _find_word_end_for_suffix(words, suffix)
+    if end_time is None:
+        return None
+    return punctuation, end_time
+
+
+def _get_realtime_punctuation_split_lock(recorder):
+    lock = getattr(recorder, "_realtime_punctuation_split_lock", None)
+    if lock is None:
+        lock = threading.RLock()
+        recorder._realtime_punctuation_split_lock = lock
+    return lock
+
+
+def _clear_realtime_punctuation_split_candidate(recorder):
+    with _get_realtime_punctuation_split_lock(recorder):
+        recorder._realtime_punctuation_split_candidate = None
+
+
+def _confirm_realtime_punctuation_split_candidate(recorder, split_marks, hint):
+    key = (split_marks, hint)
+    with _get_realtime_punctuation_split_lock(recorder):
+        candidate = getattr(recorder, "_realtime_punctuation_split_candidate", None)
+        if candidate and candidate[0] == key:
+            count = candidate[1] + 1
+        else:
+            count = 1
+
+        recorder._realtime_punctuation_split_candidate = (key, count)
+        return count >= _PUNCTUATION_SPLIT_REQUIRED_OBSERVATIONS
 
 
 def run_realtime_worker(recorder):
@@ -276,6 +526,47 @@ def run_realtime_worker(recorder):
             logger.error(f"Error in realtime transcription with main model: {e}", exc_info=True)
             return None
 
+    def _transcribe_with_main_model_word_timestamps(audio_array):
+        """
+        Runs final-model transcription with word timestamps.
+        """
+
+        try:
+            if self._uses_external_transcription_executor:
+                return call_transcription_executor(
+                    self.transcription_executor,
+                    audio_array,
+                    self.language,
+                    True,
+                    word_timestamps=True,
+                )
+
+            if not self.transcription_lock.acquire(blocking=False):
+                logger.debug("Skipping realtime punctuation split because final transcription is busy")
+                return None
+            try:
+                self.parent_transcription_pipe.send(
+                    (audio_array, self.language, True, {"word_timestamps": True})
+                )
+
+                if not self.parent_transcription_pipe.poll(timeout=10):
+                    logger.warning("Realtime punctuation split transcription timed out")
+                    return None
+
+                status, result = self.parent_transcription_pipe.recv()
+
+                if status != "success":
+                    logger.error(f"Realtime punctuation split transcription error: {result}")
+                    return None
+
+                return result
+            finally:
+                self.transcription_lock.release()
+
+        except Exception as e:
+            logger.error(f"Error in realtime punctuation split transcription: {e}", exc_info=True)
+            return None
+
     def _transcribe_with_realtime_model(audio_array):
         """
         Runs realtime transcription through the realtime model.
@@ -506,6 +797,145 @@ def run_realtime_worker(recorder):
         except Exception as e:
             logger.error(f"Realtime callback failed: {e}", exc_info=True)
 
+    def _lowercase_first_text(text):
+        """
+        Lowercases the first recognized character.
+        """
+
+        return text[:1].lower() + text[1:] if text else text
+
+    def _split_frames_at_sample(frames, split_sample):
+        """
+        Splits 16-bit PCM frame bytes at a sample offset.
+        """
+
+        left, right = [], []
+        remaining = int(split_sample)
+        for frame in frames:
+            samples = len(frame) // 2
+            if remaining >= samples:
+                left.append(frame)
+                remaining -= samples
+            elif remaining <= 0:
+                right.append(frame)
+            else:
+                byte_index = max(0, min(len(frame), remaining * 2))
+                left.append(frame[:byte_index])
+                right.append(frame[byte_index:])
+                remaining = 0
+        return left, right
+
+    def _reset_after_punctuation_split(right_frames, punctuation, sample_rate):
+        """
+        Starts a new realtime segment from the right-side audio remainder.
+        """
+
+        remaining_seconds = _count_frame_samples(right_frames) / float(sample_rate)
+        self.frames = list(right_frames)
+        self.last_frames = []
+        self.text_storage = []
+        self.realtime_transcription_text = ""
+        self.realtime_stabilized_text = ""
+        self.realtime_stabilized_safetext = ""
+        self.realtime_observation_sequence = 0
+        self.realtime_recording_id = getattr(self, "realtime_recording_id", 0) + 1
+        self.recording_start_monotonic = time.monotonic() - remaining_seconds
+        self.recording_start_time = time.time() - remaining_seconds
+        self._force_current_recording_lowercase_start = punctuation == ","
+        self._last_realtime_punctuation_split_attempt_text = ""
+        _clear_realtime_punctuation_split_candidate(self)
+        self.realtime_text_stabilizer.reset(
+            self.realtime_recording_id,
+            started_at_monotonic=self.recording_start_monotonic,
+            started_at_wall_time=self.recording_start_time,
+        )
+        _close_streaming_session()
+
+    def _maybe_split_on_stable_punctuation(event, frames_snapshot, sample_rate):
+        """
+        Splits the active recording when stable punctuation has a timestamp.
+        """
+
+        split_marks = _normalize_realtime_punctuation_split_marks(
+            getattr(self, "realtime_punctuation_split_marks", "off")
+        )
+        if not split_marks:
+            _clear_realtime_punctuation_split_candidate(self)
+            return False
+        hint_text = _select_realtime_punctuation_split_hint(event, split_marks)
+        if not hint_text:
+            _clear_realtime_punctuation_split_candidate(self)
+            return False
+        hint = _punctuation_split_hint(hint_text, split_marks)
+        if not hint:
+            _clear_realtime_punctuation_split_candidate(self)
+            return False
+        sample_count = _count_frame_samples(frames_snapshot)
+        if sample_count < sample_rate * 2:
+            return False
+        attempt_key = (split_marks, hint, sample_count // sample_rate)
+        with _get_realtime_punctuation_split_lock(self):
+            if getattr(self, "_realtime_punctuation_split_busy", False):
+                return False
+            if not _confirm_realtime_punctuation_split_candidate(
+                self,
+                split_marks,
+                hint,
+            ):
+                return False
+            if attempt_key == getattr(
+                self,
+                "_last_realtime_punctuation_split_attempt_text",
+                "",
+            ):
+                return False
+            self._last_realtime_punctuation_split_attempt_text = attempt_key
+            self._realtime_punctuation_split_busy = True
+
+        def split_in_background():
+            try:
+                audio_array = _frames_to_audio_array(frames_snapshot)
+                if audio_array is None:
+                    return
+                result = _transcribe_with_main_model_word_timestamps(audio_array)
+                split = _find_punctuation_split(result, hint_text, split_marks)
+                if split is None:
+                    return
+
+                punctuation, split_time = split
+                split_sample = int(split_time * sample_rate)
+                if split_sample <= 0:
+                    return
+
+                current_frames = list(_snapshot_frames() or frames_snapshot)
+                current_sample_count = _count_frame_samples(current_frames)
+                if split_sample >= current_sample_count:
+                    return
+                left_frames, right_frames = _split_frames_at_sample(current_frames, split_sample)
+                if not left_frames or not right_frames:
+                    return
+
+                queue_recorded_audio(
+                    self,
+                    left_frames,
+                    force_lowercase_start=getattr(
+                        self,
+                        "_force_current_recording_lowercase_start",
+                        False,
+                    ),
+                )
+                _reset_after_punctuation_split(right_frames, punctuation, sample_rate)
+            finally:
+                with _get_realtime_punctuation_split_lock(self):
+                    self._realtime_punctuation_split_busy = False
+
+        threading.Thread(
+            target=split_in_background,
+            daemon=True,
+            name="RealtimeSTTPunctuationSplit",
+        ).start()
+        return False
+
     def _publish_realtime_text(
         realtime_text,
         sequence,
@@ -521,12 +951,20 @@ def run_realtime_worker(recorder):
         completed_at_wall_time,
         detected_language,
         detected_language_probability,
+        frames_snapshot,
     ):
         """
         Publishes realtime text with timing and language metadata.
         """
 
         raw_text = "" if realtime_text is None else str(realtime_text)
+        force_lowercase_start = getattr(
+            self,
+            "_force_current_recording_lowercase_start",
+            False,
+        )
+        if force_lowercase_start:
+            raw_text = _lowercase_first_text(raw_text)
 
         if recording_start_time is None:
             return
@@ -602,6 +1040,13 @@ def run_realtime_worker(recorder):
         self.realtime_stabilized_text = event.stable_text
         self.realtime_stabilized_safetext = event.stable_text
 
+        if event.accepted and _maybe_split_on_stable_punctuation(
+            event,
+            frames_snapshot,
+            sample_rate,
+        ):
+            return
+
         if not raw_text.strip() or not publish_allowed:
             return
 
@@ -622,6 +1067,7 @@ def run_realtime_worker(recorder):
                 preview=True,
                 ensure_sentence_starting_uppercase=(
                     self.ensure_sentence_starting_uppercase
+                    and not force_lowercase_start
                 ),
                 ensure_sentence_ends_with_period=(
                     self.ensure_sentence_ends_with_period
@@ -637,6 +1083,7 @@ def run_realtime_worker(recorder):
                 preview=True,
                 ensure_sentence_starting_uppercase=(
                     self.ensure_sentence_starting_uppercase
+                    and not force_lowercase_start
                 ),
                 ensure_sentence_ends_with_period=(
                     self.ensure_sentence_ends_with_period
@@ -735,6 +1182,7 @@ def run_realtime_worker(recorder):
                 completed_at_wall_time,
                 detected_language,
                 detected_language_probability,
+                frames_snapshot,
             )
             return False
 
@@ -756,6 +1204,7 @@ def run_realtime_worker(recorder):
             completed_at_wall_time,
             detected_language,
             detected_language_probability,
+            frames_snapshot,
         )
         return True
 

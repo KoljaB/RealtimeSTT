@@ -169,6 +169,11 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             ("transcription_executor", None, Optional[Callable]),
             ("realtime_transcription_executor", None, Optional[Callable]),
             ("on_realtime_text_stabilization_update", None, empty),
+            (
+                "realtime_punctuation_split_marks",
+                "off",
+                Optional[Union[str, Iterable[str]]],
+            ),
             ("silero_backend", "auto", str),
             ("silero_onnx_model_path", None, Optional[str]),
             ("silero_onnx_threads", 2, int),

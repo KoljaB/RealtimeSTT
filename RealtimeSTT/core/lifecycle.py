@@ -38,6 +38,7 @@ def start_recording(recorder, frames=None):
     recorder.text_storage = []
     recorder.realtime_stabilized_text = ""
     recorder.realtime_stabilized_safetext = ""
+    recorder._force_current_recording_lowercase_start = False
     recorder.realtime_observation_sequence = 0
     recorder.realtime_recording_id = (
         getattr(recorder, "realtime_recording_id", 0) + 1
@@ -178,6 +179,8 @@ def wait_for_recorded_audio(recorder):
 
             logger.debug('Waiting for recording stop')
             while not recorder.interrupt_stop_event.is_set():
+                if not recorder.recorded_audio_queue.empty():
+                    break
                 if (recorder.stop_recording_event.wait(timeout=0.02)):
                     break
 
@@ -188,12 +191,22 @@ def wait_for_recorded_audio(recorder):
             frames = queued_recording["frames"]
             backdate_stop_seconds = queued_recording["backdate_stop_seconds"]
             backdate_resume_seconds = queued_recording["backdate_resume_seconds"]
+            recorder._current_transcription_force_lowercase_start = (
+                queued_recording.get("force_lowercase_start", False)
+            )
+            if recorder.is_recording:
+                recorder.stop_recording_event.clear()
         else:
             frames = recorder.frames
             if len(frames) == 0:
                 frames = recorder.last_frames
             backdate_stop_seconds = recorder.backdate_stop_seconds
             backdate_resume_seconds = recorder.backdate_resume_seconds
+            recorder._current_transcription_force_lowercase_start = getattr(
+                recorder,
+                "_force_current_recording_lowercase_start",
+                False,
+            )
 
         frames_to_read = set_audio_from_frames(
             recorder,

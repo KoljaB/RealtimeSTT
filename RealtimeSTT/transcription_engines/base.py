@@ -25,6 +25,7 @@ class TranscriptionResult:
 
     text: str
     info: TranscriptionInfo = field(default_factory=TranscriptionInfo)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -128,7 +129,7 @@ class BaseTranscriptionEngine(ABC):
         self.transcribe(audio, language="en", use_prompt=False)
 
     @abstractmethod
-    def transcribe(self, audio, language=None, use_prompt=True) -> TranscriptionResult:
+    def transcribe(self, audio, language=None, use_prompt=True, **kwargs) -> TranscriptionResult:
         """
         Transcribes audio and returns a normalized result.
         """

@@ -68,7 +68,7 @@ def run_audio_data_worker(
         """
         nonlocal input_device_index
 
-        def validate_device(device_index):
+        def validate_device(device_index, validation_rate):
             """
             Checks whether an input device can be opened and read.
             """
@@ -82,7 +82,7 @@ def run_audio_data_worker(
                 test_stream = audio_interface.open(
                     format=pyaudio.paInt16,
                     channels=1,
-                    rate=target_sample_rate,
+                    rate=validation_rate,
                     input=True,
                     frames_per_buffer=chunk_size,
                     input_device_index=device_index,
@@ -98,71 +98,124 @@ def run_audio_data_worker(
                     logger.debug("Device produced no data, invalid for recording.")
                     return False
 
-                logger.debug(f"Device index {device_index} successfully validated.")
+                logger.debug(
+                    f"Device index {device_index} successfully validated "
+                    f"at {validation_rate} Hz."
+                )
                 return True
 
             except Exception as e:
-                logger.debug(f"Device validation failed for index {device_index}: {e}")
+                logger.debug(
+                    f"Device validation failed for index {device_index} "
+                    f"at {validation_rate} Hz: {e}"
+                )
                 return False
 
-        while not shutdown_event.is_set():
+        try:
+            input_devices = []
+            device_count = audio_interface.get_device_count()
+            logger.debug(f"Found {device_count} total audio devices on the system.")
+            for i in range(device_count):
+                try:
+                    device_info = audio_interface.get_device_info_by_index(i)
+                    if device_info.get('maxInputChannels', 0) > 0:
+                        input_devices.append(i)
+                except Exception as e:
+                    logger.debug(f"Could not retrieve info for device index {i}: {e}")
+                    continue
+
+            logger.debug(f"Available input devices with input channels: {input_devices}")
+            if not input_devices:
+                raise Exception("No input devices found")
+
+            if input_device_index is None or input_device_index not in input_devices:
+                try:
+                    default_device = audio_interface.get_default_input_device_info()
+                    logger.debug(f"Default device info: {default_device}")
+                    if validate_device(default_device['index'], sample_rate):
+                        input_device_index = default_device['index']
+                        logger.debug(f"Default device {input_device_index} selected.")
+                except Exception:
+                    logger.debug("Default device validation failed, checking other devices...")
+                    for device_index in input_devices:
+                        if validate_device(device_index, sample_rate):
+                            input_device_index = device_index
+                            logger.debug(f"Device {input_device_index} selected.")
+                            break
+                    else:
+                        raise Exception("No working input devices found")
+
+            if not validate_device(input_device_index, sample_rate):
+                raise Exception("Selected device validation failed")
+
+            logger.debug(f"Opening stream with device index {input_device_index}, "
+                        f"sample_rate={sample_rate}, chunk_size={chunk_size}")
+            stream = audio_interface.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=sample_rate,
+                input=True,
+                frames_per_buffer=chunk_size,
+                input_device_index=input_device_index,
+            )
+
+            logger.info(f"Microphone connected and validated (device index: {input_device_index}, "
+                        f"sample rate: {sample_rate}, chunk size: {chunk_size})")
+            return stream
+
+        except Exception as e:
+            logger.debug(
+                f"Microphone connection failed at {sample_rate} Hz: {e}",
+                exc_info=True,
+            )
+            raise
+
+    def try_setup_audio_once():
+        """
+        Attempts to create the microphone stream using configured fallback rates.
+        """
+        nonlocal audio_interface, stream, device_sample_rate, input_device_index
+
+        if audio_interface is None:
+            logger.debug("Creating PyAudio interface...")
+            audio_interface = pyaudio.PyAudio()
+
+        if input_device_index is None:
             try:
-                input_devices = []
-                device_count = audio_interface.get_device_count()
-                logger.debug(f"Found {device_count} total audio devices on the system.")
-                for i in range(device_count):
-                    try:
-                        device_info = audio_interface.get_device_info_by_index(i)
-                        if device_info.get('maxInputChannels', 0) > 0:
-                            input_devices.append(i)
-                    except Exception as e:
-                        logger.debug(f"Could not retrieve info for device index {i}: {e}")
-                        continue
-
-                logger.debug(f"Available input devices with input channels: {input_devices}")
-                if not input_devices:
-                    raise Exception("No input devices found")
-
-                if input_device_index is None or input_device_index not in input_devices:
-                    try:
-                        default_device = audio_interface.get_default_input_device_info()
-                        logger.debug(f"Default device info: {default_device}")
-                        if validate_device(default_device['index']):
-                            input_device_index = default_device['index']
-                            logger.debug(f"Default device {input_device_index} selected.")
-                    except Exception:
-                        logger.debug("Default device validation failed, checking other devices...")
-                        for device_index in input_devices:
-                            if validate_device(device_index):
-                                input_device_index = device_index
-                                logger.debug(f"Device {input_device_index} selected.")
-                                break
-                        else:
-                            raise Exception("No working input devices found")
-
-                if not validate_device(input_device_index):
-                    raise Exception("Selected device validation failed")
-
-                logger.debug(f"Opening stream with device index {input_device_index}, "
-                            f"sample_rate={sample_rate}, chunk_size={chunk_size}")
-                stream = audio_interface.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=sample_rate,
-                    input=True,
-                    frames_per_buffer=chunk_size,
-                    input_device_index=input_device_index,
-                )
-
-                logger.info(f"Microphone connected and validated (device index: {input_device_index}, "
-                            f"sample rate: {sample_rate}, chunk size: {chunk_size})")
-                return stream
-
-            except Exception as e:
-                logger.error(f"Microphone connection failed: {e}. Retrying...", exc_info=True)
+                default_device = audio_interface.get_default_input_device_info()
+                input_device_index = default_device['index']
+                logger.debug(f"No device index supplied; using default device {input_device_index}")
+            except OSError as e:
+                logger.debug(f"Default device retrieval failed: {e}")
                 input_device_index = None
-                time.sleep(3)  # Wait before retrying
+
+        # Prefer the VAD-native rate, then fall back to device-supported rates.
+        sample_rates_to_try = [target_sample_rate]
+        if input_device_index is not None:
+            highest_rate = get_highest_sample_rate(audio_interface, input_device_index)
+            if highest_rate != target_sample_rate:
+                sample_rates_to_try.append(highest_rate)
+        else:
+            sample_rates_to_try.append(48000)
+
+        logger.debug(f"Sample rates to try for device {input_device_index}: {sample_rates_to_try}")
+
+        for rate in sample_rates_to_try:
+            try:
+                device_sample_rate = rate
+                logger.debug(f"Attempting to initialize audio stream at {device_sample_rate} Hz.")
+                stream = initialize_audio_stream(audio_interface, device_sample_rate, chunk_size)
+                if stream is not None:
+                    logger.debug(
+                        f"Audio recording initialized successfully at {device_sample_rate} Hz, "
+                        f"reading {chunk_size} frames at a time"
+                    )
+                    return True
+            except Exception as e:
+                logger.warning(f"Failed to initialize audio stream at {device_sample_rate} Hz: {e}")
                 continue
+
+        raise Exception("Failed to initialize audio stream with all sample rates.")
 
     def preprocess_audio(chunk, original_sample_rate, target_sample_rate):
         """
@@ -199,53 +252,17 @@ def run_audio_data_worker(
         Creates or recreates the microphone stream.
         """
         nonlocal audio_interface, stream, device_sample_rate, input_device_index
-        try:
-            if audio_interface is None:
-                logger.debug("Creating PyAudio interface...")
-                audio_interface = pyaudio.PyAudio()
+        while not shutdown_event.is_set():
+            try:
+                return try_setup_audio_once()
+            except Exception as e:
+                logger.exception(f"Error initializing pyaudio audio recording: {e}")
+                input_device_index = None
+                time.sleep(3)
 
-            if input_device_index is None:
-                try:
-                    default_device = audio_interface.get_default_input_device_info()
-                    input_device_index = default_device['index']
-                    logger.debug(f"No device index supplied; using default device {input_device_index}")
-                except OSError as e:
-                    logger.debug(f"Default device retrieval failed: {e}")
-                    input_device_index = None
-
-            # Prefer the VAD-native rate, then fall back to device-supported rates.
-            sample_rates_to_try = [16000]
-            if input_device_index is not None:
-                highest_rate = get_highest_sample_rate(audio_interface, input_device_index)
-                if highest_rate != 16000:
-                    sample_rates_to_try.append(highest_rate)
-            else:
-                sample_rates_to_try.append(48000)
-
-            logger.debug(f"Sample rates to try for device {input_device_index}: {sample_rates_to_try}")
-
-            for rate in sample_rates_to_try:
-                try:
-                    device_sample_rate = rate
-                    logger.debug(f"Attempting to initialize audio stream at {device_sample_rate} Hz.")
-                    stream = initialize_audio_stream(audio_interface, device_sample_rate, chunk_size)
-                    if stream is not None:
-                        logger.debug(
-                            f"Audio recording initialized successfully at {device_sample_rate} Hz, "
-                            f"reading {chunk_size} frames at a time"
-                        )
-                        return True
-                except Exception as e:
-                    logger.warning(f"Failed to initialize audio stream at {device_sample_rate} Hz: {e}")
-                    continue
-
-            raise Exception("Failed to initialize audio stream with all sample rates.")
-
-        except Exception as e:
-            logger.exception(f"Error initializing pyaudio audio recording: {e}")
-            if audio_interface:
-                audio_interface.terminate()
-            return False
+        if audio_interface:
+            audio_interface.terminate()
+        return False
 
     logger.debug(f"Starting audio data worker with target_sample_rate={target_sample_rate}, "
                 f"buffer_size={buffer_size}, input_device_index={input_device_index}")

@@ -36,6 +36,7 @@ ENGINE_CLASS_PATHS = {
     "kroko": (".kroko_onnx_engine", "KrokoOnnxEngine"),
     "banafo_kroko": (".kroko_onnx_engine", "KrokoOnnxEngine"),
     "funasr": (".funasr_engine", "FunASREngine"),
+    "fun_asr": (".funasr_engine", "FunASREngine"),
 }
 
 

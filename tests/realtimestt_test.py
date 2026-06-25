@@ -1,8 +1,8 @@
 EXTENDED_LOGGING = False
 
-# set to 0 to deactivate writing to keyboard
-# try lower values like 0.002 (fast) first, take higher values like 0.05 in case it fails
+# set to 0 to deactivate writing to the focused window
 WRITE_TO_KEYBOARD_INTERVAL = 0.002
+CLIPBOARD_RESTORE_DELAY = 0.1
 
 if __name__ == '__main__':
 
@@ -15,8 +15,8 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--rt-model', '--realtime_model_type', type=str, # no default='tiny',
                         help='Model size for real-time transcription. Options same as --model.  This is used only if real-time transcription is enabled (enable_realtime_transcription). Default is tiny.en.')
     
-    parser.add_argument('-l', '--lang', '--language', type=str, # no default='en',
-                help='Language code for the STT model to transcribe in a specific language. Leave this empty for auto-detection based on input audio. Default is en. List of supported language codes: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110')
+    parser.add_argument('-l', '--lang', '--language', dest='language', type=str, # no default='en',
+                help='Language code forwarded to AudioToTextRecorder. Leave this empty for auto-detection based on input audio. Default is en. List of supported language codes: https://github.com/openai/whisper/blob/main/whisper/tokenizer.py#L11-L110')
     
     parser.add_argument('-d', '--root', type=str, # no default=None,
                 help='Root directory where the Whisper models are downloaded to.')
@@ -28,7 +28,10 @@ if __name__ == '__main__':
         },
         {
             'import_name': 'pyautogui',
-        }        
+        },
+        {
+            'import_name': 'pyperclip',
+        }
     ])
 
     if EXTENDED_LOGGING:
@@ -50,6 +53,8 @@ if __name__ == '__main__':
     from colorama import Fore, Style
     import colorama
     import pyautogui
+    import pyperclip
+    import time
 
     if os.name == "nt" and (3, 8) <= sys.version_info < (3, 99):
         from torchaudio._extension.utils import _init_dll_path
@@ -66,9 +71,9 @@ if __name__ == '__main__':
     recorder = None
     displayed_text = ""  # Used for tracking text that was already displayed
 
-    end_of_sentence_detection_pause = 0.45
-    unknown_sentence_detection_pause = 0.7
-    mid_sentence_detection_pause = 2.0
+    end_of_sentence_detection_pause = 0.9
+    unknown_sentence_detection_pause = 1.2
+    mid_sentence_detection_pause = 2.5
 
     def clear_console():
         os.system('clear' if os.name == 'posix' else 'cls')
@@ -96,6 +101,10 @@ if __name__ == '__main__':
     def text_detected(text):
         global prev_text, displayed_text, rich_text_stored
 
+        stable_text = ""
+        if hasattr(text, "display_text"):
+            stable_text = preprocess_text(text.stable_text or "")
+            text = text.display_text or text.raw_observation_text
         text = preprocess_text(text)
 
         sentence_end_marks = ['.', '!', '?', '。'] 
@@ -108,18 +117,16 @@ if __name__ == '__main__':
 
         prev_text = text
 
-        # Build Rich Text with alternating colors
         rich_text = Text()
-        for i, sentence in enumerate(full_sentences):
-            if i % 2 == 0:
-                #rich_text += Text(sentence, style="bold yellow") + Text(" ")
-                rich_text += Text(sentence, style="yellow") + Text(" ")
-            else:
-                rich_text += Text(sentence, style="cyan") + Text(" ")
+        for index, sentence in enumerate(full_sentences):
+            style = "yellow" if index % 2 == 0 else "blue"
+            rich_text += Text(sentence, style=style) + Text(" ")
         
         # If the current text is not a sentence-ending, display it in real-time
         if text:
-            rich_text += Text(text, style="bold yellow")
+            stable_len = len(stable_text) if text.casefold().startswith(stable_text.casefold()) else 0
+            rich_text += Text(text[:stable_len], style="white")
+            rich_text += Text(text[stable_len:], style="grey50")
 
         new_displayed_text = rich_text.plain
 
@@ -146,7 +153,16 @@ if __name__ == '__main__':
         text_detected("")
 
         if WRITE_TO_KEYBOARD_INTERVAL:
-            pyautogui.write(f"{text} ", interval=WRITE_TO_KEYBOARD_INTERVAL)  # Adjust interval as needed
+            write_text_to_keyboard(f"{text} ")
+
+    def write_text_to_keyboard(text):
+        previous_clipboard = pyperclip.paste()
+        try:
+            pyperclip.copy(text)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(CLIPBOARD_RESTORE_DELAY)
+        finally:
+            pyperclip.copy(previous_clipboard)
 
     # Recorder configuration
     recorder_config = {
@@ -162,15 +178,15 @@ if __name__ == '__main__':
         'min_length_of_recording': 1.1,        
         'min_gap_between_recordings': 0,                
         'enable_realtime_transcription': True,
-        'realtime_processing_pause': 1,
-        'on_realtime_transcription_update': text_detected,
+        'realtime_punctuation_split_marks': 'sentence,comma',
+        'realtime_processing_pause': 0.01,
+        'on_realtime_text_stabilization_update': text_detected,
         #'on_realtime_transcription_stabilized': text_detected,
         'silero_deactivity_detection': True,
         'early_transcription_on_silence': 0,
         'realtime_transcription_use_syllable_boundaries': True,
         'realtime_boundary_detector_sensitivity': 0.6,
-        #'realtime_boundary_followup_delays': (0.05, 0.2),
-        'realtime_boundary_followup_delays': (0.5),
+        'realtime_boundary_followup_delays': (0.05, 0.2),
         'beam_size': 5,
         'beam_size_realtime': 3,
         # 'batch_size': 0,
@@ -195,8 +211,8 @@ if __name__ == '__main__':
     if args.rt_model is not None:
         recorder_config['realtime_model_type'] = args.rt_model
         print(f"Argument 'realtime_model_type' set to {recorder_config['realtime_model_type']}")
-    if args.lang is not None:
-        recorder_config['language'] = args.lang
+    if args.language is not None:
+        recorder_config['language'] = args.language
         print(f"Argument 'language' set to {recorder_config['language']}")
     if args.root is not None:
         recorder_config['download_root'] = args.root

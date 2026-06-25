@@ -69,6 +69,20 @@ def _set_state_after_transcription(recorder):
         set_recorder_state(recorder, "inactive")
 
 
+def _consume_current_transcription_force_lowercase_start(recorder):
+    """
+    Returns and clears the one-shot lowercase-start flag.
+    """
+    force_lowercase = getattr(
+        recorder,
+        "_current_transcription_force_lowercase_start",
+        False,
+    )
+    if force_lowercase:
+        recorder._current_transcription_force_lowercase_start = False
+    return force_lowercase
+
+
 def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
     """
     Runs final transcription and formats the resulting text.
@@ -81,6 +95,7 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
         if audio_bytes is None or len(audio_bytes) == 0:
             print("No audio data available for transcription")
             #logger.info("No audio data available for transcription")
+            _consume_current_transcription_force_lowercase_start(recorder)
             return ""
 
         try:
@@ -125,6 +140,8 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
                         recorder.ensure_sentence_ends_with_period
                     ),
                 )
+                if _consume_current_transcription_force_lowercase_start(recorder):
+                    transcription = transcription[:1].lower() + transcription[1:]
                 end_time = time.time()
                 transcription_time = end_time - start_time
 
@@ -135,8 +152,10 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True):
                         logger.debug(f"Model {recorder.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                 return "" if recorder.interrupt_stop_event.is_set() else transcription
             else:
+                _consume_current_transcription_force_lowercase_start(recorder)
                 logger.error(f"Transcription error: {result}")
                 raise Exception(result)
         except Exception as e:
+            _consume_current_transcription_force_lowercase_start(recorder)
             logger.error(f"Error during transcription: {str(e)}", exc_info=True)
             raise e

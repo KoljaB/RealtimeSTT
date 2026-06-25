@@ -9,17 +9,19 @@ Recommended default local Whisper install:
 python -m pip install "RealtimeSTT[faster-whisper]"
 ```
 
-Core package only, without a transcription engine or wake-word backend:
+Base recorder/audio runtime, without a transcription engine or wake-word
+backend:
 
 ```bash
 python -m pip install RealtimeSTT
 ```
 
-The core install includes microphone/audio support, WebRTC VAD, recorder VAD
-logic, websocket client/server dependencies, and shared audio utilities. For a
-self-contained local Silero VAD backend, install `recommended`, `default`, or
-`silero-onnx-cpu`. It does not install `faster-whisper`, Porcupine, or
-OpenWakeWord unless you request those extras.
+The base install still includes microphone/audio support, WebRTC VAD, recorder
+VAD logic, websocket client/server dependencies, and shared audio utilities.
+For a self-contained local Silero VAD backend, install `recommended`,
+`default`, or `silero-onnx-cpu`. It does not install `faster-whisper`,
+Porcupine, OpenWakeWord, or another optional ASR/wake-word backend unless you
+request the matching extra.
 
 ## Python Environment
 

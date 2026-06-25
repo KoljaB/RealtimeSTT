@@ -11,7 +11,10 @@ import numpy as np
 
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
-    from RealtimeSTT.core.recording_buffers import get_next_recorded_audio
+    from RealtimeSTT.core.recording_buffers import (
+        get_next_recorded_audio,
+        queue_recorded_audio,
+    )
     from RealtimeSTT.core.voice_activity import (
         check_voice_activity,
         is_silero_speech,
@@ -20,6 +23,7 @@ try:
 except Exception as exc:  # pragma: no cover - optional runtime deps may be absent
     AudioToTextRecorder = None
     get_next_recorded_audio = None
+    queue_recorded_audio = None
     check_voice_activity = None
     is_silero_speech = None
     is_voice_active = None
@@ -184,6 +188,46 @@ class SlowFinalTranscriptionAudioGapReproTests(unittest.TestCase):
 
         expected = np.frombuffer(b"".join(chunks), dtype=np.int16).astype(np.float32) / 32768.0
 
+        self.assertFalse(recorder.has_pending_recordings())
+        np.testing.assert_allclose(recorder.audio, expected)
+
+    def test_wait_audio_consumes_queued_recording_while_still_recording(self):
+        samples, sample_rate = read_wav_samples(REFERENCE_AUDIO)
+        buffer_size = 512
+        chunks = list(chunk_samples(samples[:sample_rate], buffer_size))
+
+        recorder = AudioToTextRecorder.__new__(AudioToTextRecorder)
+        recorder.sample_rate = sample_rate
+        recorder.frames = chunks.copy()
+        recorder.last_frames = []
+        recorder.audio = None
+        recorder.recorded_audio_queue = queue.Queue()
+        recorder.backdate_stop_seconds = 0.0
+        recorder.backdate_resume_seconds = 0.0
+        recorder.is_recording = True
+        recorder.interrupt_stop_event = threading.Event()
+        recorder.start_recording_event = threading.Event()
+        recorder.stop_recording_event = threading.Event()
+        recorder.listen_start = 0
+        recorder.use_wake_words = False
+        recorder.is_shut_down = False
+        recorder.start_recording_on_voice_activity = False
+        recorder.stop_recording_on_voice_deactivity = False
+        recorder.continuous_listening = False
+
+        def queue_later():
+            time.sleep(0.05)
+            queue_recorded_audio(recorder, chunks)
+
+        thread = threading.Thread(target=queue_later)
+        thread.start()
+        with mock.patch("RealtimeSTT.core.lifecycle.set_recorder_state"):
+            recorder.wait_audio()
+        thread.join(timeout=1.0)
+
+        expected = np.frombuffer(b"".join(chunks), dtype=np.int16).astype(np.float32) / 32768.0
+        self.assertTrue(recorder.is_recording)
+        self.assertFalse(recorder.stop_recording_event.is_set())
         self.assertFalse(recorder.has_pending_recordings())
         np.testing.assert_allclose(recorder.audio, expected)
 

@@ -1,5 +1,31 @@
 # Release Notes
 
+## 1.0.3 - 2026-06-25
+
+### Added
+
+- Added the optional FunASR/SenseVoice transcription backend and install extra.
+- Added `AudioToTextRecorder.feed_audio_file()` for feeding audio files through
+  the manual audio input path.
+- Added `TranscriptionResult.metadata` support and word timestamp plumbing for
+  backends that can return word-level timing.
+- Added opt-in realtime punctuation splitting through
+  `realtime_punctuation_split_marks`. The default remains `"off"`; `"sentence"`
+  is the supported production mode for `.`, `?`, and `!`.
+
+### Changed
+
+- Hardened realtime punctuation splitting with repeated-observation checks,
+  timestamp validation, guarded dash handling, and synchronized split-state
+  bookkeeping.
+- Expanded install-extra validation to include the FunASR extra and the `all`
+  extra.
+
+### Notes
+
+- Comma, dash, ellipsis, and `all` punctuation split modes remain available for
+  experiments but are not promoted as production-supported in this release.
+
 ## 1.0.2 - 2026-05-31
 
 ### Changed

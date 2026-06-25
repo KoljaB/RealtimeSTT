@@ -21,7 +21,10 @@ from .core.lifecycle import (
     wait_for_recorded_audio,
     wakeup_recorder,
 )
-from .core.manual_audio_input import feed_audio as feed_manual_audio
+from .core.manual_audio_input import (
+    feed_audio as feed_manual_audio,
+    feed_audio_file as feed_manual_audio_file,
+)
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
@@ -191,6 +194,9 @@ class AudioToTextRecorder:
                  transcription_executor: Optional[Callable] = None,
                  realtime_transcription_executor: Optional[Callable] = None,
                  on_realtime_text_stabilization_update=None,
+                 realtime_punctuation_split_marks: Optional[
+                     Union[str, Iterable[str]]
+                 ] = "off",
                  silero_backend: str = "auto",
                  silero_onnx_model_path: Optional[str] = None,
                  silero_onnx_threads: int = 2,
@@ -301,6 +307,9 @@ class AudioToTextRecorder:
             slight delay compared to the regular real-time updates.
         - on_realtime_text_stabilization_update = A callback function that is
             triggered with a structured realtime stabilization event.
+        - realtime_punctuation_split_marks (str or iterable, default="off"):
+            Opt-in punctuation marks for splitting long active realtime
+            recordings. Use "sentence" for the supported `. ? !` mode.
         - realtime_batch_size (int, default=16): Batch size for the real-time
             transcription model.
 
@@ -597,6 +606,7 @@ class AudioToTextRecorder:
             on_realtime_text_stabilization_update=(
                 on_realtime_text_stabilization_update
             ),
+            realtime_punctuation_split_marks=realtime_punctuation_split_marks,
             silero_backend=silero_backend,
             silero_onnx_model_path=silero_onnx_model_path,
             silero_onnx_threads=silero_onnx_threads,
@@ -696,10 +706,31 @@ class AudioToTextRecorder:
         Feeds an audio chunk into the manual audio input pipeline.
 
         Args:
-        - chunk: Audio bytes or a NumPy audio array.
+        - chunk: Audio bytes, a NumPy audio array, or an audio file path.
         - original_sample_rate: Sample rate of the provided audio chunk.
         """
         return feed_manual_audio(self, chunk, original_sample_rate)
+
+    def feed_audio_file(
+            self,
+            filenames,
+            normalize=True,
+            target_peak=0.95,
+    ):
+        """
+        Feeds one or more audio files into the manual audio input pipeline.
+
+        Args:
+        - filenames: Audio file path or iterable of audio file paths.
+        - normalize: Whether to peak-normalize decoded audio before feeding.
+        - target_peak: Target absolute peak when normalization is enabled.
+        """
+        return feed_manual_audio_file(
+            self,
+            filenames,
+            normalize=normalize,
+            target_peak=target_peak,
+        )
 
     # Public lifecycle/control API.
 

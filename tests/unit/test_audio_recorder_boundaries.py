@@ -138,6 +138,7 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
                 transcription_executor=transcription_executor,
                 realtime_transcription_executor=realtime_transcription_executor,
                 on_realtime_text_stabilization_update=callback,
+                realtime_punctuation_split_marks="sentence,comma",
                 silero_backend="raw_onnx",
                 silero_onnx_model_path="silero.onnx",
                 silero_onnx_threads=1,
@@ -167,6 +168,7 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
             init_args["realtime_transcription_executor"],
             realtime_transcription_executor,
         )
+        self.assertEqual(init_args["realtime_punctuation_split_marks"], "sentence,comma")
         self.assertIs(init_args["on_recording_start"], callback)
         self.assertTrue(init_args["use_extended_logging"])
 

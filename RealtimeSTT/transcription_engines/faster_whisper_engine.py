@@ -53,7 +53,25 @@ class FasterWhisperEngine(BaseTranscriptionEngine):
             model = batched_inference_pipeline(model=model)
         self.model = model
 
-    def transcribe(self, audio, language=None, use_prompt=True):
+    def _batched_clip_timestamps(self, audio):
+        """
+        Returns full-audio clip windows for batched decoding without VAD.
+        """
+
+        wrapped_model = getattr(self.model, "model", self.model)
+        feature_extractor = getattr(wrapped_model, "feature_extractor", None)
+        sample_rate = getattr(feature_extractor, "sampling_rate", 16000)
+        chunk_length = getattr(feature_extractor, "chunk_length", 30)
+        duration = audio.size / float(sample_rate)
+        clips = []
+        start = 0.0
+        while start < duration:
+            end = min(start + chunk_length, duration)
+            clips.append({"start": start, "end": end})
+            start = end
+        return clips or [{"start": 0.0, "end": duration}]
+
+    def transcribe(self, audio, language=None, use_prompt=True, word_timestamps=False):
         """
         Transcribes audio and returns normalized faster-whisper output.
         """
@@ -65,15 +83,32 @@ class FasterWhisperEngine(BaseTranscriptionEngine):
             "suppress_tokens": self.config.suppress_tokens,
             "vad_filter": self.config.vad_filter,
         }
+        if word_timestamps:
+            kwargs["word_timestamps"] = True
         if self.config.batch_size > 0:
             kwargs["batch_size"] = self.config.batch_size
+            if not self.config.vad_filter:
+                kwargs["clip_timestamps"] = self._batched_clip_timestamps(audio)
 
         segments, info = self.model.transcribe(audio, **kwargs)
+        segments = list(segments)
         text = " ".join(segment.text for segment in segments).strip()
+        metadata = {}
+        if word_timestamps:
+            metadata["words"] = [
+                {
+                    "word": word.word,
+                    "start": word.start,
+                    "end": word.end,
+                }
+                for segment in segments
+                for word in (getattr(segment, "words", None) or [])
+            ]
         return TranscriptionResult(
             text=text,
             info=TranscriptionInfo(
                 language=getattr(info, "language", None),
                 language_probability=getattr(info, "language_probability", 0.0),
             ),
+            metadata=metadata,
         )

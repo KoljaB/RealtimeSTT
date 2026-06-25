@@ -5,7 +5,7 @@ import setuptools
 from setuptools.command.build_py import build_py as _build_py
 
 
-current_version = "1.0.2"
+current_version = "1.0.3"
 
 
 INSTALL_GUIDE = """
@@ -20,9 +20,15 @@ Main ASR backend only, without the faster packaged Silero ONNX Runtime VAD:
 
     pip install "realtimestt[faster-whisper]"
 
-Core package only, without a transcription engine or wake-word backend:
+Base recorder/audio runtime, without a transcription engine or wake-word
+backend:
 
     pip install realtimestt
+
+The base install still includes microphone/audio support, WebRTC VAD, recorder
+VAD logic, websocket client/server dependencies, and shared audio utilities. It
+does not install `faster-whisper`, Porcupine, OpenWakeWord, or another optional
+ASR/wake-word backend unless you request the matching extra.
 
 Install multiple extras by separating them with commas:
 
@@ -44,6 +50,7 @@ Available extras include:
 - moonshine, granite, cohere: aliases for the Transformers dependency set
 - qwen: Qwen ASR backend
 - qwen-vllm: Qwen ASR with vLLM extras
+- funasr: FunASR/SenseVoice backend
 - kroko-builder: helper command for building/installing Kroko-ONNX plus Hugging Face model downloads
 - porcupine: Porcupine wake-word backend
 - openwakeword: OpenWakeWord wake-word backend
@@ -183,6 +190,7 @@ omnilingual_asr_requirements = [
 ]
 qwen_requirements = ["qwen-asr"]
 qwen_vllm_requirements = ["qwen-asr[vllm]"]
+funasr_requirements = ["funasr"]
 kroko_builder_requirements = ["huggingface_hub"]
 porcupine_requirements = [requirement("pvporcupine")]
 openwakeword_requirements = [requirement("openwakeword")]
@@ -197,6 +205,7 @@ all_optional_requirements = unique_requirements(
     + parakeet_requirements
     + omnilingual_asr_requirements
     + qwen_requirements
+    + funasr_requirements
     + kroko_builder_requirements
     + porcupine_requirements
     + openwakeword_requirements
@@ -229,6 +238,10 @@ extras_require = {
     "qwen": qwen_requirements,
     "qwen3-asr": qwen_requirements,
     "qwen-vllm": qwen_vllm_requirements,
+    "funasr": funasr_requirements,
+    "fun-asr": funasr_requirements,
+    "fun_asr": funasr_requirements,
+    "sensevoice": funasr_requirements,
     "kroko-builder": kroko_builder_requirements,
     "porcupine": porcupine_requirements,
     "pvporcupine": porcupine_requirements,

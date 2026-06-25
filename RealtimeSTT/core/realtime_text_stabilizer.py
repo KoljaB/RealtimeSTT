@@ -431,6 +431,7 @@ class RealtimeTextStabilizer:
             projection,
             0,
             new_consensus_frontier,
+            observation.completed_at_monotonic,
         )
         internal_revision = bool(
             old_consensus_comparison_text
@@ -446,6 +447,7 @@ class RealtimeTextStabilizer:
                     projection,
                     len(old_consensus_comparison_text),
                     new_consensus_frontier,
+                    observation.completed_at_monotonic,
                 )
             self._consensus_comparison_text = new_consensus_comparison_text
             self._consensus_text = new_consensus_text
@@ -463,6 +465,7 @@ class RealtimeTextStabilizer:
                 projection,
                 old_public_frontier,
                 len(self._consensus_comparison_text),
+                observation.completed_at_monotonic,
             )
             self._stable_text += public_delta
             self._stable_comparison_text = self._consensus_comparison_text
@@ -665,6 +668,40 @@ class RealtimeTextStabilizer:
 
         return False
 
+    def _punctuation_is_stable(
+        self,
+        offset: int,
+        punctuation: str,
+        comparison_text: str,
+        now: float,
+    ) -> bool:
+        """
+        Checks whether punctuation has enough stable evidence.
+        """
+
+        evidence = self._evidence_for_offset(offset, punctuation, now)
+        if not _evidence_passes(
+            evidence,
+            self.config.punctuation_min_confirmations,
+            self.config.min_char_evidence_span_seconds,
+        ):
+            return False
+
+        if not self.config.punctuation_requires_stable_right_context:
+            return True
+
+        stable_right_context = 0
+        for index in range(offset, len(comparison_text)):
+            char = comparison_text[index]
+            if char == " ":
+                continue
+            if self._char_is_stable(index, char, now):
+                stable_right_context += 1
+            if stable_right_context >= self.config.space_right_context_min_chars:
+                return True
+
+        return False
+
     def _evidence_for_offset(
         self,
         offset: int,
@@ -727,12 +764,36 @@ class RealtimeTextStabilizer:
                     audio_end_sample_exclusive=observation.audio_end_sample_exclusive,
                 )
             )
+        for offset in range(1, len(record.projection.comparison_text)):
+            punctuation = _punctuation_before_offset(record.projection, offset)
+            if not punctuation:
+                continue
+            key = (offset, punctuation)
+            points = self._evidence.setdefault(key, [])
+            if points and points[-1].sequence == observation.sequence:
+                continue
+            if (
+                self.config.require_audio_progress_for_evidence
+                and points
+                and observation.audio_end_sample_exclusive
+                <= max(point.audio_end_sample_exclusive for point in points)
+            ):
+                continue
+            points.append(
+                _EvidencePoint(
+                    sequence=observation.sequence,
+                    completed_at_monotonic=observation.completed_at_monotonic,
+                    audio_start_sample=observation.audio_start_sample,
+                    audio_end_sample_exclusive=observation.audio_end_sample_exclusive,
+                )
+            )
 
     def _build_delta(
         self,
         projection: _Projection,
         old_frontier: int,
         new_frontier: int,
+        now: float,
     ) -> str:
         """
         Builds the public delta for newly stable text.
@@ -740,6 +801,14 @@ class RealtimeTextStabilizer:
 
         parts: List[str] = []
         for offset in range(old_frontier, new_frontier):
+            punctuation = _punctuation_before_offset(projection, offset)
+            if punctuation and self._punctuation_is_stable(
+                offset,
+                punctuation,
+                projection.comparison_text,
+                now,
+            ):
+                parts.append(punctuation)
             char = projection.comparison_text[offset]
             if char == " ":
                 if parts and parts[-1] == " ":
@@ -981,6 +1050,13 @@ def _project_text(text: str) -> _Projection:
         raw_starts=tuple(raw_starts),
         raw_ends=tuple(raw_ends),
     )
+
+
+def _punctuation_before_offset(projection: _Projection, offset: int) -> str:
+    if offset <= 0 or offset >= len(projection.raw_starts):
+        return ""
+    raw = projection.raw[projection.raw_ends[offset - 1]:projection.raw_starts[offset]]
+    return "".join(char for char in raw if _is_punctuation(char))
 
 
 def _is_punctuation(char: str) -> bool:

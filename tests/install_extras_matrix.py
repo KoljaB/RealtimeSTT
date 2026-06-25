@@ -108,6 +108,15 @@ MATRIX = (
         ),
     ),
     MatrixCase(
+        name="funasr",
+        extras="funasr",
+        checks=BASE_CHECKS
+        + (
+            "dist:funasr",
+            "module:funasr",
+        ),
+    ),
+    MatrixCase(
         name="all",
         extras="all",
         checks=BASE_CHECKS
@@ -119,6 +128,8 @@ MATRIX = (
             "dist:transformers",
             "dist:qwen-asr",
             "dist:nemo_toolkit",
+            "dist:funasr",
+            "module:funasr",
             "dist:pvporcupine",
             "dist:openwakeword",
         ),
@@ -194,6 +205,8 @@ def run_case(case: MatrixCase, venv_root: Path, keep: bool) -> dict[str, object]
             return result
 
     py = python_executable(venv)
+    work_cwd = venv_root / "_work"
+    work_cwd.mkdir(parents=True, exist_ok=True)
     commands = (
         ("upgrade-pip", [str(py), "-m", "pip", "install", "-U", "pip", "setuptools", "wheel"]),
         ("install", [str(py), "-m", "pip", "install", case.install_target]),
@@ -201,7 +214,7 @@ def run_case(case: MatrixCase, venv_root: Path, keep: bool) -> dict[str, object]
     )
 
     for step, cmd in commands:
-        completed = run(cmd, cwd=Path("C:/tmp") if sys.platform == "win32" else Path("/tmp"))
+        completed = run(cmd, cwd=work_cwd)
         result["steps"].append({"step": step, "returncode": completed.returncode})
         if completed.returncode != 0:
             result["failed_step"] = step

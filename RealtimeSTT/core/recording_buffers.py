@@ -70,6 +70,7 @@ def queue_recorded_audio(
         frames,
         backdate_stop_seconds=0.0,
         backdate_resume_seconds=0.0,
+        force_lowercase_start=None,
 ):
     """
     Queues a completed recording for final transcription.
@@ -81,6 +82,11 @@ def queue_recorded_audio(
         "frames": copy.deepcopy(frames),
         "backdate_stop_seconds": backdate_stop_seconds,
         "backdate_resume_seconds": backdate_resume_seconds,
+        "force_lowercase_start": (
+            getattr(recorder, "_force_current_recording_lowercase_start", False)
+            if force_lowercase_start is None
+            else force_lowercase_start
+        ),
     })
 
 

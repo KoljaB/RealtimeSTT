@@ -132,7 +132,9 @@ class TranscriptionWorker:
         try:
             while not self.shutdown_event.is_set():
                 try:
-                    audio, language, use_prompt = self.queue.get(timeout=0.1)
+                    request = self.queue.get(timeout=0.1)
+                    audio, language, use_prompt = request[:3]
+                    options = request[3] if len(request) > 3 else {}
                     try:
                         logging.debug(f"Transcribing audio with language {language}")
                         start_t = time.time()
@@ -140,6 +142,7 @@ class TranscriptionWorker:
                             audio,
                             language=language,
                             use_prompt=use_prompt,
+                            **options,
                         )
                         elapsed = time.time() - start_t
                         logging.debug(
@@ -173,7 +176,7 @@ def run_transcription_worker(*args, **kwargs):
     worker.run()
 
 
-def call_transcription_executor(executor, audio, language, use_prompt):
+def call_transcription_executor(executor, audio, language, use_prompt, **options):
     """
     Calls object-style or function-style transcription executors.
     """
@@ -182,15 +185,17 @@ def call_transcription_executor(executor, audio, language, use_prompt):
             audio,
             language=language if language else None,
             use_prompt=use_prompt,
+            **options,
         )
     return executor(
         audio,
         language=language if language else None,
         use_prompt=use_prompt,
+        **options,
     )
 
 
-def submit_transcription_request(recorder, audio, language, use_prompt):
+def submit_transcription_request(recorder, audio, language, use_prompt, options=None):
     """
     Submits audio for final transcription.
     """
@@ -208,6 +213,7 @@ def submit_transcription_request(recorder, audio, language, use_prompt):
                     audio_copy,
                     language,
                     use_prompt,
+                    **(options or {}),
                 )
                 recorder._external_transcription_results.put(("success", result))
             except Exception as exc:
@@ -223,7 +229,10 @@ def submit_transcription_request(recorder, audio, language, use_prompt):
         thread.start()
         return
 
-    recorder.parent_transcription_pipe.send((audio, language, use_prompt))
+    request = (audio, language, use_prompt)
+    if options:
+        request = (audio, language, use_prompt, options)
+    recorder.parent_transcription_pipe.send(request)
     recorder.transcribe_count += 1
 
 
