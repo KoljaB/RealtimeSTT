@@ -172,6 +172,20 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
         self.assertIs(init_args["on_recording_start"], callback)
         self.assertTrue(init_args["use_extended_logging"])
 
+    def test_constructor_rejects_invalid_realtime_punctuation_marks_early(self):
+        from RealtimeSTT.audio_recorder import AudioToTextRecorder
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unsupported punctuation split mark",
+        ):
+            AudioToTextRecorder(
+                use_microphone=False,
+                spinner=False,
+                no_log_file=True,
+                realtime_punctuation_split_marks="sentence,semicolon",
+            )
+
     def test_audio_reader_starts_core_worker(self):
         from RealtimeSTT.core import initialization
 

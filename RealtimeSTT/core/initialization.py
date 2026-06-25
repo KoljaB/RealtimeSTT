@@ -14,7 +14,10 @@ import torch
 import torch.multiprocessing as mp
 import webrtcvad
 
-from .realtime import run_realtime_worker
+from .realtime import (
+    _normalize_realtime_punctuation_split_marks,
+    run_realtime_worker,
+)
 from .realtime_text_stabilizer import RealtimeTextStabilizer
 from .recording import run_recording_worker
 from ..transcription_engines import (
@@ -173,7 +176,9 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
         init_args["on_realtime_text_stabilization_update"]
     )
     recorder.realtime_punctuation_split_marks = (
-        init_args["realtime_punctuation_split_marks"]
+        _normalize_realtime_punctuation_split_marks(
+            init_args["realtime_punctuation_split_marks"]
+        )
     )
     recorder.debug_mode = init_args["debug_mode"]
     recorder.handle_buffer_overflow = init_args["handle_buffer_overflow"]
