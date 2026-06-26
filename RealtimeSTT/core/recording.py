@@ -340,11 +340,19 @@ def run_recording_worker(recorder):
 
                                 if self.use_extended_logging:
                                     logger.debug("Debug: early transcription request submit")
+                                options = None
+                                if getattr(
+                                    self,
+                                    "final_transcription_word_timestamps",
+                                    False,
+                                ):
+                                    options = {"word_timestamps": True}
                                 submit_transcription_request(
                                     self,
                                     audio,
                                     self.language,
                                     True,
+                                    options,
                                 )
                                 if self.use_extended_logging:
                                     logger.debug("Debug: early transcription request submit return")

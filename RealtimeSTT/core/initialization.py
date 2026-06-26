@@ -287,6 +287,9 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
     recorder.use_extended_logging = init_args["use_extended_logging"]
     recorder.faster_whisper_vad_filter = init_args["faster_whisper_vad_filter"]
     recorder.normalize_audio = init_args["normalize_audio"]
+    recorder.final_transcription_word_timestamps = init_args[
+        "final_transcription_word_timestamps"
+    ]
     recorder.awaiting_speech_end = False
     recorder.start_callback_in_new_thread = (
         init_args["start_callback_in_new_thread"]

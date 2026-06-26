@@ -79,6 +79,7 @@ def build_recorder_init_args(
     use_extended_logging,
     faster_whisper_vad_filter,
     normalize_audio,
+    final_transcription_word_timestamps,
     start_callback_in_new_thread,
     realtime_transcription_use_syllable_boundaries,
     realtime_boundary_detector_sensitivity,
@@ -174,6 +175,9 @@ def build_recorder_init_args(
         "use_extended_logging": use_extended_logging,
         "faster_whisper_vad_filter": faster_whisper_vad_filter,
         "normalize_audio": normalize_audio,
+        "final_transcription_word_timestamps": (
+            final_transcription_word_timestamps
+        ),
         "start_callback_in_new_thread": start_callback_in_new_thread,
         "realtime_transcription_use_syllable_boundaries": (
             realtime_transcription_use_syllable_boundaries

@@ -184,6 +184,7 @@ class AudioToTextRecorder:
                  use_extended_logging: bool = False,
                  faster_whisper_vad_filter: bool = True,
                  normalize_audio: bool = False,
+                 final_transcription_word_timestamps: bool = False,
                  start_callback_in_new_thread: bool = False,
                  realtime_transcription_use_syllable_boundaries: bool = False,
                  realtime_boundary_detector_sensitivity: float = 0.6,
@@ -491,6 +492,10 @@ class AudioToTextRecorder:
         - normalize_audio (bool, default=False): If set to True, the system will
             normalize the audio to a specific range before processing. This can
             help improve the quality of the transcription.
+        - final_transcription_word_timestamps (bool, default=False): If set to
+            True, final transcription requests ask compatible engines to return
+            word-level timestamps in last_transcription_metadata["words"]. This
+            is currently supported by the faster_whisper transcription engine.
         - start_callback_in_new_thread (bool, default=False): If set to True,
             the callback functions will be executed in a
             new thread. This can help improve performance by allowing the
@@ -593,6 +598,9 @@ class AudioToTextRecorder:
             use_extended_logging=use_extended_logging,
             faster_whisper_vad_filter=faster_whisper_vad_filter,
             normalize_audio=normalize_audio,
+            final_transcription_word_timestamps=(
+                final_transcription_word_timestamps
+            ),
             start_callback_in_new_thread=start_callback_in_new_thread,
             realtime_transcription_use_syllable_boundaries=(
                 realtime_transcription_use_syllable_boundaries
@@ -672,6 +680,7 @@ class AudioToTextRecorder:
 
     def text(self,
              on_transcription_finished=None,
+             word_timestamps=None,
              ):
         """
         Records if needed and returns or publishes final transcription text.
@@ -679,16 +688,18 @@ class AudioToTextRecorder:
         Args:
         - on_transcription_finished: Optional callback that receives the
             transcription result instead of returning it synchronously.
+        - word_timestamps: Optional per-call override for word-level timestamp
+            metadata. If None, final_transcription_word_timestamps is used.
         """
-        return transcribe_text(self, on_transcription_finished)
+        return transcribe_text(self, on_transcription_finished, word_timestamps)
 
-    def transcribe(self):
+    def transcribe(self, word_timestamps=None):
         """
         Transcribes the recorder's currently loaded audio.
         """
-        return transcribe_recorded_audio(self)
+        return transcribe_recorded_audio(self, word_timestamps)
 
-    def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
+    def perform_final_transcription(self, audio_bytes=None, use_prompt=True, word_timestamps=None):
         """
         Runs final transcription on recorded audio or provided audio samples.
 
@@ -696,8 +707,10 @@ class AudioToTextRecorder:
         - audio_bytes: Optional audio samples to transcribe instead of the
             recorder's current audio buffer.
         - use_prompt: Whether to use the configured initial prompt.
+        - word_timestamps: Optional per-call override for word-level timestamp
+            metadata. If None, final_transcription_word_timestamps is used.
         """
-        return perform_final_transcription_api(self, audio_bytes, use_prompt)
+        return perform_final_transcription_api(self, audio_bytes, use_prompt, word_timestamps)
 
     # Public manual input API.
 
