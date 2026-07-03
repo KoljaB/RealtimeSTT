@@ -124,7 +124,8 @@ Custom engines should implement `BaseEngine` from `RealtimeSTT.engines` and
 return `TranscriptionResult`. Pass user-owned engines with
 `transcription_executor` and, when needed, `realtime_transcription_executor`.
 See [custom-transcription-engines.md](custom-transcription-engines.md) for the
-public base class and minimal examples.
+public base class, executor integration, streaming sessions, packaging notes,
+and contribution checklist.
 
 Engines contributed to RealtimeSTT itself should live under
 `RealtimeSTT.transcription_engines` and be added to
