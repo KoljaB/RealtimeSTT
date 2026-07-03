@@ -251,6 +251,7 @@ extras_require = {
     "qwen-vllm": qwen_vllm_requirements,
     "funasr": funasr_requirements,
     "fun-asr": funasr_requirements,
+    "fun_asr": funasr_requirements,
     "sensevoice": funasr_requirements,
     "kroko-builder": kroko_builder_requirements,
     "porcupine": porcupine_requirements,

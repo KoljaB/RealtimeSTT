@@ -11,6 +11,9 @@ Install the RealtimeSTT extra:
 pip install "realtimestt[funasr]"
 ```
 
+The equivalent `fun-asr`, `fun_asr`, and `sensevoice` extras are also
+available for naming consistency with engine aliases.
+
 For an existing environment where RealtimeSTT is already installed:
 
 ```bash

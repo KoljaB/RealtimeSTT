@@ -1,15 +1,16 @@
 import RealtimeSTT, RealtimeTTS
-import openai, os
+from openai import OpenAI
+import os
 
 if __name__ == '__main__':
-    openai.api_key = os.environ.get("OPENAI_API_KEY")
+    client = OpenAI()
     character_prompt = 'Answer precise and short with the polite sarcasm of a butler.'
     stream = RealtimeTTS.TextToAudioStream(RealtimeTTS.AzureEngine(os.environ.get("AZURE_SPEECH_KEY"), os.environ.get("AZURE_SPEECH_REGION")), log_characters=True)
     recorder = RealtimeSTT.AudioToTextRecorder(model="medium")
 
     def generate(messages):
-        for chunk in openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages, stream=True):
-            if (text_chunk := chunk["choices"][0]["delta"].get("content")): yield text_chunk
+        for chunk in client.chat.completions.create(model="gpt-3.5-turbo", messages=messages, stream=True):
+            if (text_chunk := chunk.choices[0].delta.content): yield text_chunk
 
     history = []
     while True:
