@@ -1,8 +1,11 @@
 """
-Exports transcription engine interfaces and factory helpers.
+Public custom-engine authoring interfaces.
+
+The concrete built-in ASR adapters live in RealtimeSTT.transcription_engines.
+This package exposes the stable lightweight contract for third-party engines.
 """
 
-from .base import (
+from .base_engine import (
     BaseEngine,
     BaseTranscriptionEngine,
     StreamingTranscriptionSession,
@@ -12,7 +15,6 @@ from .base import (
     TranscriptionResult,
     UnsupportedTranscriptionEngineError,
 )
-from .factory import create_transcription_engine, get_supported_transcription_engines
 
 __all__ = [
     "BaseEngine",
@@ -23,6 +25,4 @@ __all__ = [
     "TranscriptionInfo",
     "TranscriptionResult",
     "UnsupportedTranscriptionEngineError",
-    "create_transcription_engine",
-    "get_supported_transcription_engines",
 ]

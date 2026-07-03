@@ -120,10 +120,16 @@ important options, and troubleshooting notes.
 
 ## Extending Engines
 
-New engines should implement `BaseTranscriptionEngine`, return
-`TranscriptionResult`, and be added to `RealtimeSTT/transcription_engines/factory.py`.
-Keep imports lazy so optional dependencies are only imported when the engine is
-selected.
+Custom engines should implement `BaseEngine` from `RealtimeSTT.engines` and
+return `TranscriptionResult`. Pass user-owned engines with
+`transcription_executor` and, when needed, `realtime_transcription_executor`.
+See [custom-transcription-engines.md](custom-transcription-engines.md) for the
+public base class and minimal examples.
+
+Engines contributed to RealtimeSTT itself should live under
+`RealtimeSTT.transcription_engines` and be added to
+`RealtimeSTT/transcription_engines/factory.py`. Keep imports lazy so optional
+dependencies are only imported when the engine is selected.
 
 Contract tests should cover missing dependency messages, parameter mapping,
 audio normalization, result conversion, and factory selection. Real-model tests

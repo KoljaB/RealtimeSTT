@@ -138,8 +138,8 @@ All callbacks are optional. By default they run in the recorder flow; set
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `transcription_executor` | `None` | Optional callable used instead of the default main transcription execution path. Primarily used by tests and server integration. |
-| `realtime_transcription_executor` | `None` | Optional callable used instead of the default realtime transcription execution path. Primarily used by tests and shared-model server integration. |
+| `transcription_executor` | `None` | Optional callable or object with `transcribe()` used instead of the default main transcription execution path. Use this for custom engines and shared-model server integration. |
+| `realtime_transcription_executor` | `None` | Optional callable or object with `transcribe()` used instead of the default realtime transcription execution path. Streaming executors may also expose `supports_streaming` and `create_streaming_session()`. |
 
 ## External Audio API
 

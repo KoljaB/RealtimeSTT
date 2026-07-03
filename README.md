@@ -155,6 +155,8 @@ audio, logging, and executor injection.
   parameter reference.
 - [Transcription engines](docs/transcription-engines.md): engine selection and
   setup links.
+- [Custom transcription engines](docs/custom-transcription-engines.md): public
+  base class and executor examples for user-owned ASR backends.
 - [Wake words](docs/wake-words.md): Porcupine and OpenWakeWord setup.
 - [External audio](docs/external-audio.md): feeding audio without a microphone.
 - [Testing](docs/testing.md): maintained unit and opt-in golden test workflow.

@@ -1,8 +1,8 @@
 """
-Exports transcription engine interfaces and factory helpers.
+Public base interfaces for custom RealtimeSTT transcription engines.
 """
 
-from .base import (
+from ..transcription_engines.base import (
     BaseEngine,
     BaseTranscriptionEngine,
     StreamingTranscriptionSession,
@@ -12,7 +12,6 @@ from .base import (
     TranscriptionResult,
     UnsupportedTranscriptionEngineError,
 )
-from .factory import create_transcription_engine, get_supported_transcription_engines
 
 __all__ = [
     "BaseEngine",
@@ -23,6 +22,4 @@ __all__ = [
     "TranscriptionInfo",
     "TranscriptionResult",
     "UnsupportedTranscriptionEngineError",
-    "create_transcription_engine",
-    "get_supported_transcription_engines",
 ]

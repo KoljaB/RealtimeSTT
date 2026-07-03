@@ -165,3 +165,8 @@ class BaseTranscriptionEngine(ABC):
         if use_prompt and self.config.initial_prompt:
             return self.config.initial_prompt
         return None
+
+
+# Public short name for custom engine authors. Keep BaseTranscriptionEngine as
+# the descriptive historical name used by built-in adapters.
+BaseEngine = BaseTranscriptionEngine
