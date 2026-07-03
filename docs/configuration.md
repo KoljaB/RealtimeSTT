@@ -95,6 +95,7 @@ recorder = AudioToTextRecorder(
 | `realtime_transcription_use_syllable_boundaries` | `False` | Schedules realtime updates from a lightweight acoustic boundary detector instead of only a fixed timer. |
 | `realtime_boundary_detector_sensitivity` | `0.6` | Boundary detector sensitivity, from conservative `0` to eager `1`. |
 | `realtime_boundary_followup_delays` | `(0.05, 0.2)` | Extra realtime update delays after a detected boundary. `None` or empty disables follow-ups. |
+| `realtime_punctuation_split_marks` | `"off"` | Opt-in punctuation-based splitting for long active recordings. See [realtime-punctuation-splitting.md](realtime-punctuation-splitting.md). |
 
 ## Wake Word Parameters
 
