@@ -10,6 +10,11 @@
   the manual audio input path.
 - Added `TranscriptionResult.metadata` support and word timestamp plumbing for
   backends that can return word-level timing.
+- Added public custom transcription engine interfaces through
+  `RealtimeSTT.engines`, including `BaseEngine`, `TranscriptionEngineConfig`,
+  `TranscriptionResult`, and `StreamingTranscriptionSession`.
+- Added custom engine documentation showing `transcription_executor`,
+  `realtime_transcription_executor`, and streaming-session integration.
 - Added opt-in realtime punctuation splitting through
   `realtime_punctuation_split_marks`. The default remains `"off"`; `"sentence"`
   is the supported production mode for `.`, `?`, and `!`.
@@ -21,6 +26,8 @@
   bookkeeping.
 - Expanded install-extra validation to include the FunASR extra and the `all`
   extra.
+- Exposed the same engine authoring interfaces through lazy top-level package
+  imports while keeping existing `BaseTranscriptionEngine` imports compatible.
 
 ### Notes
 

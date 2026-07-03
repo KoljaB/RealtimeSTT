@@ -158,6 +158,7 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             ("use_extended_logging", False, bool),
             ("faster_whisper_vad_filter", True, bool),
             ("normalize_audio", False, bool),
+            ("final_transcription_word_timestamps", False, bool),
             ("start_callback_in_new_thread", False, bool),
             ("realtime_transcription_use_syllable_boundaries", False, bool),
             ("realtime_boundary_detector_sensitivity", 0.6, float),
