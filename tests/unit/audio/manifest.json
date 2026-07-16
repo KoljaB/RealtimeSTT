@@ -1,0 +1,47 @@
+{
+  "dataset": "LJ Speech 1.1",
+  "source": "https://keithito.com/LJ-Speech-Dataset/",
+  "download_mirror": "https://huggingface.co/datasets/flexthink/ljspeech",
+  "license": "Public Domain",
+  "sample_rate_hz": 22050,
+  "channels": 1,
+  "sample_width_bits": 16,
+  "downloaded_at_utc": "2026-05-04T16:44:07Z",
+  "samples": [
+    {
+      "id": "LJ001-0002",
+      "file": "LJ001-0002.wav",
+      "transcript_file": "LJ001-0002.txt",
+      "transcript": "in being comparatively modern.",
+      "normalized_transcript": "in being comparatively modern."
+    },
+    {
+      "id": "LJ001-0004",
+      "file": "LJ001-0004.wav",
+      "transcript_file": "LJ001-0004.txt",
+      "transcript": "produced the block books, which were the immediate predecessors of the true printed book,",
+      "normalized_transcript": "produced the block books, which were the immediate predecessors of the true printed book,"
+    },
+    {
+      "id": "LJ001-0006",
+      "file": "LJ001-0006.wav",
+      "transcript_file": "LJ001-0006.txt",
+      "transcript": "And it is worth mention in passing that, as an example of fine typography,",
+      "normalized_transcript": "And it is worth mention in passing that, as an example of fine typography,"
+    },
+    {
+      "id": "LJ001-0008",
+      "file": "LJ001-0008.wav",
+      "transcript_file": "LJ001-0008.txt",
+      "transcript": "has never been surpassed.",
+      "normalized_transcript": "has never been surpassed."
+    },
+    {
+      "id": "LJ001-0013",
+      "file": "LJ001-0013.wav",
+      "transcript_file": "LJ001-0013.txt",
+      "transcript": "than in the same operations with ugly ones.",
+      "normalized_transcript": "than in the same operations with ugly ones."
+    }
+  ]
+}

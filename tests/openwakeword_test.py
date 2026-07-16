@@ -1,7 +1,6 @@
 if __name__ == '__main__':
     print("Starting...")
     from RealtimeSTT import AudioToTextRecorder
-    import logging
 
     detected = False
 

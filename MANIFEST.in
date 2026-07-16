@@ -1,0 +1,14 @@
+include requirements.txt
+include README.md
+include RELEASE_NOTES.md
+include LICENSE
+prune docs/development
+prune dev-log
+prune roadmap
+prune test-model-cache
+prune test-results
+prune docs_private
+prune tests_private
+global-exclude *Kopie*.py
+global-exclude *.bak
+global-exclude *.tmp

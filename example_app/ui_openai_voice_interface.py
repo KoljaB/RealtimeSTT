@@ -3,9 +3,9 @@ if __name__ == '__main__':
     from RealtimeTTS import TextToAudioStream, AzureEngine, ElevenlabsEngine, SystemEngine
     from RealtimeSTT import AudioToTextRecorder
 
-    from PyQt5.QtCore import Qt, QTimer, QRect, QEvent, pyqtSignal, QThread, QPoint, QPropertyAnimation, QVariantAnimation
-    from PyQt5.QtGui import QPalette, QColor, QPainter, QFontMetrics, QFont, QMouseEvent, QContextMenuEvent
-    from PyQt5.QtWidgets import QApplication, QLabel, QWidget, QDesktopWidget, QMenu, QAction
+    from PyQt5.QtCore import Qt, QTimer, QEvent, pyqtSignal, QThread
+    from PyQt5.QtGui import QColor, QPainter, QFontMetrics, QFont, QMouseEvent
+    from PyQt5.QtWidgets import QApplication, QWidget, QDesktopWidget, QMenu, QAction
 
     import os
     import openai

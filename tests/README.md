@@ -1,6 +1,8 @@
 
 # OpenWakeWord Test
 
+For the maintained unit and golden transcription test workflow, see [`../docs/testing.md`](../docs/testing.md).
+
 1. Set up the openwakeword test project:
    ```bash
    mkdir samantha_wake_word && cd samantha_wake_word
