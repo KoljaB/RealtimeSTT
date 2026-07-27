@@ -82,7 +82,7 @@ def run_audio_data_worker(
                 test_stream = audio_interface.open(
                     format=pyaudio.paInt16,
                     channels=1,
-                    rate=target_sample_rate,
+                    rate=sample_rate,
                     input=True,
                     frames_per_buffer=chunk_size,
                     input_device_index=device_index,
