@@ -1025,7 +1025,6 @@ class ProductionServerAppTests(unittest.TestCase):
     def test_versioned_health_capabilities_and_ws_turn_contract(self):
         settings = production.ProductionServerSettings(
             model_warmup=False,
-            idle_timeout_seconds=10.0,
             max_sessions=1,
         )
         app = production.create_app(

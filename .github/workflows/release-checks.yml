@@ -62,7 +62,7 @@ jobs:
           wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
           .wheel-smoke/bin/python -m pip install --upgrade pip
           .wheel-smoke/bin/python -m pip install "${wheel}[server,sherpa-onnx]"
-          .wheel-smoke/bin/python -c "import importlib.metadata as m; import RealtimeSTT; import RealtimeSTT_server.production_server; import example_fastapi_server.server; assert m.version('realtimestt') == '1.0.4rc1'"
+          .wheel-smoke/bin/python -c "import importlib.metadata as m; import RealtimeSTT; import RealtimeSTT_server.production_server; import example_fastapi_server.server; assert m.version('realtimestt') == '1.0.4'"
           .wheel-smoke/bin/stt-server-production --help
           .wheel-smoke/bin/stt-install-sherpa-models --help
 
