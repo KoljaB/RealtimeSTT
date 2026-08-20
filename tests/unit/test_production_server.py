@@ -1030,7 +1030,7 @@ class ProductionServerAppTests(unittest.TestCase):
         )
         app = production.create_app(
             settings,
-            scheduler_factory=_NoopScheduler,
+            scheduler_factory=_RawScheduler,
             recorder_factory=_NoopRecorder,
         )
 
