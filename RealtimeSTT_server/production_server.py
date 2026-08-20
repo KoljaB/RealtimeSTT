@@ -1736,7 +1736,11 @@ class ProductionSessionProtocol:
                 and current.live_queue is not None
                 else None
             )
-            if current is not None and live_done is not None:
+            if (
+                current is not None
+                and current.turn_id == turn_id
+                and current.generation == generation
+            ):
                 current.phase = "final_submitted"
         if failure is not None:
             status = "failed"
