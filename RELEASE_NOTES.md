@@ -1,6 +1,6 @@
 # Release Notes
 
-## 1.0.3 - 2026-06-25
+## 1.0.3 - 2026-08-20
 
 ### Added
 
@@ -18,6 +18,22 @@
 - Added opt-in realtime punctuation splitting through
   `realtime_punctuation_split_marks`. The default remains `"off"`; `"sentence"`
   is the supported production mode for `.`, `?`, and `!`.
+- Added the multilingual sherpa-onnx Nemotron 3.5 0.6B INT8 engine as a true
+  streaming engine with per-stream language selection, incremental frame
+  ingestion, final draining, reset, cancellation, and deterministic release.
+- Added pinned manifests for the exact Nemotron streaming and Parakeet v3 final
+  model archives, including source, license, archive integrity, and extracted
+  file integrity metadata.
+- Added `stt-install-sherpa-models` for resumable, verified, atomic installation
+  and offline reuse of those pinned model archives in persistent storage.
+- Added a packaged production FastAPI server with versioned liveness,
+  readiness, capabilities, raw PCM16 final transcription, and ordered remote
+  streaming WebSocket APIs. Non-loopback binds require bearer authentication
+  and TLS. The server includes bounded queues and sessions, backpressure,
+  limits, structured errors, warmup, and graceful resource cleanup.
+- Added a reproducible same-host A/B benchmark harness for the AgentTalk/raw
+  PCM16 contract and release CI for unit, distribution, and isolated wheel
+  installation checks.
 
 ### Changed
 
@@ -28,6 +44,12 @@
   extra.
 - Exposed the same engine authoring interfaces through lazy top-level package
   imports while keeping existing `BaseTranscriptionEngine` imports compatible.
+- Pinned the sherpa-onnx optional dependency to the release-tested version and
+  hardened empty-output/language handling for Parakeet final transcription.
+- Made the production `server` extra install a local Silero ONNX VAD runtime,
+  avoiding interactive Torch Hub model retrieval when WebSocket sessions start.
+- Promoted the remote production server to the `stt-server-production` packaged
+  entry point while preserving the legacy `stt-server` command.
 
 ### Notes
 
@@ -36,6 +58,18 @@
 - Realtime punctuation splitting requires word timestamps. Built-in support is
   currently wired through `faster_whisper`; other built-in engines skip the
   split path.
+- The production CPU pair uses Nemotron only for replaceable live hypotheses;
+  Parakeet transcribes the authoritative final audio once and replaces the live
+  hypothesis at turn completion.
+- The exact model weights remain external artifacts governed by their own
+  licenses. The package ships manifests and installation tooling, not weights.
+- The pinned two-model production profile targets Linux x86-64. Native Windows
+  remains suitable for development, but Parakeet can return empty output for
+  some voiced cumulative-turn audio; use the Linux server or another final
+  engine until that runtime combination is proven reliable.
+- On the same Linux CPU host and final model, the 1.0.3 server matched the
+  reference WER/CER/exact result, was at single-client latency parity, and at
+  four concurrent clients improved throughput by 7.5% and p95 latency by 33.2%.
 
 ## 1.0.2 - 2026-05-31
 

@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 import wave
+import weakref
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
@@ -935,6 +936,13 @@ class SharedEngineWorker:
         self.queue_delay = RunningStats()
         self.inference_duration = RunningStats()
         self.total_latency = RunningStats()
+        # Sherpa OnlineRecognizer instances are shared by all accepted
+        # sessions.  Native recognizer/stream operations are not generally
+        # safe to run concurrently, so every ordinary and streaming operation
+        # goes through this one lock.
+        self.engine_lock = threading.RLock()
+        self._streaming_sessions = set()
+        self._engine_closed = False
 
     def start(self):
         self.thread = threading.Thread(
@@ -949,6 +957,83 @@ class SharedEngineWorker:
         self.queue.close()
         if self.thread is not None:
             self.thread.join(timeout=10)
+        self.close_engine()
+
+    def create_streaming_session(self, language=None, use_prompt=True):
+        """Create a lock-backed session on this already-loaded engine.
+
+        Session creation waits for model initialization so callers receive a
+        useful load/support error instead of an opaque ``None`` dereference.
+        The returned proxy serializes every native stream operation with final
+        and other realtime work on this worker.
+        """
+
+        if not self.ready.wait(timeout=30):
+            raise RuntimeError(
+                f"{self.name} inference engine did not become ready for streaming"
+            )
+        with self.engine_lock:
+            if self.load_error is not None:
+                raise RuntimeError(
+                    f"{self.name} inference engine failed to load: {self.load_error}"
+                ) from self.load_error
+            if self.engine is None or self._engine_closed:
+                raise RuntimeError(
+                    f"{self.name} inference engine is unavailable for streaming"
+                )
+            if not getattr(self.engine, "supports_streaming", False):
+                raise RuntimeError(
+                    f"{self.name} inference engine does not support chunk streaming"
+                )
+            creator = getattr(self.engine, "create_streaming_session", None)
+            if not callable(creator):
+                raise RuntimeError(
+                    f"{self.name} inference engine does not expose create_streaming_session"
+                )
+            try:
+                try:
+                    session = creator(language=language, use_prompt=use_prompt)
+                except TypeError:
+                    session = creator()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not create {self.name} realtime streaming session: {exc}"
+                ) from exc
+            proxy = LockedStreamingSession(self, session)
+            self._streaming_sessions.add(proxy)
+            return proxy
+
+    def _unregister_streaming_session(self, session):
+        with self.engine_lock:
+            self._streaming_sessions.discard(session)
+
+    def close_engine(self):
+        """Close active streams and the loaded engine under one lock."""
+
+        with self.engine_lock:
+            if self._engine_closed:
+                return
+            self._engine_closed = True
+            sessions = list(self._streaming_sessions)
+            self._streaming_sessions.clear()
+            for session in sessions:
+                session._close_locked(unregister=False)
+            engine = self.engine
+            self.engine = None
+            if engine is None:
+                return
+            for method_name in ("shutdown", "close", "release"):
+                method = getattr(engine, method_name, None)
+                if callable(method):
+                    try:
+                        method()
+                    except Exception:
+                        LOGGER.debug(
+                            "Could not close %s inference engine",
+                            self.name,
+                            exc_info=True,
+                        )
+                    break
 
     def snapshot(self):
         elapsed = max(0.001, time.monotonic() - self.started_at)
@@ -988,11 +1073,16 @@ class SharedEngineWorker:
             try:
                 if self.engine is None:
                     raise RuntimeError(f"{self.name} inference engine is unavailable")
-                result = self.engine.transcribe(
-                    job.audio,
-                    language=job.language if job.language else None,
-                    use_prompt=job.use_prompt,
-                )
+                with self.engine_lock:
+                    if self.engine is None or self._engine_closed:
+                        raise RuntimeError(
+                            f"{self.name} inference engine is unavailable"
+                        )
+                    result = self.engine.transcribe(
+                        job.audio,
+                        language=job.language if job.language else None,
+                        use_prompt=job.use_prompt,
+                    )
                 text = (getattr(result, "text", "") or "").strip()
                 self.completed_jobs += 1
             except Exception as exc:
@@ -1030,12 +1120,106 @@ class SharedEngineWorker:
     def _warmup(self):
         if not self.settings.model_warmup or self.engine is None:
             return
-        warmup_path = Path(__file__).resolve().parents[1] / "RealtimeSTT" / "warmup_audio.wav"
+        # Keep the warmup asset in the installed package's data directory.  The
+        # old path happened to work only for source checkouts that had a
+        # top-level copy of the WAV file.
+        warmup_path = (
+            Path(__file__).resolve().parents[1]
+            / "RealtimeSTT"
+            / "assets"
+            / "warmup_audio.wav"
+        )
         try:
             audio = read_wav_float32(warmup_path).samples
-            self.engine.warmup(audio)
+            with self.engine_lock:
+                if self.engine is not None and not self._engine_closed:
+                    self.engine.warmup(audio)
         except Exception:
             LOGGER.debug("Warmup skipped for %s", self.name, exc_info=True)
+
+
+class LockedStreamingSession:
+    """Serialize a shared-engine streaming session and release it idempotently."""
+
+    def __init__(self, worker, session):
+        self.worker = worker
+        self.session = session
+        self.closed = False
+        self._lock = threading.RLock()
+
+    def _call_locked(self, method_name, *args, **kwargs):
+        if self.closed:
+            raise RuntimeError("streaming session is closed")
+        method = getattr(self.session, method_name, None)
+        if not callable(method):
+            raise RuntimeError(
+                f"streaming session does not expose {method_name}()"
+            )
+        with self.worker.engine_lock:
+            if self.closed:
+                raise RuntimeError("streaming session is closed")
+            if self.worker.engine is None or self.worker._engine_closed:
+                raise RuntimeError("streaming engine is closed")
+            return method(*args, **kwargs)
+
+    def accept_audio(self, audio, sample_rate=None):
+        return self._call_locked("accept_audio", audio, sample_rate=sample_rate)
+
+    def decode(self):
+        return self._call_locked("decode")
+
+    def get_result(self):
+        return self._call_locked("get_result")
+
+    def finish(self):
+        return self._call_locked("finish")
+
+    def input_finished(self):
+        if hasattr(self.session, "input_finished"):
+            return self._call_locked("input_finished")
+        return self.finish()
+
+    def reset(self):
+        return self._call_locked("reset")
+
+    def set_language(self, language):
+        """Update a backend stream's language and start a fresh utterance."""
+
+        with self.worker.engine_lock:
+            if self.closed:
+                raise RuntimeError("streaming session is closed")
+            if self.worker.engine is None or self.worker._engine_closed:
+                raise RuntimeError("streaming engine is closed")
+            if hasattr(self.session, "language"):
+                self.session.language = language
+            method = getattr(self.session, "reset", None)
+            if not callable(method):
+                raise RuntimeError(
+                    "streaming session does not expose reset() for language changes"
+                )
+            return method()
+
+    def cancel(self):
+        if hasattr(self.session, "cancel"):
+            return self._call_locked("cancel")
+        return self.close()
+
+    def _close_locked(self, unregister=True):
+        if self.closed:
+            return
+        method = getattr(self.session, "close", None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                LOGGER.debug("Could not close realtime streaming session", exc_info=True)
+        self.closed = True
+        if unregister:
+            self.worker._unregister_streaming_session(self)
+
+    def close(self):
+        with self.worker.engine_lock:
+            self._close_locked()
 
 
 class InferenceScheduler:
@@ -1108,6 +1292,18 @@ class InferenceScheduler:
         if job.kind == "realtime" and not self.settings.use_main_model_for_realtime:
             return self.realtime_queue.submit(job)
         return self.main_queue.submit(job)
+
+    def streaming_worker(self, kind="realtime"):
+        """Return the loaded worker that owns the requested model lane."""
+
+        if kind != "realtime":
+            raise RuntimeError(
+                "Streaming sessions are supported only for the realtime model lane"
+            )
+        worker = self.main_worker if self.settings.use_main_model_for_realtime else self.realtime_worker
+        if worker is None:
+            raise RuntimeError("The realtime inference worker is unavailable")
+        return worker
 
     def cancel_session(self, session_id):
         self.main_queue.cancel_session(session_id)
@@ -1187,6 +1383,30 @@ class SchedulerTranscriptionExecutor:
         self.service = service
         self.session_id = session_id
         self.kind = kind
+        self._streaming_sessions = weakref.WeakSet()
+
+    @property
+    def supports_streaming(self):
+        """Expose realtime streaming capability to the recorder worker."""
+
+        if self.kind != "realtime":
+            return False
+        try:
+            worker = self.service.scheduler.streaming_worker("realtime")
+        except Exception:
+            return False
+        # Admission can happen while model workers are still loading.  Let the
+        # recorder take the streaming path and let create_streaming_session()
+        # wait for readiness rather than silently switching to growing-buffer
+        # fallback during startup.  Once ready, report the engine's real
+        # capability.
+        if not worker.ready.is_set():
+            return True
+        return bool(
+            worker.engine is not None
+            and not worker.load_error
+            and getattr(worker.engine, "supports_streaming", False)
+        )
 
     def transcribe(self, audio, language=None, use_prompt=True):
         return self.service.transcribe_for_recorder(
@@ -1196,6 +1416,30 @@ class SchedulerTranscriptionExecutor:
             language,
             use_prompt,
         )
+
+    def create_streaming_session(self, language=None, use_prompt=True):
+        """Create a shared realtime stream; final work remains queue-backed."""
+
+        if self.kind != "realtime":
+            raise RuntimeError(
+                "Streaming sessions are supported only for the realtime executor"
+            )
+        worker = self.service.scheduler.streaming_worker("realtime")
+        session = worker.create_streaming_session(
+            language=language,
+            use_prompt=use_prompt,
+        )
+        self._streaming_sessions.add(session)
+        return session
+
+    def set_streaming_language(self, language):
+        """Reset active streams when a session's turn language changes."""
+
+        if self.kind != "realtime":
+            return
+        for session in list(self._streaming_sessions):
+            if not session.closed:
+                session.set_language(language)
 
 
 class VoiceActivityDetector:
@@ -1823,17 +2067,47 @@ class RecorderBackedRealtimeSession:
         self.publish_status(self.status)
 
     def stop_streaming(self):
+        final_submitted_before = self.final_submitted
+        flushed = False
         with self.lock:
             self.streaming = False
             self.status = "idle"
         try:
-            self.recorder.flush_buffered_audio()
+            flush_input = getattr(self.recorder, "flush_audio_input", None)
+            if callable(flush_input):
+                flush_input()
+            drain_input = getattr(self.recorder, "drain_audio_input", None)
+            if callable(drain_input):
+                drain_timeout = getattr(
+                    self.settings,
+                    "finalize_timeout_seconds",
+                    30.0,
+                )
+                if not drain_input(timeout=drain_timeout):
+                    raise RuntimeError(
+                        "Audio input drain timed out before finalization"
+                    )
+            flushed = bool(self.recorder.flush_buffered_audio())
             self._trim_recorded_audio_queue()
         except Exception:
             LOGGER.debug("Could not flush buffered audio for %s", self.session_id, exc_info=True)
+            raise
         finally:
             self.service.deactivate_speaker(self.session_id)
         self.publish_status("idle")
+        try:
+            pending_recordings = bool(self.recorder.has_pending_recordings())
+        except Exception:
+            pending_recordings = False
+        # ``flush_buffered_audio`` queues the final recording for the
+        # recorder's text worker.  Returning this explicit state lets the
+        # production protocol distinguish a no-speech turn from a turn whose
+        # final outcome still has to be published.
+        return bool(
+            flushed
+            or pending_recordings
+            or self.final_submitted > final_submitted_before
+        )
 
     def close(self):
         with self.lock:
@@ -2026,15 +2300,7 @@ class RecorderBackedRealtimeSession:
                 if getattr(self.recorder, "is_shut_down", False):
                     break
                 LOGGER.exception("Session recorder text loop failed")
-                self.service.manager.publish_session(
-                    self.session_id,
-                    {
-                        "type": "error",
-                        "sessionId": self.session_id,
-                        "message": str(exc),
-                        "where": "recorder",
-                    },
-                )
+                self._publish_final_failure(str(exc), text_generation)
                 time.sleep(0.1)
                 continue
 
@@ -2042,8 +2308,27 @@ class RecorderBackedRealtimeSession:
                 break
             text = (text or "").strip()
             if not text:
+                self._publish_final_failure(
+                    "Final transcription returned no text.",
+                    text_generation,
+                    code="empty_final",
+                )
                 continue
             self._publish_final_text(text, text_generation)
+
+    def _publish_final_failure(self, message, text_generation, code="final_transcription_failed"):
+        with self.lock:
+            if text_generation != self.generation:
+                return False
+        payload = {
+            "type": "error",
+            "sessionId": self.session_id,
+            "code": code,
+            "message": message,
+            "where": "final",
+        }
+        self.service.manager.publish_session(self.session_id, payload)
+        return True
 
     def _publish_final_text(self, text, text_generation):
         with self.lock:
@@ -3206,29 +3491,29 @@ def create_app(settings: Optional[ServerSettings] = None, scheduler_factory=None
             await websocket.close(code=1013)
             return
 
-        await manager.connect(session_id, websocket)
-        await websocket.send_text(json.dumps({
-            "type": "hello",
-            "clientId": session_id,
-            "sessionId": session_id,
-            "settings": settings.public_dict(),
-            "limits": service.limits_dict(),
-            "supportedEngines": get_supported_transcription_engines(),
-            "runtimeSettings": service.runtime_settings_contract(),
-        }))
-        if service.ready.is_set():
+        try:
+            await manager.connect(session_id, websocket)
             await websocket.send_text(json.dumps({
-                "type": "ready",
+                "type": "hello",
+                "clientId": session_id,
                 "sessionId": session_id,
                 "settings": settings.public_dict(),
                 "limits": service.limits_dict(),
+                "supportedEngines": get_supported_transcription_engines(),
                 "runtimeSettings": service.runtime_settings_contract(),
-                "ok": service.scheduler.healthy(),
             }))
-            for error in service.startup_errors:
-                await websocket.send_text(json.dumps(error))
+            if service.ready.is_set():
+                await websocket.send_text(json.dumps({
+                    "type": "ready",
+                    "sessionId": session_id,
+                    "settings": settings.public_dict(),
+                    "limits": service.limits_dict(),
+                    "runtimeSettings": service.runtime_settings_contract(),
+                    "ok": service.scheduler.healthy(),
+                }))
+                for error in service.startup_errors:
+                    await websocket.send_text(json.dumps(error))
 
-        try:
             while True:
                 message = await websocket.receive()
                 if "bytes" in message and message["bytes"] is not None:
@@ -3312,8 +3597,10 @@ def create_app(settings: Optional[ServerSettings] = None, scheduler_factory=None
             if "disconnect" not in str(exc).lower():
                 raise
         finally:
-            service.remove_session(session_id)
-            await manager.disconnect(session_id)
+            try:
+                service.remove_session(session_id)
+            finally:
+                await manager.disconnect(session_id)
 
     app.state.realtimestt_service = service
     return app

@@ -24,7 +24,9 @@ from .core.lifecycle import (
 from .core.manual_audio_input import (
     feed_audio as feed_manual_audio,
     feed_audio_file as feed_manual_audio_file,
+    flush_audio_input as flush_manual_audio_input,
 )
+from .core.recording import drain_audio_input
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
@@ -723,6 +725,16 @@ class AudioToTextRecorder:
         - original_sample_rate: Sample rate of the provided audio chunk.
         """
         return feed_manual_audio(self, chunk, original_sample_rate)
+
+    def flush_audio_input(self):
+        """Queue a partial manual-input chunk before an explicit drain."""
+
+        return flush_manual_audio_input(self)
+
+    def drain_audio_input(self, timeout=None):
+        """Wait until the recording worker has consumed queued manual audio."""
+
+        return drain_audio_input(self, timeout=timeout)
 
     def feed_audio_file(
             self,

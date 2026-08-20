@@ -68,7 +68,8 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `faster-whisper` | `faster-whisper` | Default CTranslate2 Whisper backend. |
 | `whisper-cpp` / `whispercpp` | `pywhispercpp` | whisper.cpp backend for CPU-focused setups. |
 | `openai-whisper` | `openai-whisper` | Original OpenAI Whisper Python backend. |
-| `sherpa-onnx` / `sherpa` | `sherpa-onnx` | CPU INT8 sherpa-onnx Parakeet or Moonshine engines. |
+| `sherpa-onnx` / `sherpa` | Pinned `sherpa-onnx` | CPU INT8 sherpa-onnx Nemotron, Parakeet, or Moonshine engines. |
+| `server` / `production-server` | FastAPI and Uvicorn | Packaged versioned HTTP/WebSocket production ASR server. Combine with an engine extra. |
 | `transformers` | `transformers` | Shared dependency for Transformers-based ASR engines. |
 | `moonshine`, `granite`, `cohere` | `transformers` | Aliases for the corresponding Transformers engines. |
 | `parakeet` / `nvidia-parakeet` | `nemo_toolkit[asr]` | NVIDIA NeMo Parakeet backend, best on Linux or WSL2. |
@@ -209,7 +210,7 @@ Install only the engine stack you plan to use:
 | `whisper_cpp` | `python -m pip install "RealtimeSTT[whisper-cpp]"` | `pywhispercpp` can download known ggml models; local paths are also supported. |
 | `openai_whisper` | `python -m pip install "RealtimeSTT[openai-whisper]"` | Downloads OpenAI Whisper models automatically to its cache or `download_root`. |
 | `moonshine` | `python -m pip install "RealtimeSTT[moonshine]"` | Downloads Hugging Face model files automatically. English-only in this adapter. |
-| `sherpa_onnx_*` | `python -m pip install "RealtimeSTT[sherpa-onnx]"` | Model bundles must be downloaded and extracted manually. |
+| `sherpa_onnx_*` | `python -m pip install "RealtimeSTT[sherpa-onnx]"` | The pinned Nemotron and Parakeet bundles are downloaded explicitly with `stt-install-sherpa-models`; engine startup never downloads or replaces weights. Moonshine remains a manual upstream install. |
 | `parakeet` | `python -m pip install -U "RealtimeSTT[parakeet]"` | NeMo downloads from the configured model id/cache. Best on Linux or WSL2. |
 | [`omnilingual_asr`](engines/omnilingual-asr.md) | `python -m pip install "RealtimeSTT[omnilingual]"` | Meta Omnilingual ASR downloads through its Linux/WSL fairseq2 cache. Use Python 3.11.x. The extra requires `omnilingual-asr>=0.2.0` for v2 model cards and constrains matching `torch`/`torchaudio` builds. Native Windows installs are not supported because `fairseq2n` has no Windows wheel. |
 | `granite_speech` | `python -m pip install "RealtimeSTT[granite]"` | Downloads Hugging Face model files automatically. |
@@ -268,21 +269,31 @@ python -m pip install "RealtimeSTT[wakewords]"
 
 Wake-word setup is documented in [wake-words.md](wake-words.md).
 
-## FastAPI Server Dependencies
+## Production Server Dependencies
 
-For the browser streaming server:
-
-```bash
-python -m pip install -r example_fastapi_server/requirements.txt
-```
-
-Then install the selected ASR engine stack, for example:
+Install the packaged server together with the selected ASR engine, for example:
 
 ```bash
-python -m pip install "RealtimeSTT[faster-whisper]"
+python -m pip install "RealtimeSTT[server,sherpa-onnx]"
+stt-install-sherpa-models --root ./models/sherpa-onnx --model all
 ```
 
-See [fastapi-server.md](fastapi-server.md).
+The `server` extra includes `silero-vad[onnx-cpu]` so recorder-backed
+WebSocket sessions use a packaged local VAD model instead of attempting an
+interactive Torch Hub download at first connection.
+
+The server binds to loopback by default. Direct non-loopback binds require a
+bearer token and Uvicorn TLS certificate/key files; for a reverse-proxy setup,
+keep it on loopback and terminate TLS at the proxy:
+
+```bash
+stt-server-production --host 127.0.0.1 --port 8010
+```
+
+See [the production-server guide](../RealtimeSTT_server/PRODUCTION_SERVER.md)
+for the Nemotron-live/Parakeet-final recipe, endpoints, protocol, limits, and
+remote authentication. The interactive browser server remains a source-checkout
+reference; see [fastapi-server.md](fastapi-server.md).
 
 ## Verifying The Install
 

@@ -34,6 +34,7 @@ CLI-style names work where listed.
 | `openai_whisper` | Optional production backend | [engines/openai-whisper.md](engines/openai-whisper.md) |
 | `moonshine`, `moonshine_streaming` | Experimental Transformers backend; English-only adapter | [engines/moonshine.md](engines/moonshine.md) |
 | `sherpa_onnx_moonshine`, `sherpa_moonshine`, `moonshine_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
+| `sherpa_onnx_nemotron`, `sherpa_nemotron`, `nemotron_sherpa_onnx`, `nemotron` | CPU INT8 multilingual Nemotron streaming backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
 | `kroko_onnx`, `kroko`, `banafo_kroko` | Optional Kroko-ONNX backend | [engines/kroko-onnx.md](engines/kroko-onnx.md) |
 | `parakeet`, `nvidia_parakeet` | Experimental NVIDIA NeMo backend | [engines/parakeet-nemo.md](engines/parakeet-nemo.md) |
 | `sherpa_onnx_parakeet`, `sherpa_parakeet`, `parakeet_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
@@ -112,7 +113,7 @@ meaningful for one engine may be ignored or invalid for another.
 | `funasr` | Yes, through ModelScope by default or Hugging Face with `hub="hf"`. | `download_root` sets `MODELSCOPE_CACHE` and `HF_HOME` defaults; local model directories may be passed as `model`. |
 | `parakeet` NeMo | Yes, through NeMo model loading. | NeMo cache/model options may be passed in `transcription_engine_options`. |
 | `omnilingual_asr` | Yes, through Omnilingual/fairseq2/Hugging Face cache paths in Linux or WSL2 with Python 3.11.x. | Pass an Omnilingual model card such as `omniASR_CTC_1B_v2`; RealtimeSTT does not move or delete downloaded assets. Unknown v2 cards are a dependency mismatch, not a signal to fall back to older non-v2 cards. |
-| `sherpa_onnx_*` | No. | Download and extract the sherpa-onnx model bundle, then pass the extracted directory. |
+| `sherpa_onnx_*` | No. | Download and extract the pinned sherpa-onnx model bundle, verify its manifest, then pass the persistent extracted directory. |
 | `kroko_onnx` | Yes, for known public Community `.data` files when enabled. | Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
 
 Every optional engine page documents its install command, model behavior,

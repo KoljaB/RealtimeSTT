@@ -82,12 +82,17 @@ These smoke tests need `numpy` plus each backend's optional dependencies and mod
 Run the sherpa-onnx CPU INT8 contract tests:
 
 ```powershell
-python -m pip install sherpa-onnx
+python -m pip install "sherpa-onnx==1.13.4"
 
 python -m unittest -v tests.unit.test_sherpa_onnx_engine
+python -m unittest -v tests.unit.test_nemotron_engine
 ```
 
-The fast sherpa-onnx tests mock the runtime and do not download models. For a real RTF comparison, download and extract the sherpa-onnx model bundles under `test-model-cache\sherpa-onnx`, then run either opt-in smoke test:
+The fast sherpa-onnx tests mock the runtime and do not download models. For a real RTF comparison, install the pinned Nemotron and Parakeet bundles explicitly under the persistent `test-model-cache\sherpa-onnx` root, then run either opt-in smoke test:
+
+```powershell
+stt-install-sherpa-models --root test-model-cache\sherpa-onnx --model all
+```
 
 ```powershell
 $env:REALTIMESTT_RUN_SHERPA_ONNX_PARAKEET = "1"
@@ -104,6 +109,34 @@ $env:REALTIMESTT_SHERPA_ONNX_NUM_THREADS = "1"
 
 python -m unittest -v tests.unit.test_sherpa_onnx_engine.SherpaOnnxGoldenTranscriptionTests.test_transcribes_fixture_with_real_sherpa_moonshine_backend
 ```
+
+Run the opt-in Nemotron streaming smoke test with a previously downloaded and
+verified persistent model directory:
+
+```powershell
+$env:REALTIMESTT_RUN_SHERPA_ONNX_NEMOTRON = "1"
+$env:REALTIMESTT_SHERPA_ONNX_NEMOTRON_MODEL = Join-Path (Get-Location) "test-model-cache\sherpa-onnx\sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
+$env:REALTIMESTT_SHERPA_ONNX_NUM_THREADS = "2"
+
+python -m unittest -v tests.unit.test_nemotron_engine.NemotronGoldenTranscriptionTests
+```
+
+## Release real-model acceptance
+
+The `release-checks` workflow has a Linux `real-model-acceptance` job for the
+pinned Nemotron and Parakeet bundles. It is skipped on ordinary pushes and pull
+requests because the two archives are roughly 1 GB combined. It runs when the
+workflow is manually dispatched, when a `v*` tag is pushed, or on a
+push to a `release/*` branch, so a release has an explicit callable gate.
+
+The job installs `sherpa-onnx==1.13.4`, restores a GitHub Actions cache keyed by
+`RealtimeSTT/model_manifests.py`, and runs the explicit installer against that
+cache. The installer verifies archive size/SHA-256 and extracted required-file
+metadata; a second `--offline` invocation proves that a verified cache can be
+reused without network access. The job then sets both real-test switches and
+explicit extracted model paths and runs the Nemotron and Parakeet golden tests.
+The job log is the release evidence: each test must report `ok` (a skipped real
+test fails the job), and the installer step prints both verified model paths.
 
 Run both golden paths together:
 

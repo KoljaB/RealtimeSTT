@@ -7,7 +7,7 @@ import tempfile
 from importlib import import_module
 from pathlib import Path
 
-from ._model_utils import language_from_output, text_from_output
+from ._model_utils import attr_or_key, first_item, language_from_output, text_from_output
 from .base import (
     BaseTranscriptionEngine,
     TranscriptionEngineError,
@@ -143,11 +143,48 @@ class ParakeetEngine(BaseTranscriptionEngine):
             params["timestamps"] = bool(engine_options["timestamps"])
 
         output = self.backend.transcribe(audio, **params)
-        detected_language = language_from_output(output, language)
+        text = text_from_output(output)
+        output_item = first_item(output)
+        detected_language = language_from_output(output_item, None)
+        if detected_language:
+            detected_language = str(detected_language).strip()
+            if detected_language.lower() == "auto":
+                detected_language = None
+
+        # A caller-supplied language is a decoding constraint, not evidence
+        # that language detection succeeded.  Keep it as informational result
+        # metadata with probability 0.0 when the backend did not report a
+        # language.  In particular, do not turn a Windows/native empty output
+        # into a falsely certain detection.
+        if not text:
+            detected_language = None
+            language_probability = 0.0
+        elif detected_language:
+            reported_probability = attr_or_key(
+                output_item,
+                "language_probability",
+                attr_or_key(output_item, "probability", None),
+            )
+            try:
+                language_probability = (
+                    float(reported_probability)
+                    if reported_probability is not None
+                    else 1.0
+                )
+            except (TypeError, ValueError):
+                language_probability = 1.0
+        else:
+            requested_language = None
+            if language is not None:
+                requested_language = str(language).strip()
+                if requested_language.lower() == "auto":
+                    requested_language = None
+            detected_language = requested_language
+            language_probability = 0.0
         return TranscriptionResult(
-            text=text_from_output(output),
+            text=text,
             info=TranscriptionInfo(
                 language=detected_language,
-                language_probability=1.0 if detected_language else 0.0,
+                language_probability=language_probability,
             ),
         )

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
+from ..model_manifests import SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST
+from ._model_utils import text_from_output
 from .base import (
     BaseTranscriptionEngine,
     TranscriptionEngineError,
@@ -21,6 +23,7 @@ PARAKEET_DOWNLOAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
     "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
 )
+PARAKEET_MODEL_MANIFEST = SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST
 MOONSHINE_DOWNLOAD_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
     "sherpa-onnx-moonshine-tiny-en-int8.tar.bz2"
@@ -63,7 +66,7 @@ def _load_offline_recognizer_class():
     except AttributeError as exc:
         raise TranscriptionEngineError(
             "The installed 'sherpa-onnx' package does not expose "
-            "OfflineRecognizer. Install a current sherpa-onnx release."
+            "OfflineRecognizer. Install the release-pinned sherpa-onnx 1.13.4."
         ) from exc
 
 
@@ -123,6 +126,7 @@ class SherpaOnnxOfflineBackend:
     family = "sherpa_onnx"
     default_model_dir = ""
     download_url = ""
+    model_manifest = None
 
     def __init__(self, config, recognizer_cls=None):
         """
@@ -132,6 +136,21 @@ class SherpaOnnxOfflineBackend:
         self.engine_options = dict(config.engine_options or {})
         self.file_options = dict(self.engine_options.get("files", {}))
         self.model_dir = self._resolve_model_dir()
+        if self.model_manifest is not None and _bool_option(
+            self.engine_options,
+            "verify_model_files",
+            False,
+        ):
+            verification_error = self.model_manifest.describe_invalid_files(
+                self.model_dir,
+                include_optional=_bool_option(
+                    self.engine_options,
+                    "verify_optional_model_files",
+                    False,
+                ),
+            )
+            if verification_error:
+                raise TranscriptionEngineError(verification_error)
         self.input_sample_rate = _int_option(
             self.engine_options,
             "input_sample_rate",
@@ -223,24 +242,64 @@ class SherpaOnnxOfflineBackend:
 
         raise NotImplementedError
 
+    def _configure_stream(self, stream, params):
+        """Apply family-specific per-stream options before accepting audio."""
+
     def transcribe(self, audio, **params):
         """
-        Runs sherpa-onnx offline transcription for one audio input.
+        Runs one authoritative sherpa-onnx decode for one audio input.
+
+        The Parakeet TDT path is an offline/final backend even though sherpa
+        represents its input as a stream.  Feed the complete waveform once,
+        signal end-of-input when the binding exposes it, and publish only the
+        result produced by that decode.  This avoids treating an intermediate
+        or stale stream result as the final transcript.
         """
         stream = self.recognizer.create_stream()
+        self._configure_stream(stream, params)
         stream.accept_waveform(
             int(params.get("sample_rate", self.input_sample_rate)),
             audio,
         )
-        self.recognizer.decode_stream(stream)
-        result = stream.result
+        input_finished = getattr(stream, "input_finished", None)
+        if callable(input_finished):
+            input_finished()
+
+        decoded_result = None
+        # OfflineRecognizer has no readiness API and must be decoded exactly
+        # once.  Some test/runtime wrappers expose readiness even for a final
+        # stream; drain that queue before reading the authoritative result.
+        if hasattr(self.recognizer, "is_ready"):
+            while self.recognizer.is_ready(stream):
+                decoded_result = self.recognizer.decode_stream(stream)
+        else:
+            decoded_result = self.recognizer.decode_stream(stream)
+
+        result = decoded_result if decoded_result is not None else getattr(stream, "result", "")
         return SherpaOnnxDecodedOutput(
-            text=str(getattr(result, "text", result)).strip(),
+            text=text_from_output(result),
             language=str(
                 getattr(result, "language", getattr(result, "lang", ""))
                 or ""
             ),
         )
+
+
+def _set_stream_language(stream, language):
+    """Set a sherpa stream's fixed or automatic language before audio."""
+
+    requested = "auto" if language is None else str(language).strip()
+    if not requested or requested.lower() == "auto":
+        requested = "auto"
+    setter = getattr(stream, "set_option", None)
+    if not callable(setter):
+        setter = getattr(stream, "SetOption", None)
+    if not callable(setter):
+        raise TranscriptionEngineError(
+            "The installed 'sherpa-onnx' OfflineStream does not support "
+            "per-stream language options. Install sherpa-onnx 1.13.4."
+        )
+    setter("language", requested)
 
 
 class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
@@ -251,6 +310,12 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
     family = "sherpa_onnx_parakeet"
     default_model_dir = DEFAULT_SHERPA_ONNX_PARAKEET_MODEL
     download_url = PARAKEET_DOWNLOAD_URL
+    model_manifest = PARAKEET_MODEL_MANIFEST
+
+    def _configure_stream(self, stream, params):
+        """Apply Parakeet's stream-local fixed/automatic language choice."""
+
+        _set_stream_language(stream, params.get("language"))
 
     def _create_recognizer(self, recognizer_cls):
         """
@@ -350,13 +415,34 @@ class SherpaOnnxParakeetEngine(BaseTranscriptionEngine):
         Transcribes audio with sherpa-onnx Parakeet.
         """
         audio = self._normalize_audio(audio)
-        output = self.backend.transcribe(audio)
-        detected_language = output.language or language
+        output = self.backend.transcribe(audio, language=language)
+        text = str(output.text or "").strip()
+        detected_language = str(output.language or "").strip() or None
+        if detected_language and detected_language.lower() == "auto":
+            detected_language = None
+
+        if not text:
+            # Keep empty native results empty and unclassified.  In
+            # particular, a caller's language hint must not become a false
+            # probability-1 detection when the Windows NeMo-TDT path returns
+            # no tokens.
+            detected_language = None
+            language_probability = 0.0
+        elif detected_language:
+            language_probability = 1.0
+        else:
+            requested_language = None
+            if language is not None:
+                requested_language = str(language).strip()
+                if requested_language.lower() == "auto":
+                    requested_language = None
+            detected_language = requested_language
+            language_probability = 0.0
         return TranscriptionResult(
-            text=output.text,
+            text=text,
             info=TranscriptionInfo(
                 language=detected_language,
-                language_probability=1.0 if detected_language else 0.0,
+                language_probability=language_probability,
             ),
         )
 

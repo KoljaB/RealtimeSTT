@@ -32,7 +32,8 @@ engines, wake-word backends, and model runtimes are loaded lazily so importing
 | `RealtimeSTT/transcription_engines/base.py` | `TranscriptionEngineConfig`, `TranscriptionResult`, `TranscriptionInfo`, `BaseTranscriptionEngine`, `StreamingTranscriptionSession`, and engine errors. | Engine adapters should continue normalizing output into this contract. |
 | `RealtimeSTT/transcription_engines/factory.py` | Engine alias normalization, lazy adapter loading, `create_transcription_engine()`, and `get_supported_transcription_engines()`. | Keep existing aliases and unsupported-engine error text compatible unless intentionally changed. |
 | `RealtimeSTT_server/stt_server.py` | Legacy dual-websocket server CLI and runtime callbacks. | Compatibility path; avoid mixing legacy server cleanup with recorder refactors. |
-| `example_fastapi_server/server.py` | Source-only browser streaming reference server and CLI. | Not packaged as the core wheel, but it is the maintained multi-user browser reference implementation. |
+| `RealtimeSTT_server/production_server.py` | Packaged versioned HTTP/WebSocket production server and `stt-server-production` entry point. | Preserve the v1 serialized protocol, operational endpoints, security defaults, and AgentTalk PCM16 compatibility contract. |
+| `example_fastapi_server/server.py` | Shared multi-user backend and source-checkout browser reference CLI. | Its Python backend is packaged for the production facade; static browser assets remain a source-checkout reference. |
 | `example_fastapi_server/protocol.py` | Binary packet encode/decode helpers and protocol validation errors. | Packet shape is a service boundary. Keep serialized formats stable. |
 
 ## Core Package Modules
@@ -47,6 +48,7 @@ engines, wake-word backends, and model runtimes are loaded lazily so importing
 | `RealtimeSTT/core/silero_vad.py` | Silero backend normalization, model discovery/loading, ONNX/PyTorch wrapper behavior, and callable VAD adaptation. | Optional dependency imports, model file lookup, torch/onnx runtime loading. | `tests/unit/test_silero_vad_backend.py`. |
 | `RealtimeSTT/core/safepipe.py` | Safer multiprocessing pipe wrapper used by recorder worker communication. | Multiprocessing pipe/process communication. | Covered indirectly by recorder paths; add targeted tests before changing IPC behavior. |
 | `RealtimeSTT/install_kroko.py` | Kroko-ONNX installer CLI, checkout preparation, patching, build/install helpers. | Filesystem writes, subprocesses, downloads/build tools. | Covered by install-matrix and smoke scripts; treat as tooling, not runtime pipeline code. |
+| `RealtimeSTT/model_manifests.py` | Pinned external model identity, archive/file integrity, source, and license metadata. | None; immutable metadata only. | Engine and installer contract tests. |
 
 ## Transcription Engine Layer
 
@@ -56,7 +58,7 @@ engines, wake-word backends, and model runtimes are loaded lazily so importing
 | `factory.py` | Name normalization, alias table, lazy imports, unsupported-engine diagnostics. | Add aliases deliberately and cover with fast unit tests. |
 | `faster_whisper_engine.py`, `openai_whisper_engine.py`, `whisper_cpp_engine.py` | Whisper-family adapters. | Keep optional imports inside loader paths and preserve option mapping. |
 | `kroko_onnx_engine.py` | Kroko-ONNX offline/streaming adapter, native-output suppression, model file handling, streaming session. | High-risk because it owns streaming behavior and filesystem/download helpers. Split only after characterization tests. |
-| `sherpa_onnx_engine.py` | Sherpa-ONNX parakeet/moonshine adapters and shared offline backend. | Keep path resolution and decoded output conversion stable. |
+| `sherpa_onnx_engine.py`, `nemotron_engine.py` | Sherpa-ONNX Parakeet/Moonshine offline adapters and the Nemotron streaming adapter. | Keep model manifest validation, language behavior, incremental-only streaming, final draining, and decoded output conversion stable. |
 | `hf_transformers_engines.py`, `cohere_transcribe_engine.py`, `granite_speech_engine.py`, `moonshine_engine.py` | Hugging Face/Transformers-backed engines and compatibility wrapper modules. | Wrapper modules preserve public import paths; do not remove them during cleanup. |
 | `parakeet_engine.py`, `qwen3_asr_engine.py`, `omnilingual_asr_engine.py` | Model-specific ASR adapters. | Preserve dependency error messages, language handling, dtype/device option behavior, and result normalization. |
 | `openai_api_engine.py` | Placeholder adapter that raises because request handling is not wired. | Documented unsupported behavior; do not silently turn it into a partial implementation. |
@@ -69,6 +71,7 @@ engines, wake-word backends, and model runtimes are loaded lazily so importing
 | `example_fastapi_server/protocol.py` | Binary audio packet format: little-endian metadata length, JSON metadata, then PCM bytes. | Serialized protocol boundary; validate with `tests/unit/test_fastapi_server_protocol.py`. |
 | `example_fastapi_server/server.py` | Maintained browser streaming reference server: settings, session store, websocket app, scheduler, fair queue, shared engine workers, recorder-backed sessions, metrics, and runtime settings. | Large multi-responsibility file. Split by server concern only after tests cover packet handling, scheduler behavior, and session lifecycles. |
 | `example_fastapi_server/static/index.html` | Browser UI for the reference server. | Keep websocket protocol assumptions aligned with `protocol.py`. |
+| `RealtimeSTT_server/production_server.py` | Supported API facade with v1 health/readiness/capabilities, raw PCM final transcription, ordered turn WebSockets, auth, limits, and lifecycle cleanup. | The protocol and security defaults are release boundaries; validate with `tests/unit/test_production_server.py`. |
 | `RealtimeSTT_server/stt_server.py` | Legacy control/data websocket server around `AudioToTextRecorder`. | Compatibility path. Do not couple new FastAPI restructuring to legacy server cleanup. |
 | `RealtimeSTT_server/stt_cli_client.py` | CLI client for the legacy server. | Keep command behavior aligned with the legacy protocol. |
 | `example_browserclient/*`, `example_webserver/*`, `example_app/*` | Older/manual examples and demos. | Useful for smoke testing and user workflows, but avoid treating examples as the primary architecture source. |

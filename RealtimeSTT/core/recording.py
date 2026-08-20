@@ -6,6 +6,7 @@ import datetime
 import logging
 import queue
 import struct
+import threading
 import time
 
 import numpy as np
@@ -28,6 +29,27 @@ from .wakeword import process_wakeword
 logger = logging.getLogger("realtimestt")
 
 INT16_MAX_ABS_VALUE = 32768.0
+
+
+class _AudioDrainMarker:
+    """Private queue item that acknowledges all earlier manual audio."""
+
+    def __init__(self, complete):
+        self.complete = complete
+
+
+def drain_audio_input(recorder, timeout=None):
+    """Wait until the recording worker has consumed queued manual audio.
+
+    The marker is ordered after every packet already placed in
+    ``recorder.audio_queue``. Unlike polling ``qsize()``, this also waits for
+    the worker to finish the packet currently being processed before the
+    marker is observed.
+    """
+
+    complete = threading.Event()
+    recorder.audio_queue.put(_AudioDrainMarker(complete))
+    return complete.wait(timeout=timeout)
 
 
 def run_recording_worker(recorder):
@@ -68,7 +90,6 @@ def run_recording_worker(recorder):
                 #     logger.debug('Debug: Trying to get data from audio queue')
                 try:
                     data = self.audio_queue.get(timeout=0.01)
-                    self.last_words_buffer.append(data)
                 except queue.Empty:
                     # if self.use_extended_logging:
                     #     logger.debug('Debug: Queue is empty, checking if still running')
@@ -79,6 +100,12 @@ def run_recording_worker(recorder):
                     # if self.use_extended_logging:
                     #     logger.debug('Debug: Continuing to next iteration')
                     continue
+
+                if isinstance(data, _AudioDrainMarker):
+                    data.complete.set()
+                    continue
+
+                self.last_words_buffer.append(data)
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking for on_recorded_chunk callback')

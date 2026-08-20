@@ -4,6 +4,7 @@ include RELEASE_NOTES.md
 include LICENSE
 prune docs/development
 prune dev-log
+prune dev-logs
 prune roadmap
 prune test-model-cache
 prune test-results

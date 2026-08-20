@@ -157,3 +157,21 @@ def feed_audio(recorder, chunk, original_sample_rate=16000):
         recorder.buffer = recorder.buffer[buf_size:]
 
         recorder.audio_queue.put(to_process)
+
+
+def flush_audio_input(recorder):
+    """Queue the partial manual-input chunk before an explicit drain.
+
+    ``feed_audio`` normally queues only complete VAD-sized chunks.  A server
+    that accepts arbitrary WebSocket packet boundaries must flush the final
+    remainder before it asks the recording worker for a producer boundary;
+    otherwise that audio remains stranded in ``recorder.buffer`` and can be
+    processed after a finalize command has already returned.
+    """
+
+    remainder = bytes(getattr(recorder, "buffer", b""))
+    recorder.buffer = bytearray()
+    if not remainder:
+        return False
+    recorder.audio_queue.put(remainder)
+    return True

@@ -39,6 +39,7 @@ BASE_CHECKS = (
     "module:RealtimeSTT.core.realtime_boundary_detector",
     "module:RealtimeSTT.core.realtime_text_stabilizer",
     "module:RealtimeSTT.transcription_engines",
+    "module:RealtimeSTT.install_sherpa_models",
 )
 
 
@@ -105,6 +106,23 @@ MATRIX = (
             "dist:qwen-asr",
             "dist:nemo_toolkit",
             "module:nemo.collections.asr",
+        ),
+    ),
+    MatrixCase(
+        name="production-server-sherpa",
+        extras="server,sherpa-onnx",
+        checks=BASE_CHECKS
+        + (
+            "dist:fastapi",
+            "module:fastapi",
+            "dist:uvicorn",
+            "module:uvicorn",
+            "dist:sherpa-onnx",
+            "module:sherpa_onnx",
+            "dist:silero-vad",
+            "module:silero_vad",
+            "module:RealtimeSTT_server.production_server",
+            "module:example_fastapi_server.server",
         ),
     ),
     MatrixCase(

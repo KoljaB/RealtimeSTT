@@ -142,8 +142,10 @@ audio, logging, and executor injection.
 - Direct microphone input or application-fed audio chunks.
 - Event callbacks for recording, VAD, realtime text, transcription, and wake
   word state.
-- A FastAPI browser streaming server example with multi-user session isolation,
-  shared inference resources, metrics, and health endpoints.
+- A packaged production FastAPI server with versioned HTTP/WebSocket contracts,
+  session isolation, bounded shared inference resources, authentication, and
+  readiness/capabilities endpoints.
+- A browser streaming reference app for source checkouts.
 
 ## Documentation
 
@@ -164,6 +166,8 @@ audio, logging, and executor injection.
   legacy experiments under `tests/`.
 - [FastAPI server](docs/fastapi-server.md): browser server configuration,
   protocol, metrics, and deployment notes.
+- [Production server](RealtimeSTT_server/PRODUCTION_SERVER.md): packaged remote
+  HTTP/WebSocket API, authentication, limits, and deployment recipe.
 - [Troubleshooting](docs/troubleshooting.md): common install, audio, CUDA,
   model, dependency, and runtime errors.
 - [Engine licenses](docs/licenses.md): license notes for optional engine
@@ -183,23 +187,37 @@ Engine-specific references:
 - [Cohere Transcribe](docs/engines/cohere.md)
 - [FunASR](docs/engines/funasr.md)
 
-## Server Example
+## Production Server
 
-The browser FastAPI reference server lives in `example_fastapi_server` and is
-intended for source checkouts. It is not installed by the PyPI wheel; keeping it
-source-only keeps the wheel lean and avoids adding web-server dependencies for
-users who only need the recorder/API library.
+The supported remote server is packaged as an optional install. It binds to
+loopback by default and exposes versioned health, readiness, capabilities,
+raw-PCM final transcription, and ordered streaming WebSocket endpoints.
+Direct non-loopback binds require both a bearer token and Uvicorn TLS
+certificate/key files; for a reverse-proxy deployment, keep the server on
+loopback and terminate TLS at the proxy.
 
 ```bash
-python -m pip install -r example_fastapi_server/requirements.txt
-python example_fastapi_server/server.py --host 0.0.0.0 --port 8010
+python -m pip install "RealtimeSTT[server,faster-whisper]"
+stt-server-production --host 127.0.0.1 --port 8010
 ```
 
-For pip-only installs, use the Python recorder/API examples instead. If you
-want the FastAPI reference server, clone the repository or install from Git.
+For CPU INT8 deployment with Nemotron live transcription and authoritative
+Parakeet final transcription, install `RealtimeSTT[server,sherpa-onnx]` and
+install both pinned model bundles into persistent storage before following the
+server recipe. The `server` extra includes the local Silero ONNX VAD runtime
+used by recorder-backed WebSocket sessions, so production startup does not
+need an interactive Torch Hub download:
 
-Open `http://localhost:8010`. See [docs/fastapi-server.md](docs/fastapi-server.md)
-for engine recipes, websocket protocol details, health checks, and metrics.
+```bash
+stt-install-sherpa-models --root ./models/sherpa-onnx --model all
+```
+
+See
+[PRODUCTION_SERVER.md](RealtimeSTT_server/PRODUCTION_SERVER.md).
+
+The interactive browser reference app remains in `example_fastapi_server` for
+source checkouts. See [docs/fastapi-server.md](docs/fastapi-server.md) for its
+UI, engine recipes, protocol details, and metrics.
 
 ## Contributing
 

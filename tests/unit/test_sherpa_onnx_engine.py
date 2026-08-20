@@ -50,7 +50,11 @@ class FakeSherpaResult:
 class FakeSherpaStream:
     def __init__(self):
         self.accepted = []
+        self.options = []
         self.result = FakeSherpaResult()
+
+    def set_option(self, name, value):
+        self.options.append((name, value))
 
     def accept_waveform(self, sample_rate, audio):
         self.accepted.append((sample_rate, audio))
@@ -211,6 +215,25 @@ class SherpaOnnxEngineTests(unittest.TestCase):
         self.assertEqual(result.text, "sherpa text")
         self.assertEqual(result.info.language, "de")
         self.assertEqual(backend.recognizer.streams[0].accepted[0][0], 16000)
+        self.assertEqual(backend.recognizer.streams[0].options, [("language", "auto")])
+
+    def test_parakeet_fixed_language_is_set_before_audio(self):
+        temp_dir, model_dir = self.make_model_dir(PARAKEET_FILES)
+        self.addCleanup(temp_dir.cleanup)
+        backend = SherpaOnnxParakeetBackend(
+            TranscriptionEngineConfig(model=str(model_dir)),
+            recognizer_cls=FakeSherpaRecognizer,
+        )
+        engine = SherpaOnnxParakeetEngine(
+            TranscriptionEngineConfig(model=str(model_dir)),
+            backend=backend,
+        )
+
+        engine.transcribe(AudioVector([0.0, 0.5]), language="de")
+
+        stream = backend.recognizer.streams[0]
+        self.assertEqual(stream.options, [("language", "de")])
+        self.assertTrue(stream.accepted)
 
     def test_moonshine_backend_initializes_tiny_int8_model(self):
         temp_dir, model_dir = self.make_model_dir(MOONSHINE_FILES)

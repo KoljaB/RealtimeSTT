@@ -1,0 +1,146 @@
+name: release-checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.11"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install Linux audio headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-dev
+      - name: Install package and server test dependency
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[server]" "httpx>=0.27,<1"
+      - name: Run unit tests
+        run: python -m unittest discover -s tests/unit -p "test_*.py"
+
+  package:
+    name: build and clean wheel smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Linux audio headers
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-dev
+      - name: Install build tooling
+        run: python -m pip install --upgrade build twine
+      - name: Build distributions
+        run: python -m build
+      - name: Validate distribution metadata
+        run: python -m twine check dist/*
+      - name: Install and inspect the wheel in isolation
+        shell: bash
+        run: |
+          python -m venv .wheel-smoke
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          .wheel-smoke/bin/python -m pip install --upgrade pip
+          .wheel-smoke/bin/python -m pip install "${wheel}[server,sherpa-onnx]"
+          .wheel-smoke/bin/python -c "import importlib.metadata as m; import RealtimeSTT; import RealtimeSTT_server.production_server; import example_fastapi_server.server; assert m.version('realtimestt') == '1.0.3'"
+          .wheel-smoke/bin/stt-server-production --help
+          .wheel-smoke/bin/stt-install-sherpa-models --help
+
+  real-model-acceptance:
+    name: real sherpa-onnx model acceptance (Nemotron + Parakeet)
+    # The two pinned archives are roughly 1 GB combined. Keep this gate out of
+    # ordinary pushes/PRs while making it callable for a release branch/tag.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      MODEL_ROOT: ${{ github.workspace }}/.ci-sherpa-models
+      LOG_ROOT: ${{ github.workspace }}/.ci-sherpa-logs
+      REALTIMESTT_RUN_SHERPA_ONNX_NEMOTRON: "1"
+      REALTIMESTT_RUN_SHERPA_ONNX_PARAKEET: "1"
+      REALTIMESTT_SHERPA_ONNX_NEMOTRON_MODEL: ${{ github.workspace }}/.ci-sherpa-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11
+      REALTIMESTT_SHERPA_ONNX_PARAKEET_MODEL: ${{ github.workspace }}/.ci-sherpa-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
+      REALTIMESTT_SHERPA_ONNX_NUM_THREADS: "2"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Linux audio headers
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev python3-dev
+      - name: Install package and pinned sherpa-onnx runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[sherpa-onnx]"
+          python -m pip install "sherpa-onnx==1.13.4"
+      - name: Restore/cache verified model root
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ci-sherpa-models
+          key: sherpa-onnx-real-models-${{ runner.os }}-${{ hashFiles('RealtimeSTT/model_manifests.py') }}
+      - name: Install and verify pinned model bundles
+        run: |
+          stt-install-sherpa-models --root "$MODEL_ROOT" --model all
+          python -m RealtimeSTT.install_sherpa_models --root "$MODEL_ROOT" --model all --offline
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from RealtimeSTT.install_sherpa_models import MODEL_MANIFESTS
+
+          root = Path(os.environ["MODEL_ROOT"])
+          for name, manifest in MODEL_MANIFESTS.items():
+              model_dir = root / manifest.model_id
+              missing = manifest.missing_files(model_dir)
+              invalid = manifest.invalid_files(model_dir)
+              if missing or invalid:
+                  raise SystemExit(
+                      f"{name} verification failed: missing={missing!r}, invalid={invalid!r}"
+                  )
+              print(f"verified {name}: {model_dir}")
+          PY
+      - name: Run real Nemotron golden test
+        shell: bash
+        run: |
+          mkdir -p "$LOG_ROOT"
+          set -o pipefail
+          python -m unittest -v tests.unit.test_nemotron_engine.NemotronGoldenTranscriptionTests.test_transcribes_fixture_with_real_nemotron_backend 2>&1 | tee "$LOG_ROOT/nemotron-test.log"
+          if grep -q "skipped" "$LOG_ROOT/nemotron-test.log"; then
+            echo "The real Nemotron acceptance test was skipped" >&2
+            exit 1
+          fi
+      - name: Run real Parakeet golden test
+        shell: bash
+        run: |
+          mkdir -p "$LOG_ROOT"
+          set -o pipefail
+          python -m unittest -v tests.unit.test_sherpa_onnx_engine.SherpaOnnxGoldenTranscriptionTests.test_transcribes_fixture_with_real_sherpa_parakeet_backend 2>&1 | tee "$LOG_ROOT/parakeet-test.log"
+          if grep -q "skipped" "$LOG_ROOT/parakeet-test.log"; then
+            echo "The real Parakeet acceptance test was skipped" >&2
+            exit 1
+          fi
