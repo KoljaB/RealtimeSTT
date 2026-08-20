@@ -734,6 +734,7 @@ class FairInferenceQueue:
         self._total_queued = 0
         self._closed = False
         self._coalesced_realtime = 0
+        self._stale_final_dropped = 0
         self._stale_realtime_dropped = 0
         self._rejected_jobs = 0
 
@@ -803,7 +804,20 @@ class FairInferenceQueue:
 
                         job = None
                         if state["final"]:
-                            job = state["final"].popleft()
+                            final_job = state["final"].popleft()
+                            if (
+                                final_job.deadline_at is not None
+                                and final_job.deadline_at < now
+                            ):
+                                self._total_queued -= 1
+                                self._stale_final_dropped += 1
+                                stale_jobs.append((final_job, "stale"))
+                                if self._session_has_work_locked(session_id):
+                                    self._ensure_session_locked(session_id)
+                                else:
+                                    self._cleanup_session_locked(session_id)
+                                continue
+                            job = final_job
                         elif state["realtime"] is not None:
                             realtime_job = state["realtime"]
                             state["realtime"] = None
@@ -860,9 +874,52 @@ class FairInferenceQueue:
         self._notify_drops(dropped)
 
     def close(self):
+        dropped = []
         with self._condition:
+            if self._closed:
+                return
             self._closed = True
+            for state in self._sessions.values():
+                while state["final"]:
+                    dropped.append((state["final"].popleft(), "shutdown"))
+                if state["realtime"] is not None:
+                    dropped.append((state["realtime"], "shutdown"))
+                    state["realtime"] = None
+            self._sessions.clear()
+            self._ordered_sessions.clear()
+            self._queued_session_ids.clear()
+            self._total_queued = 0
             self._condition.notify_all()
+        self._notify_drops(dropped)
+
+    def cancel_request(self, request_id):
+        """Cancel one queued job without touching newer work for its session."""
+
+        dropped = []
+        with self._condition:
+            for session_id, state in list(self._sessions.items()):
+                retained_finals = collections.deque()
+                while state["final"]:
+                    job = state["final"].popleft()
+                    if job.request_id == request_id:
+                        dropped.append((job, "cancelled"))
+                        self._total_queued -= 1
+                    else:
+                        retained_finals.append(job)
+                state["final"] = retained_finals
+                realtime_job = state["realtime"]
+                if (
+                    realtime_job is not None
+                    and realtime_job.request_id == request_id
+                ):
+                    dropped.append((realtime_job, "cancelled"))
+                    state["realtime"] = None
+                    self._total_queued -= 1
+                self._cleanup_session_locked(session_id)
+            if dropped:
+                self._condition.notify_all()
+        self._notify_drops(dropped)
+        return bool(dropped)
 
     def snapshot(self):
         with self._condition:
@@ -879,6 +936,7 @@ class FairInferenceQueue:
                 "sessions": len(self._sessions),
                 "perSession": per_session,
                 "coalescedRealtime": self._coalesced_realtime,
+                "staleFinalDropped": self._stale_final_dropped,
                 "staleRealtimeDropped": self._stale_realtime_dropped,
                 "rejectedJobs": self._rejected_jobs,
             }
@@ -1309,6 +1367,12 @@ class InferenceScheduler:
         self.main_queue.cancel_session(session_id)
         if self.realtime_queue is not self.main_queue:
             self.realtime_queue.cancel_session(session_id)
+
+    def cancel_request(self, request_id):
+        cancelled = self.main_queue.cancel_request(request_id)
+        if self.realtime_queue is not self.main_queue:
+            cancelled = self.realtime_queue.cancel_request(request_id) or cancelled
+        return cancelled
 
     def snapshot(self):
         data = {

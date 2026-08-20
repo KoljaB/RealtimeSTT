@@ -3,13 +3,14 @@
 Status date: 2026-08-20
 Scope: current `codex/realtimestt-1.0.3-production-ready` checkout
 
-This is an evidence ledger, not a claim that 1.0.3 has shipped to production
-PyPI. The source implementation, local/remote validation, release CI,
-fresh-package checks, TestPyPI publication, and clean TestPyPI installation
-are complete. Commit `7713522ad33d2fc06f358ea210e7d41797e4c1b7` is a
-**publication-ready release candidate within the documented platform
-boundaries**. Final merge/tag and production-PyPI publication remain explicit
-maintainer actions rather than validation blockers.
+**Superseded on 2026-08-20:** later real AgentTalk WebSocket testing disproved
+this ledger's former claim that no technical blocker remained. The published
+TestPyPI `1.0.3` files finalize recorder/VAD fragments rather than one explicit
+client turn, can restart resampling at packet boundaries, and do not satisfy
+the exact-one-final/completion or live-performance gates. They must not be
+promoted to production PyPI. The corrected candidate is tracked separately as
+`1.0.4rc1`; the evidence below is retained only as historical evidence for the
+old commit and is not release approval.
 “Implemented” means that the code/docs are present here; “validated” is used
 only where a concrete test or benchmark result is recorded.
 
@@ -97,15 +98,13 @@ the Linux WebSocket contract, the b593 Linux HTTP A/B, the full GitHub unit
 matrix, clean distribution and wheel isolation, exact TestPyPI publication,
 and a fresh TestPyPI install with the server and sherpa extras.
 
-No technical release blocker remains inside the documented Linux production
-scope. The remaining actions are maintainer-controlled publication decisions:
+The old `1.0.3` candidate has technical release blockers and is retired. Its
+remaining historical actions must not be executed:
 
-1. Review/merge commit `7713522` (and this evidence-only follow-up) into the
-   chosen release branch.
-2. Create the desired signed or annotated tag and publish the final release
-   notes.
-3. Upload the already validated artifacts to production PyPI only after that
-   approval, then repeat the exact-version index smoke against production PyPI.
+1. Do not merge/tag `7713522` as the corrected production release.
+2. Do not upload the existing `1.0.3` artifacts to production PyPI.
+3. Use the `1.0.4rc1` readiness ledger and repeat every hard gate against its
+   final commit and exact package-index artifact.
 
 The Windows Parakeet-final cumulative-recovery limitation and the candidate
 memory-headroom requirement remain release notes and deployment constraints;

@@ -28,6 +28,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import queue
 import re
 import secrets
 import threading
@@ -42,7 +43,7 @@ LOGGER = logging.getLogger("realtimestt.production_server")
 API_VERSION = "v1"
 PROTOCOL_VERSION = "realtimestt.remote.v1"
 SERVER_NAME = "RealtimeSTT production server"
-_PACKAGE_VERSION_FALLBACK = "1.0.3"
+_PACKAGE_VERSION_FALLBACK = "1.0.4rc1"
 
 
 def _package_version() -> str:
@@ -58,11 +59,86 @@ def _package_version() -> str:
 SERVER_VERSION = _package_version()
 SERVER_SAMPLE_RATE = 16000
 PCM_FORMAT = "pcm_s16le"
+_LIVE_CANCEL = object()
+_LIVE_QUEUE_PACKET_FLOOR_SAMPLES = SERVER_SAMPLE_RATE // 10
+_MAX_LIVE_CANCEL_THREADS = 4
+_LIVE_CANCEL_SLOTS = threading.BoundedSemaphore(_MAX_LIVE_CANCEL_THREADS)
+_MAX_LIVE_STREAM_OPERATIONS = 4
+_LIVE_STREAM_OPERATION_SLOTS = threading.BoundedSemaphore(
+    _MAX_LIVE_STREAM_OPERATIONS
+)
 REMOTE_LANGUAGES = ("en", "de", "fr", "es", "it", "pt", "ru")
 # ``auto`` asks the realtime/final provider to detect the language. Keep the
 # seven explicit AgentTalk languages alongside it in the public contract.
 REMOTE_LANGUAGE_CHOICES = ("auto", *REMOTE_LANGUAGES)
 _LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
+
+
+class _SampleBoundedQueue:
+    """FIFO whose audio capacity is measured in samples, not packet count."""
+
+    def __init__(self, max_samples: int):
+        self.max_samples = max(1, int(max_samples))
+        self._items = collections.deque()
+        self._queued_samples = 0
+        self._condition = threading.Condition()
+        self.unfinished_tasks = 0
+
+    @staticmethod
+    def _weight(item: Any) -> int:
+        if item is None or item is _LIVE_CANCEL:
+            return 0
+        return max(0, int(getattr(item, "size", len(item))))
+
+    def put(self, item: Any, block: bool = True, timeout: Optional[float] = None) -> None:
+        weight = self._weight(item)
+        if weight > self.max_samples:
+            raise queue.Full
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while self._queued_samples + weight > self.max_samples:
+                if not block:
+                    raise queue.Full
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise queue.Full
+                self._condition.wait(remaining)
+            self._items.append((item, weight))
+            self._queued_samples += weight
+            self.unfinished_tasks += 1
+            self._condition.notify_all()
+
+    def put_nowait(self, item: Any) -> None:
+        self.put(item, block=False)
+
+    def get(self, block: bool = True, timeout: Optional[float] = None) -> Any:
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        with self._condition:
+            while not self._items:
+                if not block:
+                    raise queue.Empty
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise queue.Empty
+                self._condition.wait(remaining)
+            item, weight = self._items.popleft()
+            self._queued_samples -= weight
+            self._condition.notify_all()
+            return item
+
+    def get_nowait(self) -> Any:
+        return self.get(block=False)
+
+    def task_done(self) -> None:
+        with self._condition:
+            if self.unfinished_tasks <= 0:
+                raise ValueError("task_done() called too many times")
+            self.unfinished_tasks -= 1
+            self._condition.notify_all()
+
+    def full(self) -> bool:
+        with self._condition:
+            return self._queued_samples >= self.max_samples
 
 
 try:
@@ -286,7 +362,8 @@ def capabilities_for(settings: ProductionServerSettings) -> Dict[str, Any]:
         "sampleRate": SERVER_SAMPLE_RATE,
         "serverSampleRate": SERVER_SAMPLE_RATE,
         "channels": 1,
-        "sampleRates": list(settings.allowed_sample_rates),
+        "sampleRates": [SERVER_SAMPLE_RATE],
+        "httpSampleRates": list(settings.allowed_sample_rates),
         "maxPacketBytes": getattr(settings, "max_audio_packet_bytes", 512 * 1024),
         "maxHttpAudioBytes": settings.max_http_audio_bytes,
     }
@@ -439,6 +516,8 @@ class OrderedConnectionManager(ConnectionManager):
         self.max_pending_events = int(max_pending_events)
         self._event_lock = threading.RLock()
         self._event_sequences = collections.defaultdict(int)
+        self._connection_epochs: Dict[str, int] = {}
+        self._next_connection_epoch = 0
         self._turn_ids: Dict[str, Optional[str]] = {}
         self._audio_sequences: Dict[str, Optional[int]] = {}
         self._suppressed_types = collections.defaultdict(set)
@@ -454,6 +533,8 @@ class OrderedConnectionManager(ConnectionManager):
         loop = asyncio.get_running_loop()
         state = _SessionDelivery(loop, asyncio.Event(), collections.deque())
         with self._event_lock:
+            self._next_connection_epoch += 1
+            self._connection_epochs[session_id] = self._next_connection_epoch
             self._delivery_states[session_id] = state
         state.sender_task = loop.create_task(
             self._deliver_session(session_id, state),
@@ -519,6 +600,39 @@ class OrderedConnectionManager(ConnectionManager):
         except RuntimeError:
             self._close_delivery_state(state)
 
+    def _disconnect_overflowed_session(
+        self,
+        session_id: str,
+        state: _SessionDelivery,
+    ) -> None:
+        """Close one stalled transport without blocking a producer thread."""
+
+        self._close_delivery_state(state)
+
+        async def disconnect() -> None:
+            async with self._lock:
+                websocket = self._connections.get(session_id)
+            close = getattr(websocket, "close", None)
+            if callable(close):
+                try:
+                    await close(code=1013, reason="outbound backpressure")
+                except TypeError:
+                    await close()
+                except Exception:
+                    LOGGER.debug(
+                        "Could not close overflowed WebSocket session %s",
+                        session_id,
+                        exc_info=True,
+                    )
+            await self.disconnect(session_id)
+
+        try:
+            state.loop.call_soon_threadsafe(
+                lambda: state.loop.create_task(disconnect())
+            )
+        except RuntimeError:
+            pass
+
     async def _deliver_session(
         self, session_id: str, state: _SessionDelivery
     ) -> None:
@@ -568,6 +682,7 @@ class OrderedConnectionManager(ConnectionManager):
             self._turn_ids.pop(session_id, None)
             self._audio_sequences.pop(session_id, None)
             self._event_sequences.pop(session_id, None)
+            self._connection_epochs.pop(session_id, None)
             self._suppressed_types.pop(session_id, None)
             barriers = [
                 barrier
@@ -622,6 +737,12 @@ class OrderedConnectionManager(ConnectionManager):
             self._turn_ids[session_id] = turn_id
             self._audio_sequences[session_id] = None
 
+    def connection_epoch(self, session_id: str) -> int:
+        """Return the monotonic transport generation for one session id."""
+
+        with self._event_lock:
+            return int(self._connection_epochs.get(session_id, 0))
+
     def set_audio_sequence(self, session_id: str, sequence: Optional[int]) -> None:
         with self._event_lock:
             self._audio_sequences[session_id] = sequence
@@ -650,6 +771,7 @@ class OrderedConnectionManager(ConnectionManager):
         turn_id = self._turn_ids.get(session_id)
         audio_sequence = self._audio_sequences.get(session_id)
         event = dict(message)
+        event.pop("_connectionEpoch", None)
         source_type = event.get("type")
         if source_type == "realtime":
             event["type"] = "partial"
@@ -691,9 +813,21 @@ class OrderedConnectionManager(ConnectionManager):
             state = self._delivery_states.get(session_id)
             if state is None or state.closed:
                 return None
+            expected_epoch = message.get("_connectionEpoch")
+            if (
+                expected_epoch is not None
+                and int(expected_epoch) != self._connection_epochs.get(session_id, 0)
+            ):
+                return None
             if (
                 respect_suppression
-                and message.get("type") in self._suppressed_types.get(session_id, set())
+                and (
+                    message.get("type") in self._suppressed_types.get(session_id, set())
+                    or (
+                        "final_outcome" in self._suppressed_types.get(session_id, set())
+                        and self._is_final_outcome(message)
+                    )
+                )
             ):
                 return None
 
@@ -720,10 +854,26 @@ class OrderedConnectionManager(ConnectionManager):
                         self._wake_delivery(state)
                         return pending.completion
 
+            is_final_outcome = self._is_final_outcome(message)
+            terminal_hard_limit = self.max_pending_events + 2
+            terminal_overflow = (
+                is_final_outcome and len(state.queue) > self.max_pending_events
+            ) or (
+                source_type == "completion"
+                and len(state.queue) >= terminal_hard_limit
+            )
+            if terminal_overflow:
+                LOGGER.warning(
+                    "Outbound terminal reserve exhausted for session %s; disconnecting",
+                    session_id,
+                )
+                self._disconnect_overflowed_session(session_id, state)
+                return None
+
             if (
                 len(state.queue) >= self.max_pending_events
                 and source_type not in self._TERMINAL_TYPES
-                and not self._is_final_outcome(message)
+                and not is_final_outcome
             ):
                 # Reject before decorating so a producer-side backpressure
                 # decision never creates an eventSequence gap.  Terminal
@@ -738,7 +888,7 @@ class OrderedConnectionManager(ConnectionManager):
             event = self._decorate_locked(session_id, message)
             completion: concurrent.futures.Future = concurrent.futures.Future()
             state.queue.append(_PendingDelivery(event, completion))
-            if self._is_final_outcome(message):
+            if is_final_outcome:
                 turn_id = event.get("turnId")
                 if turn_id is not None:
                     barrier = self._final_barriers.get((session_id, str(turn_id)))
@@ -758,10 +908,20 @@ class OrderedConnectionManager(ConnectionManager):
             return False
         return bool(await asyncio.wrap_future(completion))
 
-    def publish_session(self, session_id: str, message: Dict[str, Any]) -> None:
+    def publish_session(
+        self,
+        session_id: str,
+        message: Dict[str, Any],
+        *,
+        authoritative: bool = False,
+    ) -> Optional[concurrent.futures.Future]:
         if self._loop is None:
-            return
-        self._enqueue(session_id, message, respect_suppression=True)
+            return None
+        return self._enqueue(
+            session_id,
+            message,
+            respect_suppression=not authoritative,
+        )
 
     def publish_all(self, message: Dict[str, Any]) -> None:
         # The backend emits a process-wide ``ready`` event.  Per-session
@@ -774,23 +934,85 @@ class OrderedConnectionManager(ConnectionManager):
 class TurnState:
     turn_id: str
     language: str
-    phase: str = "active"
+    phase: str = "receiving"
     expected_audio_sequence: int = 0
     first_audio_sequence: Optional[int] = None
     last_audio_sequence: Optional[int] = None
     packet_count: int = 0
     audio_frames: int = 0
     audio_seconds: float = 0.0
-    # The counters are session-wide.  Keep the value at turn start so a
-    # final submitted before ``finalize`` but still in-flight remains part of
-    # this turn even when ``stop_streaming`` observes no newly submitted job.
-    final_submitted_at_start: int = 0
-    final_submitted_at_finalize: int = 0
     partial_count: int = 0
     final_count: int = 0
     completion_sent: bool = False
+    generation: int = 0
+    connection_epoch: Optional[int] = None
+    pcm_buffer: bytearray = field(default_factory=bytearray)
+    terminal_sent: bool = False
+    live_queue: Any = None
+    live_stream: Any = None
+    live_thread: Any = None
+    live_done: threading.Event = field(default_factory=threading.Event)
+    live_cancelled: threading.Event = field(default_factory=threading.Event)
+    live_cancel_attempted: bool = False
+    cancelled: threading.Event = field(default_factory=threading.Event)
+    telemetry: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
+
+
+class ProductionSessionHandle:
+    """Lightweight SessionStore entry for the explicit production protocol."""
+
+    def __init__(self, service: Any, session_id: str):
+        self.service = service
+        self.session_id = session_id
+        self.generation = 0
+        self.closed = False
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            "sessionId": self.session_id,
+            "streaming": not self.closed,
+            "recording": False,
+            "finalSubmitted": 0,
+            "finalCompleted": 0,
+            "realtimeCompleted": 0,
+        }
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self.generation += 1
+        self.service.scheduler.cancel_session(self.session_id)
+        self.service.cancel_pending_recorder_transcriptions(self.session_id)
+
+    def clear(self) -> None:
+        self.generation += 1
+        self.service.scheduler.cancel_session(self.session_id)
+        self.service.cancel_pending_recorder_transcriptions(self.session_id)
+
+    def handle_inference_result(self, result: Any) -> None:
+        del result
+
+    def on_job_dropped(self, job: Any, reason: str) -> None:
+        self.service.fail_pending_recorder_transcription(
+            job.request_id,
+            f"{job.kind} transcription was {reason}",
+        )
+
+    def on_submit_result(self, job: Any, result: Any) -> None:
+        del job, result
+
+
+def _admit_production_session(service: Any, session_id: str) -> Optional[ProductionSessionHandle]:
+    if not service.sessions.reserve(session_id):
+        return None
+    session = ProductionSessionHandle(service, session_id)
+    if not service.sessions.add(session):
+        session.close()
+        return None
+    return session
 
 
 def _turn_id(value: Any) -> Optional[str]:
@@ -899,12 +1121,331 @@ class ProductionSessionProtocol:
         self.turn: Optional[TurnState] = None
         self.closed = False
         self._lock = threading.RLock()
-        self._completion_threads = []
-        self._final_barrier: Optional[FinalEventBarrier] = None
-        self._final_barrier_turn_id: Optional[str] = None
+        self._completion_threads = set()
+        self._live_cancel_threads = set()
+        self._live_stream_operation_threads = set()
+        self._generation = 0
+        self._last_partial = ""
+        self._last_partial_sent_at = 0.0
 
     def attach(self, session: Any) -> None:
         self.session = session
+
+    @staticmethod
+    def _close_live_stream(stream: Any) -> None:
+        close = getattr(stream, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            LOGGER.debug("Could not close production live stream", exc_info=True)
+
+    def _live_queue_capacity_samples(self) -> int:
+        configured_samples = int(
+            max(1, int(getattr(self.settings, "audio_queue_size", 100)))
+            * SERVER_SAMPLE_RATE
+            * 0.04
+        )
+        duration_samples = int(
+            max(
+                0.04,
+                float(
+                    getattr(
+                        self.settings,
+                        "max_audio_queue_seconds_per_session",
+                        30.0,
+                    )
+                ),
+            )
+            * SERVER_SAMPLE_RATE
+        )
+        # A single supported transport packet must always fit into an empty
+        # sample-bounded queue.  Otherwise ``audio_queue_size=1`` spuriously
+        # rejects the documented 64/100-ms packet cadences before any backlog.
+        return max(
+            _LIVE_QUEUE_PACKET_FLOOR_SAMPLES,
+            min(configured_samples, duration_samples),
+        )
+
+    def _install_live_stream(
+        self,
+        turn_id: str,
+        generation: int,
+        stream: Any,
+    ) -> bool:
+        """Install a created stream only while its starting turn still owns it."""
+
+        live_thread = None
+        with self._lock:
+            turn = self.turn
+            current = (
+                not self.closed
+                and turn is not None
+                and turn.turn_id == turn_id
+                and turn.generation == generation
+                and turn.phase == "starting"
+            )
+            if current:
+                turn.live_stream = stream
+                turn.live_queue = _SampleBoundedQueue(
+                    self._live_queue_capacity_samples()
+                )
+                turn.live_done.clear()
+                self._last_partial = ""
+                self._last_partial_sent_at = 0.0
+                live_thread = threading.Thread(
+                    target=self._live_worker,
+                    args=(
+                        turn.turn_id,
+                        turn.generation,
+                        turn.live_queue,
+                        turn.live_stream,
+                        turn.live_done,
+                        turn.live_cancelled,
+                    ),
+                    name=(
+                        f"RealtimeSTTProductionLive-{self.session_id}-"
+                        f"{turn.turn_id}"
+                    ),
+                    daemon=True,
+                )
+                turn.live_thread = live_thread
+                turn.phase = "receiving"
+
+        if not current:
+            return False
+        try:
+            live_thread.start()
+        except Exception:
+            # ``start()`` owns the matching-turn cleanup and this bounded
+            # worker owns closing the just-created stream.
+            raise
+        return True
+
+    def _run_live_stream_start(
+        self,
+        result: concurrent.futures.Future,
+        streaming_worker: Any,
+        turn_id: str,
+        generation: int,
+        language: str,
+    ) -> None:
+        """Create, transfer, or reap one stream without involving an ASGI loop."""
+
+        stream = None
+        try:
+            worker = streaming_worker("realtime")
+            stream = worker.create_streaming_session(
+                language=language,
+                use_prompt=False,
+            )
+            installed = self._install_live_stream(turn_id, generation, stream)
+            if not installed:
+                # The stream was completed after its owner retired.  Reap it
+                # in this already-bounded native worker; never depend on the
+                # cancelled ASGI task receiving its result.
+                self._close_live_stream(stream)
+            with self._lock:
+                owned = (
+                    installed
+                    and self.turn is not None
+                    and self.turn.turn_id == turn_id
+                    and self.turn.generation == generation
+                    and self.turn.live_stream is stream
+                )
+            if not result.done():
+                result.set_result(owned)
+        except Exception as exc:
+            if stream is not None:
+                self._close_live_stream(stream)
+            if not result.done():
+                result.set_exception(exc)
+        finally:
+            _LIVE_STREAM_OPERATION_SLOTS.release()
+            with self._lock:
+                self._live_stream_operation_threads.discard(threading.current_thread())
+
+    def _begin_live_stream_start(
+        self,
+        streaming_worker: Any,
+        turn_id: str,
+        generation: int,
+        language: str,
+    ) -> concurrent.futures.Future:
+        if not _LIVE_STREAM_OPERATION_SLOTS.acquire(blocking=False):
+            LOGGER.warning("Production live stream startup capacity is exhausted")
+            raise RuntimeError("Production live stream startup capacity is exhausted")
+        result: concurrent.futures.Future = concurrent.futures.Future()
+        thread = threading.Thread(
+            target=self._run_live_stream_start,
+            args=(result, streaming_worker, turn_id, generation, language),
+            name=f"RealtimeSTTProductionLiveCreate-{self.session_id}-{turn_id}",
+            daemon=True,
+        )
+        with self._lock:
+            self._live_stream_operation_threads.add(thread)
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                self._live_stream_operation_threads.discard(thread)
+            _LIVE_STREAM_OPERATION_SLOTS.release()
+            raise
+        return result
+
+    def _retire_starting_turn(self, turn_id: str, generation: int) -> None:
+        with self._lock:
+            turn = self.turn
+            if (
+                turn is None
+                or turn.turn_id != turn_id
+                or turn.generation != generation
+            ):
+                return
+            turn.cancelled.set()
+            self.turn = None
+            self.manager.set_turn(self.session_id, None)
+        self._stop_live_stream(turn)
+
+    async def _start_live_stream(
+        self,
+        turn_id: str,
+        generation: int,
+        language: str,
+    ) -> bool:
+        streaming_worker = getattr(
+            getattr(self.service, "scheduler", None),
+            "streaming_worker",
+            None,
+        )
+        if not callable(streaming_worker):
+            with self._lock:
+                turn = self.turn
+                if (
+                    self.closed
+                    or turn is None
+                    or turn.turn_id != turn_id
+                    or turn.generation != generation
+                    or turn.phase != "starting"
+                ):
+                    return False
+                turn.live_done.set()
+                turn.phase = "receiving"
+            return True
+
+        # Native creation and stale-stream reaping have one bounded worker
+        # slot.  There is deliberately no executor queue behind this limit.
+        result = self._begin_live_stream_start(
+            streaming_worker,
+            turn_id,
+            generation,
+            language,
+        )
+        completion = asyncio.wrap_future(result)
+        try:
+            return bool(await asyncio.shield(completion))
+        except asyncio.CancelledError:
+            def consume_late_exception(future: asyncio.Future) -> None:
+                if not future.cancelled():
+                    future.exception()
+
+            completion.add_done_callback(consume_late_exception)
+            # The operation keeps ownership of a late native result.  Retire
+            # the turn now so it either reaps the result itself or the normal
+            # stop path owns an already-installed stream.
+            self._retire_starting_turn(turn_id, generation)
+            raise
+
+    def _live_worker(
+        self,
+        turn_id: str,
+        generation: int,
+        live_queue: Any,
+        stream: Any,
+        live_done: threading.Event,
+        live_cancelled: threading.Event,
+    ) -> None:
+        try:
+            while True:
+                samples = live_queue.get()
+                try:
+                    if samples is _LIVE_CANCEL or live_cancelled.is_set():
+                        return
+                    if samples is None:
+                        stream.input_finished()
+                        result = stream.finish()
+                        if live_cancelled.is_set():
+                            return
+                        self._publish_changed_partial(turn_id, generation, result)
+                        return
+                    decode_started = time.monotonic()
+                    stream.accept_audio(samples, sample_rate=SERVER_SAMPLE_RATE)
+                    stream.decode()
+                    if live_cancelled.is_set():
+                        return
+                    decode_done = time.monotonic()
+                    with self._lock:
+                        turn = self.turn
+                        if (
+                            turn is not None
+                            and turn.turn_id == turn_id
+                            and turn.generation == generation
+                        ):
+                            turn.telemetry.setdefault("firstDecodeStartedAt", decode_started)
+                            turn.telemetry["lastDecodeDoneAt"] = decode_done
+                            turn.telemetry["decodeCalls"] = int(
+                                turn.telemetry.get("decodeCalls", 0)
+                            ) + 1
+                            turn.telemetry["decodeSeconds"] = float(
+                                turn.telemetry.get("decodeSeconds", 0.0)
+                            ) + (decode_done - decode_started)
+                    self._publish_changed_partial(turn_id, generation, stream.get_result())
+                finally:
+                    live_queue.task_done()
+        except Exception:
+            LOGGER.exception("Production live stream failed for turn %s", turn_id)
+        finally:
+            while True:
+                try:
+                    live_queue.get_nowait()
+                except queue.Empty:
+                    break
+                else:
+                    live_queue.task_done()
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    LOGGER.debug("Could not close production live stream", exc_info=True)
+            live_done.set()
+
+    def _publish_changed_partial(self, turn_id: str, generation: int, result: Any) -> None:
+        text = " ".join(str(getattr(result, "text", result) or "").split())
+        if not text:
+            return
+        now = time.monotonic()
+        with self._lock:
+            turn = self.turn
+            if turn is None or turn.turn_id != turn_id or turn.generation != generation:
+                return
+            if text == self._last_partial:
+                return
+            self._last_partial = text
+            if now - self._last_partial_sent_at < (1.0 / 15.0):
+                return
+            self._last_partial_sent_at = now
+            turn.partial_count += 1
+            turn.telemetry.setdefault("firstPartialSentAt", now)
+            turn.telemetry["lastPartialSentAt"] = now
+            connection_epoch = turn.connection_epoch
+        payload = {"type": "realtime", "turnId": turn_id, "text": text}
+        if connection_epoch is not None:
+            payload["_connectionEpoch"] = connection_epoch
+        self.manager.publish_session(
+            self.session_id,
+            payload,
+        )
 
     def touch(self) -> None:
         with self._lock:
@@ -925,9 +1466,14 @@ class ProductionSessionProtocol:
         await self.manager.emit(self.session_id, self._error(code, message, details))
 
     async def start(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        barrier = None
         with self._lock:
-            if self.turn is not None and self.turn.phase in ("active", "finalizing"):
+            if self.turn is not None and self.turn.phase in (
+                "starting",
+                "receiving",
+                "draining",
+                "final_submitted",
+                "terminal_result",
+            ):
                 return self._error("turn_in_progress", "A turn is already active", {
                     "turnId": self.turn.turn_id,
                     "phase": self.turn.phase,
@@ -941,33 +1487,29 @@ class ProductionSessionProtocol:
                     language_error["message"],
                     language_error.get("details"),
                 )
-            try:
-                snapshot = self.session.snapshot()
-            except Exception:
-                snapshot = {}
-            register_barrier = getattr(self.manager, "register_final_barrier", None)
-            if callable(register_barrier):
-                barrier = register_barrier(self.session_id, turn_id)
-            else:
-                # Keep the protocol usable with small injected managers used
-                # by downstream tests.  The production manager always
-                # provides the FIFO-backed registration above.
-                barrier = FinalEventBarrier()
+            self._generation += 1
+            generation = self._generation
+            connection_epoch = getattr(self.manager, "connection_epoch", None)
             self.turn = TurnState(
                 turn_id=turn_id,
                 language=language.strip().lower(),
-                final_submitted_at_start=int(snapshot.get("finalSubmitted", 0)),
+                phase="starting",
+                generation=generation,
+                connection_epoch=(
+                    int(connection_epoch(self.session_id))
+                    if callable(connection_epoch)
+                    else None
+                ),
             )
-            self._final_barrier = barrier
-            self._final_barrier_turn_id = turn_id
+            if hasattr(self.session, "generation"):
+                self.session.generation = generation
             self.manager.set_turn(self.session_id, turn_id)
+            suppress_type = getattr(self.manager, "suppress_type", None)
+            if callable(suppress_type):
+                suppress_type(self.session_id, "final_outcome")
             self.touch()
 
         try:
-            # The recorder is constructed once per session, but its language is
-            # a runtime value used by both executor calls.  Update the two
-            # public state holders before accepting this turn so the response
-            # language and actual inference language stay aligned.
             if hasattr(self.session, "settings"):
                 self.session.settings.language = language.strip().lower()
             recorder = getattr(self.session, "recorder", None)
@@ -982,13 +1524,41 @@ class ProductionSessionProtocol:
                 set_language = getattr(realtime_executor, "set_streaming_language", None)
                 if callable(set_language):
                     set_language(language.strip().lower())
-            self.session.start_streaming()
+            if not await self._start_live_stream(
+                turn_id,
+                generation,
+                language.strip().lower(),
+            ):
+                return _structured_error(
+                    "start_cancelled",
+                    "Turn was retired while the live stream was starting",
+                    session_id=self.session_id,
+                    turn_id=turn_id,
+                )
         except Exception as exc:
-            self._unregister_final_barrier(turn_id, barrier)
             with self._lock:
-                self.turn = None
-                self.manager.set_turn(self.session_id, None)
-            return self._error("start_failed", str(exc))
+                current = self.turn
+                active = (
+                    current is not None
+                    and current.turn_id == turn_id
+                    and current.generation == generation
+                )
+                if active:
+                    self.turn = None
+                    self.manager.set_turn(self.session_id, None)
+            if not active:
+                return _structured_error(
+                    "start_cancelled",
+                    "Turn was retired while the live stream was starting",
+                    session_id=self.session_id,
+                    turn_id=turn_id,
+                )
+            return _structured_error(
+                "start_failed",
+                str(exc),
+                session_id=self.session_id,
+                turn_id=turn_id,
+            )
         return {
             "type": "started",
             "sessionId": self.session_id,
@@ -1002,7 +1572,7 @@ class ProductionSessionProtocol:
             turn = self.turn
             if turn is None:
                 return self._error("turn_not_started", "Send start before audio")
-            if turn.phase != "active":
+            if turn.phase != "receiving":
                 return self._error("turn_not_active", f"Turn is {turn.phase}")
         try:
             packet = decode_audio_packet(message)
@@ -1010,9 +1580,16 @@ class ProductionSessionProtocol:
         except AudioPacketError as exc:
             return self._error("invalid_audio", str(exc))
 
+        if sample_rate != SERVER_SAMPLE_RATE:
+            return self._error(
+                "invalid_sample_rate",
+                f"Production WebSocket audio must use {SERVER_SAMPLE_RATE} Hz canonical PCM",
+                {"expected": SERVER_SAMPLE_RATE, "received": sample_rate},
+            )
+
         with self._lock:
             turn = self.turn
-            if turn is None or turn.phase != "active":
+            if turn is None or turn.phase != "receiving":
                 return self._error("turn_not_active", "Turn is no longer active")
             if sequence != turn.expected_audio_sequence:
                 return self._error(
@@ -1033,15 +1610,23 @@ class ProductionSessionProtocol:
                         "receivedSeconds": turn.audio_seconds + duration,
                     },
                 )
-            try:
-                accepted, warning = self.session.ingest_audio_packet(packet)
-            except AudioPacketError as exc:
-                return self._error("invalid_audio", str(exc))
-            except Exception as exc:
-                LOGGER.exception("Production audio ingestion failed")
-                return self._error("audio_ingest_failed", str(exc))
-            if not accepted:
-                return self._error("backpressure", warning or "Audio was rejected by the session queue")
+            if turn.live_queue is not None:
+                import numpy as np
+
+                try:
+                    queued_at = time.monotonic()
+                    turn.live_queue.put_nowait(
+                        np.frombuffer(packet.audio, dtype=np.int16).astype(np.float32)
+                        / 32768.0
+                    )
+                except queue.Full:
+                    return self._error("backpressure", "Production live audio queue is full")
+                turn.telemetry.setdefault("firstQueuedAt", queued_at)
+                turn.telemetry["lastQueuedAt"] = queued_at
+            turn.pcm_buffer.extend(packet.audio)
+            received_at = time.monotonic()
+            turn.telemetry.setdefault("firstReceivedAt", received_at)
+            turn.telemetry["lastReceivedAt"] = received_at
             if turn.first_audio_sequence is None:
                 turn.first_audio_sequence = sequence
             turn.last_audio_sequence = sequence
@@ -1058,63 +1643,45 @@ class ProductionSessionProtocol:
             turn = self.turn
             if turn is None:
                 return self._error("turn_not_started", "There is no active turn to finalize")
-            if turn.phase != "active":
+            if turn.phase != "receiving":
                 return self._error("turn_not_active", f"Turn is {turn.phase}")
-            turn.phase = "finalizing"
+            turn.phase = "draining"
             turn.last_activity = time.monotonic()
-            snapshot = self.session.snapshot()
-            turn.final_submitted_at_finalize = int(snapshot.get("finalSubmitted", 0))
             turn_id = turn.turn_id
-            barrier = self._final_barrier
-            if barrier is None:
-                # This only applies to injected protocol state assembled by
-                # older tests rather than through ``start``.  Normal turns
-                # register their barrier before recorder work begins.
-                register_barrier = getattr(self.manager, "register_final_barrier", None)
-                if callable(register_barrier):
-                    barrier = register_barrier(self.session_id, turn_id)
-                else:
-                    barrier = FinalEventBarrier()
-                self._final_barrier = barrier
-                self._final_barrier_turn_id = turn_id
+            generation = turn.generation
+            language = turn.language
+            pcm = bytes(turn.pcm_buffer)
+            turn.pcm_buffer.clear()
+        drain_failure = None
         try:
-            stop_result = self.session.stop_streaming()
+            if turn.live_queue is not None:
+                await asyncio.to_thread(
+                    turn.live_queue.put,
+                    None,
+                    True,
+                    self.settings.finalize_timeout_seconds,
+                )
         except Exception as exc:
-            self._unregister_final_barrier(turn_id, barrier)
-            return self._error("finalize_failed", str(exc))
-
-        try:
-            after_stop = self.session.snapshot()
-        except Exception:
-            after_stop = {}
-        final_submitted_after_start = int(
-            after_stop.get("finalSubmitted", turn.final_submitted_at_finalize)
-        ) > turn.final_submitted_at_start
-        if stop_result is None:
-            # Older injected session implementations do not return the
-            # explicit finalization state.  Their counters still provide a
-            # conservative compatibility fallback; the normal recorder-backed
-            # session returns a boolean and never needs this inference.
-            final_expected = final_submitted_after_start
-        else:
-            # A barrier may already be resolved by a final submitted while
-            # the turn was active, or the session may report that such a job
-            # exists only through its session-wide counter.  Both cases must
-            # wait for the ordered final outcome before completion.
-            final_expected = bool(stop_result) or final_submitted_after_start or barrier.wait(0.0)
-        if not final_expected:
-            # A turn with no recorded audio has no final inference to wait for.
-            # Resolve the explicit barrier as an empty outcome rather than
-            # reintroducing a timing-based quiet period.
-            barrier.resolve(None)
+            drain_failure = _structured_error(
+                "finalize_failed",
+                f"Could not seal the live audio queue: {exc}",
+                session_id=self.session_id,
+                turn_id=turn_id,
+            )
         thread = threading.Thread(
-            target=self._wait_for_completion,
-            args=(turn_id, turn.final_submitted_at_finalize, final_expected, barrier),
-            name=f"RealtimeSTTProductionCompletion-{self.session_id}-{turn_id}",
+            target=self._run_authoritative_final_worker,
+            args=(turn_id, generation, language, pcm, turn.cancelled, drain_failure),
+            name=f"RealtimeSTTProductionFinal-{self.session_id}-{turn_id}",
             daemon=True,
         )
-        self._completion_threads.append(thread)
-        thread.start()
+        with self._lock:
+            self._completion_threads.add(thread)
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                self._completion_threads.discard(thread)
+            raise
         return {
             "type": "finalizing",
             "sessionId": self.session_id,
@@ -1123,32 +1690,155 @@ class ProductionSessionProtocol:
             "audioDurationSeconds": round(turn.audio_seconds, 6),
         }
 
-    def _unregister_final_barrier(self, turn_id: str, barrier: Optional[FinalEventBarrier]) -> None:
-        if barrier is None:
-            return
-        unregister = getattr(self.manager, "unregister_final_barrier", None)
-        if callable(unregister):
-            unregister(self.session_id, turn_id, barrier)
-        with self._lock:
-            if self._final_barrier is barrier:
-                self._final_barrier = None
-                self._final_barrier_turn_id = None
+    def _run_authoritative_final_worker(
+        self,
+        turn_id: str,
+        generation: int,
+        language: str,
+        pcm: bytes,
+        cancelled: threading.Event,
+        drain_failure: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            self._authoritative_final_worker(
+                turn_id,
+                generation,
+                language,
+                pcm,
+                cancelled,
+                drain_failure,
+            )
+        finally:
+            with self._lock:
+                self._completion_threads.discard(threading.current_thread())
 
-    def _cancel_final_barrier(self, turn_id: Optional[str], barrier: Optional[FinalEventBarrier]) -> None:
-        if turn_id is None or barrier is None:
+    def _authoritative_final_worker(
+        self,
+        turn_id: str,
+        generation: int,
+        language: str,
+        pcm: bytes,
+        cancelled: threading.Event,
+        drain_failure: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if cancelled.is_set():
             return
-        self._unregister_final_barrier(turn_id, barrier)
-        barrier.resolve(None)
+        failure = drain_failure
+        status = "completed"
+        text = ""
+        with self._lock:
+            current = self.turn
+            live_done = (
+                current.live_done
+                if current is not None
+                and current.turn_id == turn_id
+                and current.generation == generation
+                else None
+            )
+            if current is not None and live_done is not None:
+                current.phase = "final_submitted"
+        if failure is not None:
+            status = "failed"
+        elif live_done is not None and not live_done.wait(
+            timeout=self.settings.finalize_timeout_seconds
+        ):
+            status = "failed"
+            failure = _structured_error(
+                "final_transcription_failed",
+                "Live audio drain timed out before final transcription",
+                session_id=self.session_id,
+                turn_id=turn_id,
+            )
+            with self._lock:
+                current = self.turn
+                if (
+                    current is not None
+                    and current.turn_id == turn_id
+                    and current.generation == generation
+                ):
+                    live_turn = current
+                else:
+                    live_turn = None
+            self._stop_live_stream(live_turn)
+        if cancelled.is_set():
+            return
+        if pcm and failure is None:
+            try:
+                import numpy as np
+
+                audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+                transcribe = getattr(self.service, "transcribe_turn", None)
+                if callable(transcribe):
+                    result = transcribe(audio, language, False)
+                else:
+                    result = _service_turn_transcription(
+                        self.service,
+                        audio,
+                        language,
+                        self.settings.finalize_timeout_seconds,
+                        self.session_id,
+                        generation,
+                    )
+                text = str(getattr(result, "text", result) or "").strip()
+            except Exception as exc:
+                LOGGER.exception("Authoritative production turn finalization failed")
+                status = "failed"
+                failure = _structured_error(
+                    "final_transcription_failed",
+                    str(exc),
+                    session_id=self.session_id,
+                    turn_id=turn_id,
+                )
+
+        with self._lock:
+            turn = self.turn
+            if (
+                turn is None
+                or turn.turn_id != turn_id
+                or turn.generation != generation
+                or turn.terminal_sent
+            ):
+                return
+            turn.terminal_sent = True
+            turn.phase = "terminal_result"
+            if failure is not None:
+                terminal = failure
+            else:
+                terminal = {
+                    "type": "final",
+                    "sessionId": self.session_id,
+                    "turnId": turn_id,
+                    "text": text,
+                    "status": "completed" if text else "no_speech",
+                }
+            if turn.connection_epoch is not None:
+                terminal["_connectionEpoch"] = turn.connection_epoch
+            publish = getattr(self.manager, "publish_session")
+            try:
+                publish(self.session_id, terminal, authoritative=True)
+            except TypeError:
+                publish(self.session_id, terminal)
+            try:
+                snapshot = self.session.snapshot()
+            except Exception:
+                snapshot = {}
+            self._publish_completion(
+                turn_id,
+                generation,
+                status,
+                snapshot,
+                failure=failure,
+            )
 
     async def reset(self) -> Dict[str, Any]:
         with self._lock:
-            old_turn = self.turn.turn_id if self.turn else None
-            old_barrier = self._final_barrier
+            current_turn = self.turn
+            old_turn = current_turn.turn_id if current_turn else None
+            if current_turn is not None:
+                current_turn.cancelled.set()
             self.turn = None
             self.manager.set_turn(self.session_id, None)
-            self._final_barrier = None
-            self._final_barrier_turn_id = None
-        self._cancel_final_barrier(old_turn, old_barrier)
+        self._stop_live_stream(current_turn)
         self.manager.suppress_type(self.session_id, "clear")
         try:
             self.session.clear()
@@ -1169,12 +1859,10 @@ class ProductionSessionProtocol:
                 return self._error("turn_not_started", "There is no active turn to cancel")
             turn_id = turn.turn_id
             turn.phase = "cancelled"
-            old_barrier = self._final_barrier
+            turn.cancelled.set()
             self.turn = None
             self.manager.set_turn(self.session_id, None)
-            self._final_barrier = None
-            self._final_barrier_turn_id = None
-        self._cancel_final_barrier(turn_id, old_barrier)
+        self._stop_live_stream(turn)
         self.manager.suppress_type(self.session_id, "clear")
         try:
             self.session.clear()
@@ -1188,53 +1876,10 @@ class ProductionSessionProtocol:
             "turnId": turn_id,
         }
 
-    def _wait_for_completion(
-        self,
-        turn_id: str,
-        target_final_count: int,
-        final_expected: bool,
-        barrier: FinalEventBarrier,
-    ) -> None:
-        del target_final_count
-        with self._lock:
-            turn = self.turn
-            if turn is None or turn.turn_id != turn_id:
-                self._unregister_final_barrier(turn_id, barrier)
-                return
-
-        snapshot = {}
-        if final_expected:
-            resolved = barrier.wait(timeout=self.settings.finalize_timeout_seconds)
-            if not resolved:
-                # The timeout is a safety limit, not an ordering mechanism.
-                # Publish the structured final failure into the same FIFO
-                # before releasing completion.
-                final_failure = _structured_error(
-                    "final_timeout",
-                    "Final inference did not complete before the configured timeout",
-                    session_id=self.session_id,
-                    turn_id=turn_id,
-                )
-                self.manager.publish_session(self.session_id, final_failure)
-                status = "timeout"
-                failure = final_failure
-            else:
-                failure = barrier.outcome
-                status = "failed" if isinstance(failure, dict) and failure.get("type") == "error" else "completed"
-        else:
-            failure = None
-            status = "completed"
-
-        try:
-            snapshot = self.session.snapshot()
-        except Exception:
-            snapshot = {}
-        self._unregister_final_barrier(turn_id, barrier)
-        self._publish_completion(turn_id, status, snapshot, failure=failure)
-
     def _publish_completion(
         self,
         turn_id: str,
+        generation: int,
         status: str,
         snapshot: Dict[str, Any],
         *,
@@ -1242,12 +1887,15 @@ class ProductionSessionProtocol:
     ) -> None:
         with self._lock:
             turn = self.turn
-            if turn is None or turn.turn_id != turn_id or turn.completion_sent:
+            if (
+                turn is None
+                or turn.turn_id != turn_id
+                or turn.generation != generation
+                or turn.completion_sent
+            ):
                 return
             turn.completion_sent = True
-            turn.phase = "completed" if status == "completed" else status
-            turn.final_count = int(snapshot.get("finalCompleted", 0))
-            turn.partial_count = int(snapshot.get("realtimeCompleted", 0))
+            turn.final_count = 1
             payload = {
                 "type": "completion",
                 "sessionId": self.session_id,
@@ -1260,7 +1908,10 @@ class ProductionSessionProtocol:
                 "lastAudioSequence": turn.last_audio_sequence,
                 "finalCount": turn.final_count,
                 "partialCount": turn.partial_count,
+                "stageTelemetry": dict(turn.telemetry),
             }
+            if turn.connection_epoch is not None:
+                payload["_connectionEpoch"] = turn.connection_epoch
             if status == "timeout":
                 payload["error"] = {
                     "code": "completion_timeout",
@@ -1274,23 +1925,109 @@ class ProductionSessionProtocol:
                         "message": failure.get("message", "Final transcription failed"),
                     }
                 )
-        # ``emit`` schedules safely when this method runs in the completion
-        # thread.  Keep the turn id until the event has been decorated.
+        # Both members of the terminal pair are admitted synchronously while
+        # the turn lock is held. Reset/cancel may retire the turn afterwards,
+        # but can no longer split an already-promised final/completion pair.
         if self.manager._loop is not None:
-            asyncio.run_coroutine_threadsafe(
-                self.manager.emit(self.session_id, payload), self.manager._loop
+            delivery = self.manager.publish_session(
+                self.session_id,
+                payload,
+                authoritative=True,
             )
+            if delivery is None:
+                return
+
+            def mark_delivered(future: concurrent.futures.Future) -> None:
+                try:
+                    delivered = bool(future.result())
+                except Exception:
+                    delivered = False
+                if not delivered:
+                    return
+                with self._lock:
+                    current = self.turn
+                    if (
+                        current is not None
+                        and current.turn_id == turn_id
+                        and current.generation == generation
+                        and current.completion_sent
+                    ):
+                        current.phase = "completed" if status == "completed" else status
+
+            delivery.add_done_callback(mark_delivered)
 
     def close(self) -> None:
         with self._lock:
             self.closed = True
-            turn_id = self._final_barrier_turn_id
-            barrier = self._final_barrier
+            current_turn = self.turn
+            if current_turn is not None:
+                current_turn.cancelled.set()
             self.turn = None
-            self._final_barrier = None
-            self._final_barrier_turn_id = None
             self.manager.set_turn(self.session_id, None)
-        self._cancel_final_barrier(turn_id, barrier)
+        self._stop_live_stream(current_turn)
+
+    def _stop_live_stream(self, turn: Optional[TurnState] = None) -> None:
+        if turn is None:
+            return
+        turn.live_cancelled.set()
+        with self._lock:
+            cancel_already_attempted = turn.live_cancel_attempted
+            turn.live_cancel_attempted = True
+
+        cancel = getattr(turn.live_stream, "cancel", None)
+        if not cancel_already_attempted and callable(cancel):
+            if not _LIVE_CANCEL_SLOTS.acquire(blocking=False):
+                LOGGER.warning(
+                    "Production live cancellation capacity is exhausted; "
+                    "closing the stream from its live worker instead"
+                )
+            else:
+
+                def cancel_in_background() -> None:
+                    try:
+                        cancel()
+                    except Exception:
+                        LOGGER.debug(
+                            "Could not cancel production live stream",
+                            exc_info=True,
+                        )
+                    finally:
+                        _LIVE_CANCEL_SLOTS.release()
+                        with self._lock:
+                            self._live_cancel_threads.discard(threading.current_thread())
+
+                cancel_thread = threading.Thread(
+                    target=cancel_in_background,
+                    name=f"RealtimeSTTProductionLiveCancel-{self.session_id}",
+                    daemon=True,
+                )
+                with self._lock:
+                    self._live_cancel_threads.add(cancel_thread)
+                try:
+                    cancel_thread.start()
+                except Exception:
+                    with self._lock:
+                        self._live_cancel_threads.discard(cancel_thread)
+                    _LIVE_CANCEL_SLOTS.release()
+                    raise
+
+        live_queue = turn.live_queue
+        if live_queue is None:
+            return
+        while True:
+            try:
+                live_queue.get_nowait()
+            except (AttributeError, queue.Empty):
+                break
+            else:
+                try:
+                    live_queue.task_done()
+                except (AttributeError, ValueError):
+                    pass
+        try:
+            live_queue.put_nowait(_LIVE_CANCEL)
+        except queue.Full:
+            LOGGER.warning("Could not wake cancelled production live stream")
 
 
 def _auth_ok(headers: Any, token: Optional[str]) -> bool:
@@ -1338,7 +2075,6 @@ def parse_args(argv: Optional[Sequence[str]] = None):
     )
     production.add_argument("--host", default="127.0.0.1")
     production.add_argument("--port", type=int, default=8010)
-    production.add_argument("--bearer-token", "--auth-token")
     production.add_argument(
         "--ssl-certfile",
         help="Uvicorn TLS certificate chain file for direct HTTPS/WSS binds",
@@ -1372,7 +2108,7 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         _base_args=base_args,
         host=known.host,
         port=known.port,
-        bearer_token=known.bearer_token,
+        bearer_token=None,
         ssl_certfile=known.ssl_certfile,
         ssl_keyfile=known.ssl_keyfile,
         idle_timeout_seconds=known.idle_timeout_seconds,
@@ -1426,6 +2162,7 @@ def _service_raw_transcription(service: Any, audio: Any, language: str, timeout:
     }
     with service._pending_recorder_lock:
         service._pending_recorder_results[request_id] = holder
+    created_at = time.monotonic()
     job = InferenceJob(
         request_id=request_id,
         session_id=session_id,
@@ -1436,8 +2173,8 @@ def _service_raw_transcription(service: Any, audio: Any, language: str, timeout:
         segment_id=1,
         sequence=0,
         generation=generation,
-        created_at=time.monotonic(),
-        deadline_at=None,
+        created_at=created_at,
+        deadline_at=created_at + timeout,
     )
     try:
         result = service.scheduler.submit(job)
@@ -1459,6 +2196,61 @@ def _service_raw_transcription(service: Any, audio: Any, language: str, timeout:
     if inference_result.error:
         raise RuntimeError(inference_result.error)
     return inference_result
+
+
+def _service_turn_transcription(
+    service: Any,
+    audio: Any,
+    language: str,
+    timeout: float,
+    session_id: str,
+    generation: int,
+):
+    """Submit one cancellable authoritative WebSocket turn final."""
+
+    request_id = uuid.uuid4().hex
+    holder = {
+        "event": threading.Event(),
+        "result": None,
+        "error": None,
+        "sessionId": session_id,
+        "generation": generation,
+    }
+    with service._pending_recorder_lock:
+        service._pending_recorder_results[request_id] = holder
+    created_at = time.monotonic()
+    job = InferenceJob(
+        request_id=request_id,
+        session_id=session_id,
+        kind="final",
+        audio=audio,
+        language=language,
+        use_prompt=False,
+        segment_id=1,
+        sequence=0,
+        generation=generation,
+        created_at=created_at,
+        deadline_at=created_at + timeout,
+    )
+    try:
+        submitted = service.scheduler.submit(job)
+        if not submitted.accepted:
+            raise RuntimeError(
+                submitted.reason or "final transcription queue rejected the request"
+            )
+        if not holder["event"].wait(timeout=timeout):
+            service.scheduler.cancel_request(request_id)
+            raise TimeoutError("final transcription timed out")
+        if holder["error"]:
+            raise RuntimeError(holder["error"])
+        result = holder["result"]
+        if result is None:
+            raise RuntimeError("final transcription returned no result")
+        if result.error:
+            raise RuntimeError(result.error)
+        return result
+    finally:
+        service._pop_pending_recorder_result(request_id)
 
 
 def _reported_detected_language(result: Any, requested_language: str) -> Optional[str]:
@@ -1772,7 +2564,7 @@ def create_app(
             await websocket.close(code=1008)
             return
         try:
-            session = service.admit_session(session_id)
+            session = _admit_production_session(service, session_id)
         except Exception as exc:
             LOGGER.exception("Could not construct production session")
             session = None
@@ -1819,6 +2611,8 @@ def create_app(
                     )
                     await websocket.close(code=1000)
                     break
+                if message.get("type") == "websocket.disconnect":
+                    break
                 protocol.touch()
                 if message.get("bytes") is not None:
                     error = await protocol.audio(message["bytes"])
@@ -1855,6 +2649,11 @@ def create_app(
                     await manager.emit(session_id, response)
         except WebSocketDisconnect:
             pass
+        except asyncio.CancelledError:
+            # ASGI servers may cancel the receive task as part of a normal
+            # peer disconnect.  Cleanup below owns the session shutdown, so
+            # do not leak that transport-level cancellation to the client.
+            pass
         except RuntimeError as exc:
             if "disconnect" not in str(exc).lower():
                 LOGGER.debug("Production websocket runtime error", exc_info=True)
@@ -1865,7 +2664,14 @@ def create_app(
                 service.remove_session(session_id)
             finally:
                 try:
-                    await manager.disconnect(session_id)
+                    try:
+                        await manager.disconnect(session_id)
+                    except asyncio.CancelledError:
+                        # A peer-close can cancel the ASGI receive scope while
+                        # its per-session sender is being drained.  Session
+                        # state still has to be cleared, but this normal close
+                        # must not escape as a failed WebSocket context.
+                        pass
                 finally:
                     manager.clear_session(session_id)
 

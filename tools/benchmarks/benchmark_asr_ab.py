@@ -11,8 +11,10 @@ started on a separate port and compared without touching the reference.
 from __future__ import annotations
 
 import argparse
+import copy
 import concurrent.futures
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 import random
@@ -465,6 +467,38 @@ def markdown_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def redact_report(result: dict[str, Any]) -> dict[str, Any]:
+    """Remove private corpus paths and reconstructable ASR content."""
+
+    safe = copy.deepcopy(result)
+    safe["manifest"] = "<redacted-manifest>"
+    for report in safe.get("targets", []):
+        report["base_url"] = "<redacted-endpoint>"
+        for key in (
+            "health_before",
+            "health_before_error",
+            "health_after",
+            "health_after_error",
+            "requests",
+        ):
+            report.pop(key, None)
+        for record in report.get("accuracy_records", []):
+            clip_id = str(record.get("clip_id", ""))
+            record["clip_id"] = "clip-" + hashlib.sha256(
+                clip_id.encode("utf-8", errors="replace")
+            ).hexdigest()[:12]
+            for key in (
+                "reference",
+                "hypothesis",
+                "reference_normalized",
+                "hypothesis_normalized",
+                "hypothesis_variants",
+            ):
+                record.pop(key, None)
+    safe["sensitive_details_included"] = False
+    return safe
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -482,6 +516,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--timeout-s", type=float, default=60.0)
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--include-sensitive-details",
+        action="store_true",
+        help=(
+            "Include manifest paths, endpoints, transcripts, and per-request "
+            "details in the protected local JSON; default output redacts them"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.concurrency < 1:
         parser.error("--concurrency must be at least 1")
@@ -510,10 +552,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             "partial_events": False,
         },
     }
+    output_result = result if args.include_sensitive_details else redact_report(result)
+    if args.include_sensitive_details:
+        output_result["sensitive_details_included"] = True
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(output_result, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     markdown = "# ASR HTTP A/B benchmark\n\n" + "\n".join(
-        markdown_report(report) for report in reports
+        markdown_report(report) for report in output_result["targets"]
     )
     args.output.with_suffix(".md").write_text(markdown + "\n", encoding="utf-8")
     print(markdown)

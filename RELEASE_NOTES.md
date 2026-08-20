@@ -1,5 +1,60 @@
 # Release Notes
 
+## 1.0.4rc1 - 2026-08-20
+
+### Fixed
+
+- Replaced the production WebSocket recorder/VAD-derived final path with a
+  turn-owned state machine and authoritative canonical PCM buffer. Every
+  finalized turn now produces exactly one Parakeet final result followed by
+  exactly one completion.
+- Made accepted 16 kHz PCM invariant to 10/20/40/64/100 ms packet boundaries;
+  the WebSocket final uses the same final scheduler lane, audio normalization,
+  language, and prompt policy as raw-PCM HTTP transcription.
+- Fenced late live/final/transport callbacks across cancel, reset, disconnect,
+  and reconnect, including reconnects that reuse a session or turn id.
+- Fixed live Nemotron input scaling, removed growing full-buffer snapshots,
+  fed only new frames to one stream per logical turn, and deduplicated and
+  rate-limited changed partials.
+- Closed long-session lifecycle leaks by retiring completed final threads,
+  draining cancelled live queues, cancelling timed-out live streams, pruning
+  connection epochs, and resolving queued scheduler jobs during shutdown.
+- Moved native live-stream creation and cancellation off the ASGI event loop,
+  fenced streams returned after a turn was retired, and bounded concurrent
+  native cancellation work process-wide.
+- Made final/completion admission atomic across reset and cancel, scoped final
+  timeout cancellation to the exact scheduler request, and bounded live
+  backpressure by queued audio duration instead of client packet count.
+- Bounded terminal-event reserve for slow WebSocket readers and close the
+  connection with code 1013 instead of allowing finalized turns to grow an
+  unbounded outbound queue.
+- Removed bearer-token command-line flags; production tokens now come only
+  from `REALTIMESTT_SERVER_BEARER_TOKEN` so they cannot appear in process
+  listings or shell history.
+
+### Changed
+
+- Production WebSocket audio is explicitly canonical mono 16 kHz
+  `pcm_s16le`. HTTP final transcription retains its documented supported input
+  sample rates and performs one whole-request resample.
+- Streaming benchmark pacing now uses the absolute audio clock and validates
+  exact terminal counts, terminal/completion ordering, quiet completion tails,
+  long-run repetitions, and bounded parallel concurrency.
+- HTTP A/B and WebSocket benchmark reports redact endpoints, corpus paths,
+  clip identifiers, references, partials, and finals by default. Sensitive
+  per-record output requires an explicit protected-local opt-in.
+- The production CPU profile keeps Nemotron live hypotheses display-only;
+  Parakeet remains the sole authoritative turn final.
+
+### Notes
+
+- This release candidate supersedes the old TestPyPI `1.0.3` artifact. PyPI
+  files are immutable, so corrected test artifacts use version `1.0.4rc1`.
+- The supported Nemotron/Parakeet production profile remains Linux x86-64.
+  Keep the server on loopback behind an authenticated TLS/WSS endpoint and
+  retain a local-live/final-server rollback path during client rollout.
+- No production-PyPI publication is implied by this release candidate.
+
 ## 1.0.3 - 2026-08-20
 
 ### Added

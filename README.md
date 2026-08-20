@@ -6,8 +6,34 @@ wake words, and direct access to audio streams. It is designed for assistants,
 dictation tools, browser streaming servers, and prototypes that need to turn
 speech into text with only a few lines of code.
 
-The recommended default path uses `faster_whisper`. Other engines are available
-through install extras when their optional dependencies and models are present.
+The general-purpose default path uses `faster_whisper`. Other engines are
+available through install extras when their optional dependencies and models
+are present.
+
+## Recommended Engine Profiles
+
+- **CUDA / GPU:** Keep using the established `faster_whisper` CUDA setup. It
+  remains the recommended general-purpose GPU path.
+- **CPU:** For production streaming on Linux x86-64, the strongly recommended
+  profile is
+  `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8` for fast,
+  replaceable realtime text together with
+  `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` for the single authoritative
+  final transcript. Nemotron processes only new audio frames during the turn;
+  Parakeet then refines the complete turn once at finalization. This pairing
+  provides substantially better CPU streaming behavior than repeatedly
+  retranscribing a growing audio buffer while preserving a high-quality final.
+
+Install the CPU server stack and both pinned model bundles with:
+
+```bash
+python -m pip install "RealtimeSTT[server,sherpa-onnx]"
+stt-install-sherpa-models --root ./models/sherpa-onnx --model all
+```
+
+See the [production server guide](RealtimeSTT_server/PRODUCTION_SERVER.md) for
+the authenticated HTTP/WebSocket deployment recipe and exact pinned model
+directories.
 
 ### Support RealtimeSTT
 
@@ -201,12 +227,15 @@ python -m pip install "RealtimeSTT[server,faster-whisper]"
 stt-server-production --host 127.0.0.1 --port 8010
 ```
 
-For CPU INT8 deployment with Nemotron live transcription and authoritative
-Parakeet final transcription, install `RealtimeSTT[server,sherpa-onnx]` and
-install both pinned model bundles into persistent storage before following the
-server recipe. The `server` extra includes the local Silero ONNX VAD runtime
-used by recorder-backed WebSocket sessions, so production startup does not
-need an interactive Torch Hub download:
+For CPU INT8 deployment, the recommended pairing is
+`sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8` for live hypotheses
+and `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8` for authoritative final
+transcription. Install `RealtimeSTT[server,sherpa-onnx]` and both pinned model
+bundles into persistent storage before following the server recipe. The
+`server` extra includes the local Silero ONNX VAD runtime used by legacy
+recorder-backed server paths. The versioned production WebSocket path owns its
+turn state and does not derive finalization from recorder VAD, so production
+startup does not need an interactive Torch Hub download:
 
 ```bash
 stt-install-sherpa-models --root ./models/sherpa-onnx --model all

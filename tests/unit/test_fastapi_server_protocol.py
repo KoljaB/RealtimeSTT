@@ -307,6 +307,72 @@ class FastAPIServerProtocolTests(unittest.TestCase):
         self.assertEqual(queue.get().session_id, "b")
         self.assertEqual([(job.session_id, reason) for job, reason in dropped], [("a", "stale")])
 
+    def test_fair_queue_drops_stale_final_jobs(self):
+        dropped = []
+        inference_queue = FairInferenceQueue(
+            "test",
+            ServerSettings(),
+            lambda job, reason, lane: dropped.append((job, reason, lane)),
+        )
+        stale = self._job("a", "final", deadline_at=0.001)
+        fresh = self._job("b", "final", deadline_at=time_now_plus(5))
+
+        self.assertTrue(inference_queue.submit(stale).accepted)
+        self.assertTrue(inference_queue.submit(fresh).accepted)
+
+        self.assertEqual(inference_queue.get().session_id, "b")
+        self.assertEqual(
+            [(job.session_id, reason, lane) for job, reason, lane in dropped],
+            [("a", "stale", "test")],
+        )
+        self.assertEqual(inference_queue.snapshot()["staleFinalDropped"], 1)
+
+    def test_cancel_request_preserves_newer_same_session_final(self):
+        dropped = []
+        inference_queue = FairInferenceQueue(
+            "test",
+            ServerSettings(),
+            lambda job, reason, lane: dropped.append((job, reason, lane)),
+        )
+        old = self._job("same", "final", segment_id=1)
+        new = self._job("same", "final", segment_id=2)
+        self.assertTrue(inference_queue.submit(old).accepted)
+        self.assertTrue(inference_queue.submit(new).accepted)
+
+        self.assertTrue(inference_queue.cancel_request(old.request_id))
+
+        self.assertEqual(inference_queue.get().request_id, new.request_id)
+        self.assertEqual(
+            [(job.request_id, reason, lane) for job, reason, lane in dropped],
+            [(old.request_id, "cancelled", "test")],
+        )
+
+    def test_fair_queue_close_drops_and_releases_all_pending_jobs(self):
+        dropped = []
+        inference_queue = FairInferenceQueue(
+            "test",
+            ServerSettings(),
+            lambda job, reason, lane: dropped.append((job, reason, lane)),
+        )
+        final = self._job("a", "final")
+        realtime = self._job("b", "realtime")
+        self.assertTrue(inference_queue.submit(final).accepted)
+        self.assertTrue(inference_queue.submit(realtime).accepted)
+
+        inference_queue.close()
+
+        self.assertEqual(inference_queue.snapshot()["queued"], 0)
+        self.assertEqual(inference_queue.snapshot()["sessions"], 0)
+        self.assertEqual(
+            {(job.request_id, reason, lane) for job, reason, lane in dropped},
+            {
+                (final.request_id, "shutdown", "test"),
+                (realtime.request_id, "shutdown", "test"),
+            },
+        )
+        self.assertIsNone(inference_queue.get())
+        self.assertFalse(inference_queue.submit(self._job("c", "final")).accepted)
+
     def test_recorder_external_executor_preserves_final_transcription_path(self):
         class Executor:
             def __init__(self):

@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import io
 import json
 import unittest
 import threading
@@ -22,6 +24,8 @@ class ProductionServerSettingsTests(unittest.TestCase):
         self.assertEqual(capabilities["server"]["version"], "1.0.3")
         self.assertEqual(capabilities["audio"]["format"], "pcm_s16le")
         self.assertEqual(capabilities["audio"]["channels"], 1)
+        self.assertEqual(capabilities["audio"]["sampleRates"], [16_000])
+        self.assertIn(48_000, capabilities["audio"]["httpSampleRates"])
         self.assertIn("final", capabilities["models"])
         self.assertIn("live", capabilities["models"])
         self.assertIn("provider", capabilities["models"]["final"])
@@ -58,6 +62,15 @@ class ProductionServerSettingsTests(unittest.TestCase):
             settings = production.ProductionServerSettings()
         self.assertEqual(settings.bearer_token, "from-env")
         self.assertNotIn("from-env", str(settings.public_dict()))
+
+    def test_cli_rejects_literal_bearer_tokens(self):
+        for flag in ("--bearer-token", "--auth-token"):
+            with (
+                self.subTest(flag=flag),
+                mock.patch("sys.stderr", new=io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                production.parse_args([flag, "must-not-enter-process-args"])
 
     def test_language_validation_accepts_remote_languages_and_rejects_bad_values(self):
         settings = production.ProductionServerSettings()
@@ -118,8 +131,8 @@ class ProductionServerUtilityTests(unittest.TestCase):
         self.assertTrue(barrier.wait(timeout=0.0))
         self.assertEqual(barrier.outcome, final)
 
-    def test_completion_waits_for_pre_finalize_in_flight_final(self):
-        """A final counted before stop must still precede completion."""
+    def test_authoritative_final_is_emitted_once_before_completion(self):
+        """Finalize owns one full-turn result regardless of recorder callbacks."""
 
         async def scenario():
             class Manager:
@@ -129,9 +142,13 @@ class ProductionServerUtilityTests(unittest.TestCase):
                     self._turn_ids = {}
                     self.events = []
                     self.completion = asyncio.Event()
+                    self.suppressed = set()
 
                 def set_turn(self, session_id, turn_id):
                     self._turn_ids[session_id] = turn_id
+
+                def set_audio_sequence(self, session_id, sequence):
+                    pass
 
                 def register_final_barrier(self, session_id, turn_id):
                     barrier = production.FinalEventBarrier()
@@ -142,13 +159,27 @@ class ProductionServerUtilityTests(unittest.TestCase):
                     if self._barriers.get((session_id, turn_id)) is barrier:
                         self._barriers.pop((session_id, turn_id), None)
 
-                def publish_session(self, session_id, message):
+                def suppress_type(self, session_id, message_type, enabled=True):
+                    if enabled:
+                        self.suppressed.add((session_id, message_type))
+                    else:
+                        self.suppressed.discard((session_id, message_type))
+
+                def publish_session(self, session_id, message, authoritative=False):
+                    completion = production.concurrent.futures.Future()
                     event = dict(message)
+                    if not authoritative and event.get("type") in {"final", "error"}:
+                        completion.set_result(False)
+                        return completion
                     self.events.append(event)
                     if event.get("type") == "final":
                         barrier = self._barriers.get((session_id, event.get("turnId")))
                         if barrier is not None:
                             barrier.resolve(event)
+                    if event.get("type") == "completion":
+                        self.completion.set()
+                    completion.set_result(True)
+                    return completion
 
                 async def emit(self, session_id, message):
                     event = dict(message)
@@ -158,48 +189,45 @@ class ProductionServerUtilityTests(unittest.TestCase):
                     return True
 
             class Session:
-                def __init__(self, manager):
-                    self.manager = manager
+                def __init__(self):
                     self.settings = SimpleNamespace(language="en")
                     self.recorder = SimpleNamespace(
                         realtime_transcription_executor=None,
                     )
-                    self.final_submitted = 0
-                    self.release_final = threading.Event()
+                    self.ingested = []
 
                 def start_streaming(self):
-                    # The final was submitted by the recorder while the turn
-                    # was active, before the client issued finalize.  Its
-                    # publication is deliberately delayed until after
-                    # stop_streaming returns.
-                    self.final_submitted = 1
+                    pass
 
-                def stop_streaming(self):
-                    def publish_later():
-                        self.release_final.wait()
-                        self.manager.publish_session(
-                            "session",
-                            {
-                                "type": "final",
-                                "turnId": "turn-1",
-                                "text": "late final",
-                            },
-                        )
+                def drain_streaming_audio(self):
+                    pass
 
-                    threading.Thread(target=publish_later, daemon=True).start()
-                    return False
+                def ingest_audio_packet(self, packet):
+                    self.ingested.append(packet.audio)
+                    return True, None
 
                 def snapshot(self):
                     return {
-                        "finalSubmitted": self.final_submitted,
+                        "finalSubmitted": 1,
                         "finalCompleted": 1,
                         "realtimeCompleted": 0,
                     }
 
+            class Service:
+                def __init__(self):
+                    self.release_final = threading.Event()
+                    self.calls = []
+
+                def transcribe_turn(self, audio, language, use_prompt):
+                    self.calls.append((audio.copy(), language, use_prompt))
+                    self.release_final.wait()
+                    return SimpleNamespace(text="authoritative final")
+
             manager = Manager()
-            session = Session(manager)
+            session = Session()
+            service = Service()
             protocol = production.ProductionSessionProtocol(
-                SimpleNamespace(),
+                service,
                 manager,
                 "session",
                 production.ProductionServerSettings(finalize_timeout_seconds=1.0),
@@ -208,18 +236,30 @@ class ProductionServerUtilityTests(unittest.TestCase):
 
             started = await protocol.start({"type": "start", "turnId": "turn-1"})
             self.assertEqual(started["type"], "started")
+            packet = production.encode_audio_packet(
+                {
+                    "sampleRate": 16_000,
+                    "channels": 1,
+                    "format": production.PCM_FORMAT,
+                    "frames": 2,
+                    "audioSequence": 0,
+                },
+                b"\x01\x00\x02\x00",
+            )
+            self.assertIsNone(await protocol.audio(packet))
             finalizing = await protocol.finalize()
             self.assertEqual(finalizing["type"], "finalizing")
 
-            # The completion worker must be waiting on the unresolved barrier,
-            # not treating the unchanged post-stop counter as no-speech.
             self.assertEqual([event["type"] for event in manager.events], [])
-            session.release_final.set()
+            service.release_final.set()
             await asyncio.wait_for(manager.completion.wait(), timeout=1.0)
             self.assertEqual(
                 [event["type"] for event in manager.events],
                 ["final", "completion"],
             )
+            self.assertEqual(manager.events[0]["text"], "authoritative final")
+            self.assertEqual(len(service.calls), 1)
+            self.assertFalse(service.calls[0][2])
             protocol.close()
 
         asyncio.run(scenario())
@@ -605,6 +645,80 @@ class _RawScheduler(_NoopScheduler):
         return production.QueueSubmitResult(True)
 
 
+class _HashScheduler(_NoopScheduler):
+    def submit(self, job):
+        def complete():
+            now = time.monotonic()
+            text = hashlib.sha256(job.audio.tobytes()).hexdigest()
+            self.result_callback(
+                production.InferenceResult(
+                    request_id=job.request_id,
+                    session_id=job.session_id,
+                    kind=job.kind,
+                    segment_id=job.segment_id,
+                    sequence=job.sequence,
+                    generation=job.generation,
+                    text=text,
+                    error=None,
+                    created_at=job.created_at,
+                    started_at=now,
+                    completed_at=now,
+                    queue_delay=0.0,
+                    inference_duration=0.001,
+                    total_latency=0.001,
+                )
+            )
+
+        threading.Thread(target=complete, daemon=True).start()
+        return production.QueueSubmitResult(True)
+
+
+class _FakeLiveStream:
+    def __init__(self):
+        self.accepted = []
+        self.decode_calls = 0
+        self.finished = 0
+        self.closed = 0
+
+    def accept_audio(self, audio, sample_rate=None):
+        self.accepted.append((audio.copy(), sample_rate))
+
+    def decode(self):
+        self.decode_calls += 1
+
+    def get_result(self):
+        return SimpleNamespace(text="same partial")
+
+    def input_finished(self):
+        self.finished += 1
+
+    def finish(self):
+        return SimpleNamespace(text="same partial")
+
+    def close(self):
+        self.closed += 1
+
+
+class _StreamingHashScheduler(_HashScheduler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.streams = []
+
+    def streaming_worker(self, kind):
+        self.kind = kind
+        scheduler = self
+
+        class Worker:
+            def create_streaming_session(self, language=None, use_prompt=True):
+                stream = _FakeLiveStream()
+                stream.language = language
+                stream.use_prompt = use_prompt
+                scheduler.streams.append(stream)
+                return stream
+
+        return Worker()
+
+
 class _NoopRecorder:
     def __init__(self, **kwargs):
         self.on_recording_start = kwargs.get("on_recording_start")
@@ -645,6 +759,184 @@ class _NoopRecorder:
 @unittest.skipIf(TestClient is None, "FastAPI test client is not installed")
 @unittest.skipIf(hasattr(production, "_BACKEND_IMPORT_ERROR"), "server backend dependencies are not installed")
 class ProductionServerAppTests(unittest.TestCase):
+    def test_empty_silent_and_short_turns_terminate_once(self):
+        import numpy as np
+
+        cases = {
+            "empty": np.array([], dtype=np.int16),
+            "silence-100ms": np.zeros(1_600, dtype=np.int16),
+            "voiced-100ms": np.tile(np.array([4_000, -4_000], dtype=np.int16), 800),
+            "silence-608ms": np.zeros(9_728, dtype=np.int16),
+        }
+        for name, samples in cases.items():
+            with self.subTest(name=name):
+                app = production.create_app(
+                    production.ProductionServerSettings(
+                        model_warmup=False,
+                        finalize_timeout_seconds=2.0,
+                    ),
+                    scheduler_factory=_HashScheduler,
+                    recorder_factory=_NoopRecorder,
+                )
+                with TestClient(app) as client:
+                    with client.websocket_connect("/api/v1/ws/transcribe") as websocket:
+                        websocket.receive_json()
+                        websocket.send_json({"type": "start", "turnId": name, "language": "en"})
+                        self._receive_type(websocket, "started")
+                        if samples.size:
+                            websocket.send_bytes(
+                                production.encode_audio_packet(
+                                    {
+                                        "sampleRate": 16_000,
+                                        "channels": 1,
+                                        "format": production.PCM_FORMAT,
+                                        "frames": int(samples.size),
+                                        "audioSequence": 0,
+                                    },
+                                    samples.tobytes(),
+                                )
+                            )
+                        websocket.send_json({"type": "finalize"})
+                        events = []
+                        while True:
+                            event = websocket.receive_json()
+                            events.append(event)
+                            if event.get("type") == "completion":
+                                break
+
+                terminals = [
+                    event
+                    for event in events
+                    if event.get("type") == "final"
+                    or (
+                        event.get("type") == "error"
+                        and event.get("where") == "final"
+                    )
+                ]
+                self.assertEqual(len(terminals), 1)
+                self.assertEqual(sum(event.get("type") == "completion" for event in events), 1)
+                self.assertLess(events.index(terminals[0]), len(events) - 1)
+                if name == "empty":
+                    self.assertEqual(terminals[0]["status"], "no_speech")
+
+    def test_live_turn_uses_one_stream_and_only_new_frames(self):
+        import numpy as np
+
+        settings = production.ProductionServerSettings(
+            model_warmup=False,
+            finalize_timeout_seconds=2.0,
+        )
+        app = production.create_app(
+            settings,
+            scheduler_factory=_StreamingHashScheduler,
+            recorder_factory=_NoopRecorder,
+        )
+        chunks = [np.arange(320, dtype=np.int16) + offset for offset in (0, 500, 1000)]
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/api/v1/ws/transcribe") as websocket:
+                websocket.receive_json()
+                websocket.send_json({"type": "start", "turnId": "live-turn", "language": "en"})
+                self._receive_type(websocket, "started")
+                for sequence, chunk in enumerate(chunks):
+                    websocket.send_bytes(
+                        production.encode_audio_packet(
+                            {
+                                "sampleRate": 16_000,
+                                "channels": 1,
+                                "format": production.PCM_FORMAT,
+                                "frames": int(chunk.size),
+                                "audioSequence": sequence,
+                            },
+                            chunk.tobytes(),
+                        )
+                    )
+                websocket.send_json({"type": "finalize"})
+                events = []
+                while True:
+                    event = websocket.receive_json()
+                    events.append(event)
+                    if event.get("type") == "completion":
+                        break
+
+            scheduler = app.state.realtimestt_service.scheduler
+            self.assertEqual(len(scheduler.streams), 1)
+            stream = scheduler.streams[0]
+            self.assertEqual(stream.language, "en")
+            self.assertFalse(stream.use_prompt)
+            self.assertEqual(stream.decode_calls, len(chunks))
+            self.assertEqual(stream.finished, 1)
+            self.assertEqual(stream.closed, 1)
+            for (actual, sample_rate), expected in zip(stream.accepted, chunks):
+                self.assertEqual(sample_rate, 16_000)
+                np.testing.assert_array_equal(
+                    actual,
+                    expected.astype(np.float32) / 32768.0,
+                )
+            partials = [event for event in events if event.get("type") == "partial"]
+            self.assertEqual(len(partials), 1)
+            completion = next(event for event in events if event.get("type") == "completion")
+            self.assertEqual(completion["finalCount"], 1)
+            self.assertEqual(completion["partialCount"], 1)
+            self.assertEqual(completion["stageTelemetry"]["decodeCalls"], len(chunks))
+
+    def test_websocket_final_matches_http_and_is_single_for_all_chunk_sizes(self):
+        import numpy as np
+
+        settings = production.ProductionServerSettings(
+            model_warmup=False,
+            finalize_timeout_seconds=2.0,
+        )
+        source = np.arange(16_000 // 2, dtype=np.int16)
+
+        for chunk_ms in (10, 20, 40, 64, 100):
+            with self.subTest(chunk_ms=chunk_ms):
+                app = production.create_app(
+                    settings,
+                    scheduler_factory=_HashScheduler,
+                    recorder_factory=_NoopRecorder,
+                )
+                with TestClient(app) as client:
+                    expected = client.post(
+                        "/transcribe-pcm16?sample_rate=16000&encoding=pcm16&language=en",
+                        content=source.tobytes(),
+                    ).json()["text"]
+                    with client.websocket_connect("/api/v1/ws/transcribe") as websocket:
+                        websocket.receive_json()
+                        websocket.send_json(
+                            {"type": "start", "turnId": f"turn-{chunk_ms}", "language": "en"}
+                        )
+                        self._receive_type(websocket, "started")
+                        chunk_frames = 16_000 * chunk_ms // 1_000
+                        for sequence, start in enumerate(range(0, source.size, chunk_frames)):
+                            chunk = source[start : start + chunk_frames]
+                            websocket.send_bytes(
+                                production.encode_audio_packet(
+                                    {
+                                        "sampleRate": 16_000,
+                                        "channels": 1,
+                                        "format": production.PCM_FORMAT,
+                                        "frames": int(chunk.size),
+                                        "audioSequence": sequence,
+                                    },
+                                    chunk.tobytes(),
+                                )
+                            )
+                        websocket.send_json({"type": "finalize"})
+                        events = []
+                        while True:
+                            event = websocket.receive_json()
+                            events.append(event)
+                            if event.get("type") == "completion":
+                                break
+
+                finals = [event for event in events if event.get("type") == "final"]
+                completions = [event for event in events if event.get("type") == "completion"]
+                self.assertEqual(len(finals), 1)
+                self.assertEqual(len(completions), 1)
+                self.assertEqual(finals[0]["text"], expected)
+                self.assertLess(events.index(finals[0]), events.index(completions[0]))
+
     def test_post_admission_handshake_failure_releases_session(self):
         class FailingConnectManager(production.OrderedConnectionManager):
             async def connect(self, session_id, websocket):

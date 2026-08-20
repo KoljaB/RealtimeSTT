@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 from array import array
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import hashlib
 import json
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -275,6 +278,20 @@ def load_manifest(manifest: Path | str, limit: int | None = None) -> list[Stream
     return clips
 
 
+def repeat_clips(clips: Sequence[StreamClip], repetitions: int) -> list[StreamClip]:
+    """Repeat a corpus with unique turn identifiers for long-run gates."""
+
+    if repetitions < 1:
+        raise ValueError("repetitions must be at least one")
+    if repetitions == 1:
+        return list(clips)
+    return [
+        replace(clip, clip_id=f"{clip.clip_id}__repeat_{repetition:03d}")
+        for repetition in range(1, repetitions + 1)
+        for clip in clips
+    ]
+
+
 def encode_audio_packet(metadata: Mapping[str, Any], audio: bytes) -> bytes:
     """Encode the production server's length-prefixed binary audio packet."""
 
@@ -357,6 +374,29 @@ def validate_event_sequences(events: Iterable[Mapping[str, Any]]) -> dict[str, A
         "last": values[-1] if values and isinstance(values[-1], int) else None,
         "violations": violations,
     }
+
+
+def terminal_contract_errors(events: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return exact-once and ordering violations for a successful turn."""
+
+    final_indices = [index for index, event in enumerate(events) if event.get("type") == "final"]
+    completion_indices = [
+        index for index, event in enumerate(events) if event.get("type") == "completion"
+    ]
+    errors = []
+    if len(final_indices) != 1:
+        errors.append(f"expected exactly one final event, received {len(final_indices)}")
+    if len(completion_indices) != 1:
+        errors.append(
+            f"expected exactly one completion event, received {len(completion_indices)}"
+        )
+    if len(final_indices) == 1 and len(completion_indices) == 1:
+        if completion_indices[0] <= final_indices[0]:
+            errors.append("completion did not follow the final event")
+    if len(completion_indices) == 1:
+        if completion_indices[0] + 1 < len(events):
+            errors.append("server emitted events after completion")
+    return errors
 
 
 def partial_prefix_monotonicity(partials: Sequence[str]) -> dict[str, Any]:
@@ -462,6 +502,18 @@ def _event_text(event: Mapping[str, Any]) -> str:
     return str(value or "").strip()
 
 
+def pacing_delay(
+    audio_started_at: float,
+    sent_frames: int,
+    pace: float,
+    now: float,
+) -> float:
+    """Return delay to an absolute audio clock without accumulating send cost."""
+
+    target = audio_started_at + (sent_frames / SERVER_SAMPLE_RATE) * pace
+    return max(0.0, target - now)
+
+
 async def _connect_websocket(url: str, token: str | None, timeout_s: float):
     try:
         import websockets
@@ -513,7 +565,7 @@ async def _stream_clip(
 
     async def receive_events(websocket) -> None:
         try:
-            while not completion_seen.is_set():
+            while True:
                 raw = await websocket.recv()
                 received_at = time.perf_counter()
                 if isinstance(raw, bytes):
@@ -569,6 +621,8 @@ async def _stream_clip(
                     ),
                     timeout=timeout_s,
                 )
+                audio_started_at = time.perf_counter()
+                sent_frames = 0
                 for index, (sequence, audio) in enumerate(packet_chunks):
                     packet = encode_audio_packet(
                         {
@@ -581,8 +635,16 @@ async def _stream_clip(
                         audio,
                     )
                     await asyncio.wait_for(websocket.send(packet), timeout=timeout_s)
+                    sent_frames += len(audio) // 2
                     if pace > 0 and index + 1 < len(packet_chunks):
-                        await asyncio.sleep((len(audio) / 2 / SERVER_SAMPLE_RATE) * pace)
+                        remaining = pacing_delay(
+                            audio_started_at,
+                            sent_frames,
+                            pace,
+                            time.perf_counter(),
+                        )
+                        if remaining > 0:
+                            await asyncio.sleep(remaining)
                 finalize_sent_at = time.perf_counter()
                 await asyncio.wait_for(
                     websocket.send(json.dumps({"type": "finalize"}, separators=(",", ":"))),
@@ -592,6 +654,10 @@ async def _stream_clip(
                     await asyncio.wait_for(completion_seen.wait(), timeout=timeout_s)
                 except asyncio.TimeoutError:
                     errors.append(f"completion was not received within {timeout_s:g} seconds")
+                else:
+                    # Keep receiving briefly so duplicate or post-completion
+                    # events cannot hide behind the first completion.
+                    await asyncio.sleep(0.1)
             finally:
                 if not receiver.done():
                     receiver.cancel()
@@ -623,10 +689,7 @@ async def _stream_clip(
         (event.get("_received_at") for event in partial_events if _event_text(event)),
         None,
     )
-    if not final_events:
-        errors.append("missing final event")
-    if not completion_events:
-        errors.append("missing completion event")
+    errors.extend(terminal_contract_errors(events))
     if completion_event and completion_event.get("status") != "completed":
         errors.append(f"completion status was {completion_event.get('status')!r}")
     if not event_sequence["valid"]:
@@ -707,11 +770,13 @@ async def _run_async(
     pace: float,
     timeout_s: float,
     token: str | None,
+    concurrency: int,
 ) -> dict[str, Any]:
-    records: list[dict[str, Any]] = []
-    for clip in clips:
-        records.append(
-            await _stream_clip(
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def run_clip(clip: StreamClip) -> dict[str, Any]:
+        async with semaphore:
+            return await _stream_clip(
                 clip,
                 url=url,
                 language_mode=language_mode,
@@ -721,7 +786,7 @@ async def _run_async(
                 timeout_s=timeout_s,
                 token=token,
             )
-        )
+    records = list(await asyncio.gather(*(run_clip(clip) for clip in clips)))
     return {
         "kind": "realtimestt_asr_websocket_streaming_benchmark",
         "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -738,6 +803,7 @@ async def _run_async(
             "timeout_s": timeout_s,
             "language_mode": language_mode,
             "fixed_language": map_language(fixed_language),
+            "concurrency": concurrency,
         },
         "corpus": {
             "clips": len(clips),
@@ -781,6 +847,7 @@ def run_benchmark(
     pace: float = 1.0,
     timeout_s: float = 60.0,
     token: str | None = None,
+    concurrency: int = 1,
 ) -> dict[str, Any]:
     """Synchronous API used by the CLI and integration callers."""
 
@@ -788,6 +855,8 @@ def run_benchmark(
         raise ValueError("timeout_s must be greater than zero")
     if pace < 0:
         raise ValueError("pace must be zero or greater")
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least one")
     return asyncio.run(
         _run_async(
             clips,
@@ -798,6 +867,7 @@ def run_benchmark(
             pace=pace,
             timeout_s=timeout_s,
             token=token,
+            concurrency=concurrency,
         )
     )
 
@@ -821,6 +891,44 @@ def _atomic_write(path: Path, content: str) -> None:
 
 def _format_metric(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
+
+
+def redact_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a publish-safe report without paths or reconstructable speech."""
+
+    redacted = copy.deepcopy(dict(report))
+    config = redacted.get("config", {})
+    if isinstance(config, dict) and "url" in config:
+        config["url"] = "<redacted-endpoint>"
+    safe_records = []
+    for source in redacted.get("records", []):
+        clip_id = str(source.get("clip_id", ""))
+        safe = {
+            key: value
+            for key, value in source.items()
+            if key
+            not in {
+                "clip_id",
+                "reference",
+                "reference_kind",
+                "wav_path",
+                "partial_texts",
+                "final_text",
+                "errors",
+            }
+        }
+        safe["clip_id"] = "clip-" + hashlib.sha256(
+            clip_id.encode("utf-8", errors="replace")
+        ).hexdigest()[:12]
+        safe["error_count"] = len(source.get("errors", []))
+        semantics = safe.get("hypothesis_to_final")
+        if isinstance(semantics, dict):
+            semantics.pop("latest_partial", None)
+            semantics.pop("final_text", None)
+        safe_records.append(safe)
+    redacted["records"] = safe_records
+    redacted["sensitive_details_included"] = False
+    return redacted
 
 
 def markdown_report(report: Mapping[str, Any]) -> str:
@@ -886,18 +994,32 @@ def markdown_report(report: Mapping[str, Any]) -> str:
         ]
     )
     for record in report["records"]:
-        final_text = record["final_text"].replace("|", "\\|").replace("\n", " ")
+        final_text = str(record.get("final_text", "<redacted>"))
+        final_text = final_text.replace("|", "\\|").replace("\n", " ")
         replacement = "yes" if record["hypothesis_to_final"]["replacement_required"] else "no"
-        status = "PASS" if record["ok"] else "FAIL: " + "; ".join(record["errors"])
+        if record["ok"]:
+            status = "PASS"
+        elif "errors" in record:
+            status = "FAIL: " + "; ".join(record["errors"])
+        else:
+            status = f"FAIL ({record.get('error_count', 0)} redacted errors)"
         lines.append(f"| {record['clip_id']} | {record['expected_language']} | {final_text} | {replacement} | {status} |")
     return "\n".join(lines) + "\n"
 
 
-def write_reports(report: Mapping[str, Any], output: Path | str) -> tuple[Path, Path]:
+def write_reports(
+    report: Mapping[str, Any],
+    output: Path | str,
+    *,
+    include_sensitive_details: bool = False,
+) -> tuple[Path, Path]:
     output = Path(output)
     markdown_path = output.with_suffix(".md")
-    _atomic_write(output, json.dumps(report, ensure_ascii=False, indent=2) + "\n")
-    _atomic_write(markdown_path, markdown_report(report))
+    output_report = dict(report) if include_sensitive_details else redact_report(report)
+    if include_sensitive_details:
+        output_report["sensitive_details_included"] = True
+    _atomic_write(output, json.dumps(output_report, ensure_ascii=False, indent=2) + "\n")
+    _atomic_write(markdown_path, markdown_report(output_report))
     return output, markdown_path
 
 
@@ -927,8 +1049,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pace", type=float, default=1.0, help="Realtime pacing multiplier; zero sends as fast as possible")
     parser.add_argument("--timeout", "--timeout-s", dest="timeout_s", type=float, default=60.0)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Maximum number of clips streamed concurrently",
+    )
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeat the selected corpus for long-run reliability gates",
+    )
     parser.add_argument("--language-mode", choices=("fixed", "auto"), default="auto")
     parser.add_argument("--language", default="en", help="Fixed-mode language code/name (default: en)")
+    parser.add_argument(
+        "--include-sensitive-details",
+        action="store_true",
+        help=(
+            "Include WAV paths, references, partials, and final transcripts in "
+            "the protected local report; default reports redact them"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.chunk_ms <= 0:
         parser.error("--chunk-ms must be greater than zero")
@@ -936,7 +1078,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--pace must be zero or greater")
     if args.timeout_s <= 0:
         parser.error("--timeout must be greater than zero")
-    clips = load_manifest(args.manifest, args.limit)
+    if args.repetitions < 1:
+        parser.error("--repetitions must be at least one")
+    if args.concurrency < 1:
+        parser.error("--concurrency must be at least one")
+    clips = repeat_clips(load_manifest(args.manifest, args.limit), args.repetitions)
     report = run_benchmark(
         clips,
         url=args.url,
@@ -946,9 +1092,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         pace=args.pace,
         timeout_s=args.timeout_s,
         token=os.environ.get("REALTIMESTT_SERVER_BEARER_TOKEN") or None,
+        concurrency=args.concurrency,
     )
-    write_reports(report, args.output)
-    _print_utf8(markdown_report(report))
+    write_reports(
+        report,
+        args.output,
+        include_sensitive_details=args.include_sensitive_details,
+    )
+    printed_report = report if args.include_sensitive_details else redact_report(report)
+    _print_utf8(markdown_report(printed_report))
     return 0 if report["ok"] else 1
 
 

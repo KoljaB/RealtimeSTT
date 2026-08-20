@@ -115,6 +115,47 @@ class ProductionServerAudioBoundaryTests(unittest.TestCase):
         self.assertEqual(actual.size, 16_000)
         np.testing.assert_array_equal(actual, expected)
 
+    def test_canonical_turn_pcm_is_invariant_across_packet_boundaries(self):
+        sample_rate = production.SERVER_SAMPLE_RATE
+        timeline = np.arange(sample_rate // 2, dtype=np.float32)
+        source = (
+            7_000.0 * np.sin(2 * np.pi * 1_000 * timeline / sample_rate)
+            + 4_000.0 * np.sin(2 * np.pi * 3_700 * timeline / sample_rate)
+        ).round().astype(np.int16)
+
+        for chunk_ms in (10, 20, 40, 64, 100):
+            with self.subTest(chunk_ms=chunk_ms):
+                protocol = production.ProductionSessionProtocol(
+                    service=types.SimpleNamespace(),
+                    manager=production.OrderedConnectionManager(),
+                    session_id="session",
+                    settings=production.ProductionServerSettings(model_warmup=False),
+                )
+                session = _Session()
+                protocol.attach(session)
+                asyncio.run(protocol.start({"turnId": f"turn-{chunk_ms}", "language": "en"}))
+                chunk_frames = sample_rate * chunk_ms // 1_000
+                for sequence, start in enumerate(range(0, source.size, chunk_frames)):
+                    chunk = source[start : start + chunk_frames]
+                    error = asyncio.run(
+                        protocol.audio(
+                            production.encode_audio_packet(
+                                {
+                                    "sampleRate": sample_rate,
+                                    "channels": 1,
+                                    "format": production.PCM_FORMAT,
+                                    "frames": int(chunk.size),
+                                    "audioSequence": sequence,
+                                },
+                                chunk.tobytes(),
+                            )
+                        )
+                    )
+                    self.assertIsNone(error)
+
+                actual = np.frombuffer(bytes(protocol.turn.pcm_buffer), dtype=np.int16)
+                np.testing.assert_array_equal(actual, source)
+
     def test_silence_and_noise_have_distinct_vad_decisions(self):
         settings = reference_server.ServerSettings(vad_energy_threshold=500.0)
         detector = reference_server.VoiceActivityDetector(settings)

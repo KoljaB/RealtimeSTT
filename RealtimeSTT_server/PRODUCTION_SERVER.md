@@ -22,10 +22,12 @@ stt-server-production `
   --ssl-keyfile C:\certs\server-key.pem
 ```
 
-`--bearer-token`/`--auth-token` may override the environment for local
-development. The `--ssl-certfile` and `--ssl-keyfile` flags are passed directly
-to Uvicorn and must be supplied together. The token is never included in
-capabilities or public settings.
+Bearer tokens are accepted only through
+`REALTIMESTT_SERVER_BEARER_TOKEN`; literal token command-line arguments are
+rejected so secrets cannot appear in shell history or process listings. The
+`--ssl-certfile` and `--ssl-keyfile` flags are passed directly to Uvicorn and
+must be supplied together. The token is never included in capabilities or
+public settings.
 
 For a reverse-proxy deployment, leave this server on its loopback default and
 terminate TLS at the proxy. The proxy should forward HTTPS/WSS requests to
@@ -44,8 +46,10 @@ stt-install-sherpa-models --root models/sherpa-onnx --model all
 ```
 
 The `server` extra includes the local Silero ONNX VAD model/runtime required by
-recorder-backed WebSocket sessions. Server startup and first connection do not
-depend on an interactive Torch Hub download.
+legacy recorder-backed server paths. The versioned production WebSocket path
+does not instantiate a recorder or use VAD to decide turn finals. Server
+startup and first connection do not depend on an interactive Torch Hub
+download.
 
 Then run:
 
@@ -101,7 +105,9 @@ Connect to `/api/v1/ws/transcribe`, `/api/v1/ws`, or
 increasing per-session `eventSequence`. Each session has an independent bounded
 outbound queue. When a client is slow, stale partial hypotheses for the same
 turn are coalesced without creating sequence gaps; final and completion events
-are preserved.
+are preserved in a two-event terminal reserve. A client that exhausts that
+reserve is closed with WebSocket backpressure code 1013 instead of growing an
+unbounded queue.
 
 Commands are JSON objects:
 
@@ -114,7 +120,9 @@ Commands are JSON objects:
 
 Binary audio uses the existing length-prefixed packet format. Production
 packets must be mono `pcm_s16le` and include a contiguous `audioSequence` in
-metadata, beginning at zero:
+metadata, beginning at zero. WebSocket audio is canonical 16 kHz; clients must
+keep one stateful resampler for the logical turn and must not restart a
+resampler for each packet:
 
 ```json
 {
@@ -126,9 +134,28 @@ metadata, beginning at zero:
 }
 ```
 
-The server emits `partial`, `final`, and one `completion` event per finalized
-turn. Validation, queue pressure, duration limits, authentication, and model
-failures use structured `error` objects with stable machine-readable codes.
-Disconnecting a client cancels its scheduler work, closes its recorder, and
-releases the session slot. Shutdown waits for worker threads and releases
-loaded engines deterministically.
+The server feeds Nemotron only newly accepted frames through one live stream
+per logical turn. Partials are display-only, changed-hypothesis deduplicated,
+and rate-limited. The accepted PCM bytes are also appended exactly once to the
+turn's authoritative buffer. Finalize seals and drains live input, submits the
+complete canonical buffer once through the same Parakeet final lane used by
+HTTP, emits exactly one `final`, then exactly one `completion`.
+
+Empty or silent turns emit `final` with empty text and `status: "no_speech"`,
+then `completion`. Validation, queue pressure, duration limits,
+authentication, and model failures use structured `error` objects with stable
+machine-readable codes. Cancel, reset, disconnect, and reconnect fence old
+turn and transport generations. Shutdown resolves queued jobs, stops worker
+threads, and releases loaded engines deterministically.
+
+## Capacity and memory
+
+The two-model CPU profile keeps both Nemotron and Parakeet loaded. Size hosts
+for the measured resident set plus concurrent audio buffers and native runtime
+headroom; do not size from model archive sizes alone. Each active turn retains
+its canonical PCM until the authoritative final completes, subject to
+`--max-turn-audio-seconds`. Input, inference, and outbound queues are bounded;
+backpressure is a protocol outcome, not permission to buffer without limit.
+Run the streaming benchmark with production packet cadence, long-run
+repetitions, and parallel concurrency on the target host before raising any
+session or queue limits.

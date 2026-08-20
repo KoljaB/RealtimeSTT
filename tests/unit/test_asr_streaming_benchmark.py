@@ -1,10 +1,11 @@
 import json
-from pathlib import Path
 import struct
 import tempfile
 import unittest
 import wave
+from pathlib import Path
 
+from tools.benchmarks import benchmark_asr_ab as ab_benchmark
 from tools.benchmarks import benchmark_asr_streaming as benchmark
 
 
@@ -85,6 +86,64 @@ class StreamingBenchmarkUtilityTests(unittest.TestCase):
         events = [{"eventSequence": 1}, {"eventSequence": 2}, {"eventSequence": 4}]
         self.assertFalse(benchmark.validate_event_sequences(events)["valid"])
 
+    def test_terminal_contract_requires_exactly_one_ordered_pair_and_quiet_tail(self):
+        self.assertEqual(
+            benchmark.terminal_contract_errors(
+                [{"type": "partial"}, {"type": "final"}, {"type": "completion"}]
+            ),
+            [],
+        )
+        duplicate = benchmark.terminal_contract_errors(
+            [
+                {"type": "final"},
+                {"type": "final"},
+                {"type": "completion"},
+                {"type": "partial"},
+            ]
+        )
+        self.assertIn("expected exactly one final event, received 2", duplicate)
+        self.assertIn("server emitted events after completion", duplicate)
+        reversed_pair = benchmark.terminal_contract_errors(
+            [{"type": "completion"}, {"type": "final"}]
+        )
+        self.assertIn("completion did not follow the final event", reversed_pair)
+
+    def test_pacing_uses_absolute_audio_clock_without_cumulative_drift(self):
+        self.assertAlmostEqual(
+            benchmark.pacing_delay(10.0, 640, 1.0, 10.015),
+            0.025,
+        )
+        self.assertEqual(
+            benchmark.pacing_delay(10.0, 1_280, 1.0, 10.090),
+            0.0,
+        )
+
+    def test_long_run_repetitions_preserve_audio_and_make_ids_unique(self):
+        clip = benchmark.StreamClip(
+            clip_id="turn",
+            expected_language="en",
+            reference="",
+            reference_kind="none",
+            wav_path=Path("turn.wav"),
+            pcm16=b"\x01\x00",
+            audio_duration_s=1 / 16_000,
+            source_sample_rate=16_000,
+        )
+        repeated = benchmark.repeat_clips([clip], 3)
+        self.assertEqual(
+            [item.clip_id for item in repeated],
+            ["turn__repeat_001", "turn__repeat_002", "turn__repeat_003"],
+        )
+        self.assertTrue(all(item.pcm16 is clip.pcm16 for item in repeated))
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            benchmark.repeat_clips([clip], 0)
+        with self.assertRaisesRegex(ValueError, "concurrency must be at least one"):
+            benchmark.run_benchmark(
+                [clip],
+                url="ws://127.0.0.1:1",
+                concurrency=0,
+            )
+
     def test_metrics_report_revisions_and_final_replacement(self):
         partials = ["hello", "hello wor", "hello world"]
         monotonic = benchmark.partial_prefix_monotonicity(partials)
@@ -126,6 +185,84 @@ class StreamingBenchmarkUtilityTests(unittest.TestCase):
         output = np.frombuffer(converted, dtype="<i2").astype(np.float64)
         self.assertEqual(len(output), round(sample_count * 16_000 / rate))
         self.assertLess(float(np.sqrt(np.mean(output * output))), 2_000.0)
+
+    def test_default_report_redacts_paths_and_reconstructable_text(self):
+        report = {
+            "config": {"url": "wss://private.example/ws"},
+            "records": [
+                {
+                    "clip_id": "speaker/private.wav",
+                    "expected_language": "de",
+                    "reference": "private reference words",
+                    "reference_kind": "manifest",
+                    "wav_path": "D:/private/speaker.wav",
+                    "partial_texts": ["private partial words"],
+                    "final_text": "private final words",
+                    "errors": [],
+                    "ok": True,
+                    "hypothesis_to_final": {
+                        "partial_count": 1,
+                        "latest_partial": "private partial words",
+                        "final_text": "private final words",
+                        "replacement_required": True,
+                        "latest_partial_matches_final": False,
+                    },
+                }
+            ],
+        }
+
+        safe = benchmark.redact_report(report)
+        serialized = json.dumps(safe)
+        for secret in (
+            "private.example",
+            "speaker/private.wav",
+            "D:/private/speaker.wav",
+            "private reference words",
+            "private partial words",
+            "private final words",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertRegex(safe["records"][0]["clip_id"], r"^clip-[0-9a-f]{12}$")
+        self.assertFalse(safe["sensitive_details_included"])
+
+    def test_http_ab_default_report_is_publish_safe(self):
+        report = {
+            "manifest": "D:/private/manifest.json",
+            "targets": [
+                {
+                    "base_url": "https://private.example",
+                    "health_before": {"model": "private-model-path"},
+                    "health_after": {},
+                    "health_before_error": None,
+                    "health_after_error": None,
+                    "requests": [{"text": "private request words"}],
+                    "accuracy_records": [
+                        {
+                            "clip_id": "private-speaker.wav",
+                            "reference": "private reference words",
+                            "hypothesis": "private hypothesis words",
+                            "reference_normalized": "private reference words",
+                            "hypothesis_normalized": "private hypothesis words",
+                            "hypothesis_variants": {"private hypothesis words": 1},
+                        }
+                    ],
+                }
+            ],
+        }
+
+        safe = ab_benchmark.redact_report(report)
+        serialized = json.dumps(safe)
+        for secret in (
+            "D:/private/manifest.json",
+            "private.example",
+            "private-model-path",
+            "private request words",
+            "private-speaker.wav",
+            "private reference words",
+            "private hypothesis words",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertFalse(safe["sensitive_details_included"])
 
 
 if __name__ == "__main__":
