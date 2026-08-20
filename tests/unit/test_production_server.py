@@ -1026,11 +1026,11 @@ class ProductionServerAppTests(unittest.TestCase):
         settings = production.ProductionServerSettings(
             model_warmup=False,
             max_sessions=1,
-            idle_timeout_seconds=30.0,
+            idle_timeout_seconds=2.0,
         )
         app = production.create_app(
             settings,
-            scheduler_factory=_RawScheduler,
+            scheduler_factory=_NoopScheduler,
             recorder_factory=_NoopRecorder,
         )
 

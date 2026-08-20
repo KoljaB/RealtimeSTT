@@ -1733,6 +1733,7 @@ class ProductionSessionProtocol:
                 if current is not None
                 and current.turn_id == turn_id
                 and current.generation == generation
+                and current.live_queue is not None
                 else None
             )
             if current is not None and live_done is not None:
