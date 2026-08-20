@@ -17,11 +17,11 @@ class ProductionServerSettingsTests(unittest.TestCase):
         settings = production.ProductionServerSettings()
 
         self.assertEqual(settings.host, "127.0.0.1")
-        self.assertEqual(production.SERVER_VERSION, "1.0.3")
+        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.0.4rc1")
         capabilities = production.capabilities_for(settings)
         self.assertEqual(capabilities["apiVersion"], "v1")
         self.assertEqual(capabilities["protocolVersion"], "realtimestt.remote.v1")
-        self.assertEqual(capabilities["server"]["version"], "1.0.3")
+        self.assertEqual(capabilities["server"]["version"], production.SERVER_VERSION)
         self.assertEqual(capabilities["audio"]["format"], "pcm_s16le")
         self.assertEqual(capabilities["audio"]["channels"], 1)
         self.assertEqual(capabilities["audio"]["sampleRates"], [16_000])
@@ -1004,7 +1004,7 @@ class ProductionServerAppTests(unittest.TestCase):
             finalize_timeout_seconds=2.0,
         )
         app = production.create_app(settings, scheduler_factory=_RawScheduler, recorder_factory=_NoopRecorder)
-        self.assertEqual(app.openapi()["info"]["version"], "1.0.3")
+        self.assertEqual(app.openapi()["info"]["version"], production.SERVER_VERSION)
 
         with TestClient(app) as client:
             response = client.post(
