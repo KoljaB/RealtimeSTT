@@ -1,6 +1,6 @@
 # Release Notes
 
-## 1.0.4rc1 - 2026-08-20
+## 1.0.4 - 2026-08-21
 
 ### Fixed
 
@@ -48,8 +48,8 @@
 
 ### Notes
 
-- This release candidate supersedes the old TestPyPI `1.0.3` artifact. PyPI
-  files are immutable, so corrected test artifacts use version `1.0.4rc1`.
+- This release supersedes the old TestPyPI `1.0.3` artifact. PyPI
+  files are immutable, so the corrected production release uses version `1.0.4`.
 - The supported Nemotron/Parakeet production profile remains Linux x86-64.
   Keep the server on loopback behind an authenticated TLS/WSS endpoint and
   retain a local-live/final-server rollback path during client rollout.

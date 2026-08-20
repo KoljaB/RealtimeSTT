@@ -17,7 +17,7 @@ class ProductionServerSettingsTests(unittest.TestCase):
         settings = production.ProductionServerSettings()
 
         self.assertEqual(settings.host, "127.0.0.1")
-        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.0.4rc1")
+        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.0.4")
         capabilities = production.capabilities_for(settings)
         self.assertEqual(capabilities["apiVersion"], "v1")
         self.assertEqual(capabilities["protocolVersion"], "realtimestt.remote.v1")
@@ -1025,7 +1025,7 @@ class ProductionServerAppTests(unittest.TestCase):
     def test_versioned_health_capabilities_and_ws_turn_contract(self):
         settings = production.ProductionServerSettings(
             model_warmup=False,
-            idle_timeout_seconds=2.0,
+            idle_timeout_seconds=10.0,
             max_sessions=1,
         )
         app = production.create_app(
