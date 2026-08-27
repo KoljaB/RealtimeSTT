@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -19,9 +20,9 @@ import urllib.request
 import zipfile
 from contextlib import suppress
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_ATTESTATION_AGE_SECONDS = 30 * 60
 SIGNATURE_NAMESPACE = "codex-release-guard"
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
@@ -35,6 +36,80 @@ TEXT_SUFFIXES = {
     ".txt",
     ".yaml",
     ".yml",
+}
+
+# These profiles are deliberately code-owned. Release callers may supply runtime
+# locations, but they cannot redefine what a component is, who may attest it, or
+# which public repository/branch is released.
+COMPONENT_PROFILES: dict[str, dict[str, object]] = {
+    "RealtimeTTS": {
+        "distribution": "realtimetts",
+        "packages": (("RealtimeTTS", "RealtimeTTS", "RealtimeTTS"),),
+        "signer": "linux-services",
+        "signer_fingerprint": "SHA256:ODuksd5J17paccWV+N0zWfczcc1iV30V5mQytjiar2w",
+        "remote_repository": "github.com/koljab/realtimetts",
+        "remote_branch": "master",
+        "service_required": True,
+        "service_name": "wwz-qwen3-tts.service",
+        "publishable": True,
+    },
+    "RealtimeSTT": {
+        "distribution": "realtimestt",
+        "packages": (
+            ("RealtimeSTT", "RealtimeSTT", "RealtimeSTT"),
+            ("RealtimeSTT_server", "RealtimeSTT_server", "RealtimeSTT_server"),
+            (
+                "example_fastapi_server",
+                "example_fastapi_server",
+                "example_fastapi_server",
+            ),
+        ),
+        "signer": "linux-services",
+        "signer_fingerprint": "SHA256:ODuksd5J17paccWV+N0zWfczcc1iV30V5mQytjiar2w",
+        "remote_repository": "github.com/koljab/realtimestt",
+        "remote_branch": "master",
+        "service_required": True,
+        "service_name": "realtimestt-104rc1-final-20260820.service",
+        "publishable": True,
+    },
+    "echoff": {
+        "distribution": "echoff",
+        "packages": (("echoff", "src/echoff", "echoff"),),
+        "signer": "echoff-windows",
+        "signer_fingerprint": "SHA256:1FRbwkXHlurnoZOYAfK4yApbE9lbwmq8aoRSfJdEhQo",
+        "remote_repository": "github.com/koljab/echoff",
+        "remote_branch": "main",
+        "service_required": False,
+        "service_name": None,
+        "publishable": True,
+    },
+    # Non-publishable profiles retain real CLI/unit coverage without weakening
+    # any production component profile.
+    "fixture": {
+        "distribution": "guard-dist",
+        "packages": (("GuardPkg", "GuardPkg", "GuardPkg"),),
+        "signer": "guard-cli-test",
+        "signer_fingerprint": None,
+        "remote_repository": None,
+        "remote_branch": None,
+        "service_required": False,
+        "service_name": None,
+        "publishable": False,
+    },
+    "demo": {
+        "distribution": "demo_distribution",
+        "packages": (
+            ("demo_pkg", "demo_pkg", "demo_pkg"),
+            ("demo_server", "src/demo_server", "demo_server"),
+        ),
+        "signer": "test-runtime",
+        "signer_fingerprint": None,
+        "remote_repository": None,
+        "remote_branch": None,
+        "service_required": False,
+        "service_name": None,
+        "publishable": False,
+    },
 }
 
 
@@ -172,6 +247,137 @@ def _wheel_metadata(wheel: Path) -> dict[str, str]:
 
 def _canonical_distribution(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _component_profile(component: object, *, publishing: bool = False) -> dict[str, object]:
+    if not isinstance(component, str) or component not in COMPONENT_PROFILES:
+        raise GuardError(f"unknown release component: {component!r}")
+    profile = COMPONENT_PROFILES[component]
+    if publishing and profile.get("publishable") is not True:
+        raise GuardError(f"component {component!r} is not publishable")
+    return profile
+
+
+def _safe_relative_path(value: str, label: str) -> PurePosixPath:
+    if "\\" in value:
+        raise GuardError(f"{label} must use a repository-relative POSIX path")
+    relative = PurePosixPath(value)
+    if (
+        not value
+        or relative.is_absolute()
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise GuardError(f"{label} must stay inside its declared root: {value!r}")
+    return relative
+
+
+def _repo_member(repo: Path, relative: str, label: str) -> Path:
+    member = _safe_relative_path(relative, label)
+    root = repo.resolve()
+    resolved = (root / Path(*member.parts)).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise GuardError(f"{label} escapes repository root: {relative!r}") from exc
+    return resolved
+
+
+def _lexically_within(child: object, root: object) -> bool:
+    if not isinstance(child, str) or not isinstance(root, str) or not child or not root:
+        return False
+    path_type = PureWindowsPath if re.match(r"^[A-Za-z]:[\\/]", root) else PurePosixPath
+    child_path = path_type(child)
+    root_path = path_type(root)
+    if not child_path.is_absolute() or not root_path.is_absolute():
+        return False
+    if ".." in child_path.parts or ".." in root_path.parts:
+        return False
+    try:
+        child_path.relative_to(root_path)
+    except ValueError:
+        return False
+    return child_path != root_path
+
+
+def _validate_hash_tree(value: object, label: str) -> dict[str, str]:
+    if not isinstance(value, dict) or not value:
+        raise GuardError(f"{label} hash evidence is invalid")
+    result: dict[str, str] = {}
+    for relative, digest in value.items():
+        if not isinstance(relative, str) or not isinstance(digest, str):
+            raise GuardError(f"{label} hash evidence is invalid")
+        _safe_relative_path(relative, f"{label} file")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise GuardError(f"{label} hash evidence is invalid")
+        result[relative] = digest
+    return result
+
+
+def _ssh_key_fingerprint(key_type: str, encoded_key: str) -> str:
+    if not re.fullmatch(r"(?:ssh|ecdsa|sk)-[A-Za-z0-9@._+-]+", key_type):
+        raise GuardError("allowed signer key type is invalid")
+    try:
+        key_blob = base64.b64decode(encoded_key, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise GuardError("allowed signer public key is invalid") from exc
+    encoded = base64.b64encode(hashlib.sha256(key_blob).digest()).decode("ascii")
+    return "SHA256:" + encoded.rstrip("=")
+
+
+def _public_key_parts(line: str) -> tuple[str, str]:
+    fields = line.split()
+    for index, field in enumerate(fields[:-1]):
+        if re.fullmatch(r"(?:ssh|ecdsa|sk)-[A-Za-z0-9@._+-]+", field):
+            return field, fields[index + 1]
+    raise GuardError("allowed signer entry has no supported public key")
+
+
+def _allowed_signer_fingerprint(allowed_signers: Path, signer: str) -> str:
+    matches: list[str] = []
+    for raw_line in allowed_signers.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        principals = line.split(maxsplit=1)[0].split(",")
+        if signer in principals:
+            key_type, encoded_key = _public_key_parts(line)
+            matches.append(_ssh_key_fingerprint(key_type, encoded_key))
+    if len(matches) != 1:
+        raise GuardError(f"allowed-signers must contain exactly one key for {signer!r}")
+    return matches[0]
+
+
+def _signing_key_fingerprint(signing_key: Path) -> str:
+    result = subprocess.run(
+        ["ssh-keygen", "-y", "-f", str(signing_key.resolve())],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise GuardError(f"cannot read signing public key: {detail}")
+    key_type, encoded_key = _public_key_parts(result.stdout.strip())
+    return _ssh_key_fingerprint(key_type, encoded_key)
+
+
+def _canonical_remote_url(value: str) -> str:
+    candidate = value.strip()
+    scp = re.fullmatch(r"(?:[^@/:]+@)?([^/:]+):(.+)", candidate)
+    if scp and "://" not in candidate:
+        host, path = scp.groups()
+    else:
+        parsed = urllib.parse.urlsplit(candidate)
+        host = parsed.hostname or ""
+        path = parsed.path
+    if not host or not path:
+        raise GuardError("release remote must be a network repository URL")
+    normalized_path = path.strip("/")
+    if normalized_path.lower().endswith(".git"):
+        normalized_path = normalized_path[:-4]
+    if not normalized_path:
+        raise GuardError("release remote repository path is empty")
+    return f"{host.lower()}/{normalized_path.lower()}"
 
 
 def _worktree_paths(repo: Path) -> list[Path]:
@@ -313,7 +519,11 @@ def _sign_manifest_file(manifest: Path, signing_key: Path) -> Path:
 
 
 def _verify_manifest_signature(
-    manifest: Path, signature: Path, allowed_signers: Path, signer: str
+    manifest: Path,
+    signature: Path,
+    allowed_signers: Path,
+    signer: str,
+    expected_fingerprint: object,
 ) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", signer):
         raise GuardError("manifest signer identity is invalid")
@@ -321,6 +531,15 @@ def _verify_manifest_signature(
         raise GuardError(f"deployment signature does not exist: {signature}")
     if not allowed_signers.resolve().is_file():
         raise GuardError(f"allowed-signers file does not exist: {allowed_signers}")
+    if expected_fingerprint is not None:
+        actual_fingerprint = _allowed_signer_fingerprint(
+            allowed_signers.resolve(), signer
+        )
+        if actual_fingerprint != expected_fingerprint:
+            raise GuardError(
+                "allowed signer key does not match the component trust profile "
+                f"({actual_fingerprint} != {expected_fingerprint})"
+            )
     result = subprocess.run(
         [
             "ssh-keygen",
@@ -390,7 +609,9 @@ def _head(repo: Path) -> str:
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
-def _package_specs(args: argparse.Namespace) -> list[dict[str, str]]:
+def _package_specs(
+    args: argparse.Namespace, repo: Path, profile: dict[str, object]
+) -> list[dict[str, str]]:
     packages = list(args.package_dir)
     source_packages = list(args.source_package_dir) or packages
     runtime_dirs = [Path(path).resolve() for path in args.runtime_package_dir]
@@ -410,6 +631,17 @@ def _package_specs(args: argparse.Namespace) -> list[dict[str, str]]:
         raise GuardError("duplicate --source-package-dir value")
     if len(set(modules)) != len(modules):
         raise GuardError("duplicate --runtime-module value")
+    declared = tuple(zip(packages, source_packages, modules, strict=True))
+    if declared != profile.get("packages"):
+        raise GuardError(
+            "component package contract differs from the pinned release profile: "
+            f"{declared!r} != {profile.get('packages')!r}"
+        )
+    for package, source_package, module in declared:
+        _safe_relative_path(package, "package directory")
+        _repo_member(repo, source_package, "source package directory")
+        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module):
+            raise GuardError(f"runtime module is invalid: {module!r}")
     return [
         {
             "package_dir": package,
@@ -521,12 +753,24 @@ def _runtime_state(
         raise GuardError("runtime import probe used a different Python executable")
     imports = probe.get("imports")
     versions = probe.get("versions")
-    if not isinstance(imports, dict) or not isinstance(versions, dict):
+    prefix = probe.get("prefix")
+    if (
+        not isinstance(imports, dict)
+        or not isinstance(versions, dict)
+        or not isinstance(prefix, str)
+    ):
         raise GuardError("runtime import probe omitted imports or versions")
+    runtime_python_path = str(_absolute_path(runtime_python))
+    if not _lexically_within(runtime_python_path, prefix):
+        raise GuardError("runtime Python is outside the probed environment prefix")
     package_files: dict[str, dict[str, str]] = {}
     for spec in specs:
         module = spec["runtime_module"]
         runtime_dir = spec["runtime_package_dir"]
+        if not _lexically_within(runtime_dir, prefix):
+            raise GuardError(
+                f"runtime package {runtime_dir!r} is outside environment prefix {prefix!r}"
+            )
         if not _same_path(imports.get(module), runtime_dir):
             raise GuardError(
                 f"runtime module {module!r} imports from {imports.get(module)!r}, "
@@ -536,12 +780,235 @@ def _runtime_state(
     if not all(isinstance(versions.get(name), str) for name in distributions):
         raise GuardError("runtime import probe omitted a distribution version")
     return {
-        "python": str(_absolute_path(runtime_python)),
-        "prefix": probe.get("prefix"),
+        "python": runtime_python_path,
+        "prefix": prefix,
         "imports": imports,
         "versions": {name: versions[name] for name in distributions},
         "package_files": package_files,
     }
+
+
+def _validated_attested_runtime_state(
+    runtime: object,
+    specs: list[dict[str, str]],
+    distribution: str,
+    dependencies: list[str],
+) -> dict[str, object]:
+    if not isinstance(runtime, dict):
+        raise GuardError("deployment manifest runtime evidence is invalid")
+    python = runtime.get("python")
+    prefix = runtime.get("prefix")
+    imports = runtime.get("imports")
+    versions = runtime.get("versions")
+    package_files = runtime.get("package_files")
+    if (
+        not isinstance(python, str)
+        or not isinstance(prefix, str)
+        or not isinstance(imports, dict)
+        or not isinstance(versions, dict)
+        or not isinstance(package_files, dict)
+    ):
+        raise GuardError("deployment manifest runtime evidence is invalid")
+    if not _lexically_within(python, prefix):
+        raise GuardError("attested runtime Python is outside its environment prefix")
+
+    expected_modules = {spec["runtime_module"] for spec in specs}
+    expected_distributions = {distribution, *dependencies}
+    expected_packages = {spec["package_dir"] for spec in specs}
+    if set(imports) != expected_modules:
+        raise GuardError("attested runtime import set differs from component contract")
+    if set(versions) != expected_distributions or not all(
+        isinstance(versions[name], str) for name in expected_distributions
+    ):
+        raise GuardError("attested runtime distribution set differs from manifest")
+    if set(package_files) != expected_packages:
+        raise GuardError("attested runtime package set differs from component contract")
+
+    for spec in specs:
+        module = spec["runtime_module"]
+        runtime_dir = spec["runtime_package_dir"]
+        imported = imports.get(module)
+        if imported != runtime_dir or not _lexically_within(runtime_dir, prefix):
+            raise GuardError(
+                f"attested runtime module {module!r} is outside or differs from its prefix"
+            )
+        _validate_hash_tree(
+            package_files.get(spec["package_dir"]),
+            f"attested runtime package {spec['package_dir']}",
+        )
+    return runtime
+
+
+def _service_name(profile: dict[str, object], requested: str) -> str | None:
+    pinned = profile.get("service_name")
+    required = profile.get("service_required") is True
+    if pinned is not None:
+        if requested and requested != pinned:
+            raise GuardError(
+                f"service {requested!r} differs from pinned component service {pinned!r}"
+            )
+        requested = str(pinned)
+    if required and not requested:
+        raise GuardError("this component requires a live --service-name attestation")
+    if requested and not re.fullmatch(r"[A-Za-z0-9_.@:-]+\.service", requested):
+        raise GuardError(f"systemd service name is invalid: {requested!r}")
+    if not required and requested:
+        raise GuardError("this component profile does not permit a service attestation")
+    return requested or None
+
+
+def _systemd_user_service_state(
+    service: str, runtime_state: dict[str, object]
+) -> dict[str, object]:
+    if os.name != "posix":
+        raise GuardError("systemd service attestation must run on the Linux service host")
+    properties = (
+        "ActiveState",
+        "SubState",
+        "MainPID",
+        "ExecStart",
+        "WorkingDirectory",
+        "FragmentPath",
+    )
+    command = ["systemctl", "--user", "show", service]
+    command.extend(f"--property={name}" for name in properties)
+    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise GuardError(f"cannot inspect live systemd service {service}: {detail}")
+    values: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in properties:
+            values[key] = value
+    if values.get("ActiveState") != "active" or values.get("SubState") != "running":
+        raise GuardError(f"live service {service} is not active/running")
+    try:
+        main_pid = int(values.get("MainPID", "0"))
+    except ValueError as exc:
+        raise GuardError(f"live service {service} returned an invalid MainPID") from exc
+    if main_pid <= 0:
+        raise GuardError(f"live service {service} has no running MainPID")
+
+    process = Path("/proc") / str(main_pid)
+    try:
+        raw_command = (process / "cmdline").read_bytes()
+        raw_environment = (process / "environ").read_bytes()
+        process_cwd = os.readlink(process / "cwd")
+    except OSError as exc:
+        raise GuardError(f"cannot inspect live service process {main_pid}: {exc}") from exc
+    argv = [part.decode(errors="replace") for part in raw_command.split(b"\0") if part]
+    environment = [
+        part.decode(errors="replace")
+        for part in raw_environment.split(b"\0")
+        if part
+    ]
+    runtime_python = runtime_state.get("python")
+    runtime_prefix = runtime_state.get("prefix")
+    if not argv or not _same_executable_path(argv[0], runtime_python):
+        raise GuardError(
+            f"live service {service} does not run the attested runtime Python"
+        )
+    if any(item.startswith("PYTHONPATH=") and item != "PYTHONPATH=" for item in environment):
+        raise GuardError(f"live service {service} has a shadowing PYTHONPATH")
+
+    exec_start = values.get("ExecStart", "")
+    match = re.search(r"(?:^|[ {;])path=([^ ;}]+)", exec_start)
+    launcher = match.group(1) if match else ""
+    if (
+        not isinstance(runtime_prefix, str)
+        or not launcher
+        or not _lexically_within(launcher, runtime_prefix)
+        or not Path(launcher).is_file()
+    ):
+        raise GuardError(f"live service {service} launcher is outside the runtime")
+    if len(argv) < 2 or not _same_executable_path(argv[1], launcher):
+        raise GuardError(f"live service {service} process does not use its systemd launcher")
+
+    configured_cwd = values.get("WorkingDirectory", "")
+    if configured_cwd and not _same_path(configured_cwd, process_cwd):
+        raise GuardError(f"live service {service} process cwd differs from its unit")
+    fragment = Path(values.get("FragmentPath", ""))
+    if not fragment.is_file():
+        raise GuardError(f"live service {service} unit file does not exist")
+    runtime_python_path = Path(str(runtime_python))
+    if not runtime_python_path.is_file():
+        raise GuardError(f"live service {service} runtime Python does not exist")
+    return {
+        "manager": "systemd-user",
+        "name": service,
+        "active_state": "active",
+        "sub_state": "running",
+        "main_pid": main_pid,
+        "runtime_python": str(runtime_python),
+        "runtime_python_sha256": _sha256_file(runtime_python_path),
+        "launcher": launcher,
+        "launcher_sha256": _sha256_file(Path(launcher)),
+        "command_sha256": _sha256_bytes(raw_command),
+        "working_directory": process_cwd,
+        "fragment_path": str(fragment.resolve()),
+        "fragment_sha256": _sha256_file(fragment),
+        "pythonpath_shadowing": False,
+    }
+
+
+def _validated_attested_service_state(
+    value: object,
+    profile: dict[str, object],
+    runtime_state: dict[str, object],
+) -> dict[str, object] | None:
+    if profile.get("service_required") is not True:
+        if value is not None:
+            raise GuardError("manifest contains service evidence forbidden by its profile")
+        return None
+    if not isinstance(value, dict):
+        raise GuardError("deployment manifest service evidence is invalid")
+    required_strings = (
+        "manager",
+        "name",
+        "active_state",
+        "sub_state",
+        "runtime_python",
+        "runtime_python_sha256",
+        "launcher",
+        "launcher_sha256",
+        "command_sha256",
+        "working_directory",
+        "fragment_path",
+        "fragment_sha256",
+    )
+    if not all(isinstance(value.get(key), str) for key in required_strings):
+        raise GuardError("deployment manifest service evidence is invalid")
+    if (
+        value.get("manager") != "systemd-user"
+        or value.get("active_state") != "active"
+        or value.get("sub_state") != "running"
+        or value.get("pythonpath_shadowing") is not False
+        or not isinstance(value.get("main_pid"), int)
+        or value["main_pid"] <= 0
+    ):
+        raise GuardError("deployment manifest service is not an active clean process")
+    pinned_name = profile.get("service_name")
+    if pinned_name is not None and value.get("name") != pinned_name:
+        raise GuardError("deployment manifest service differs from component profile")
+    if not re.fullmatch(r"[A-Za-z0-9_.@:-]+\.service", str(value.get("name"))):
+        raise GuardError("deployment manifest service name is invalid")
+    prefix = runtime_state.get("prefix")
+    if (
+        value.get("runtime_python") != runtime_state.get("python")
+        or not _lexically_within(value.get("launcher"), prefix)
+        or not _lexically_within(value.get("runtime_python"), prefix)
+    ):
+        raise GuardError("deployment manifest service is outside the attested runtime")
+    for key in (
+        "runtime_python_sha256",
+        "launcher_sha256",
+        "command_sha256",
+        "fragment_sha256",
+    ):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(value.get(key))):
+            raise GuardError("deployment manifest service hash evidence is invalid")
+    return value
 
 
 def _validate_package_artifacts(
@@ -555,7 +1022,10 @@ def _validate_package_artifacts(
     for spec in specs:
         package_dir = spec["package_dir"]
         source_package_dir = spec["source_package_dir"]
-        source_files = _hash_tree(repo / source_package_dir, canonical_text=True)
+        source_root = _repo_member(
+            repo, source_package_dir, f"source package {package_dir}"
+        )
+        source_files = _hash_tree(source_root, canonical_text=True)
         wheel_source_files = _wheel_package_hashes(
             wheel, package_dir, canonical_text=True
         )
@@ -573,8 +1043,9 @@ def _validate_package_artifacts(
             if not isinstance(runtime_files, dict):
                 raise GuardError("runtime package hash evidence is invalid")
             current = runtime_files.get(package_dir)
-            if not isinstance(current, dict):
-                raise GuardError(f"runtime package evidence missing: {package_dir}")
+            current = _validate_hash_tree(
+                current, f"runtime package {package_dir}"
+            )
             _assert_same_files(
                 wheel_files,
                 current,
@@ -606,6 +1077,21 @@ def _manifest_specs(payload: dict[str, object]) -> list[dict[str, str]]:
                 "runtime_module": item["runtime_module"],
             }
         )
+    declared = tuple(
+        (
+            item["package_dir"],
+            item["source_package_dir"],
+            item["runtime_module"],
+        )
+        for item in result
+    )
+    if len({item[0] for item in declared}) != len(declared):
+        raise GuardError("deployment manifest contains duplicate packages")
+    for package, source_package, module in declared:
+        _safe_relative_path(package, "manifest package directory")
+        _safe_relative_path(source_package, "manifest source package directory")
+        if not re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", module):
+            raise GuardError("deployment manifest runtime module is invalid")
     return result
 
 
@@ -615,7 +1101,7 @@ def _verify_manifest_inputs(
     repo: Path,
     wheel: Path,
     sdist: Path,
-) -> tuple[list[dict[str, str]], dict[str, object] | None]:
+) -> tuple[list[dict[str, str]], dict[str, object], bool, bool]:
     head = _head(repo)
     if payload.get("source_commit") != head:
         raise GuardError(
@@ -623,6 +1109,23 @@ def _verify_manifest_inputs(
             f"({payload.get('source_commit')} != {head})"
         )
     specs = _manifest_specs(payload)
+    profile = _component_profile(payload.get("component"))
+    declared = tuple(
+        (
+            spec["package_dir"],
+            spec["source_package_dir"],
+            spec["runtime_module"],
+        )
+        for spec in specs
+    )
+    if declared != profile.get("packages"):
+        raise GuardError("deployment manifest packages differ from component profile")
+    for spec in specs:
+        _repo_member(
+            repo,
+            spec["source_package_dir"],
+            f"manifest source package {spec['package_dir']}",
+        )
     requested_packages = list(args.package_dir)
     if requested_packages != [spec["package_dir"] for spec in specs]:
         raise GuardError("publication blocked: package list differs from deployment manifest")
@@ -638,6 +1141,12 @@ def _verify_manifest_inputs(
         isinstance(item, str) for item in dependencies
     ):
         raise GuardError("deployment manifest distribution metadata is invalid")
+    if distribution != profile.get("distribution"):
+        raise GuardError("deployment manifest distribution differs from component profile")
+    if len(set(map(_canonical_distribution, [distribution, *dependencies]))) != (
+        1 + len(dependencies)
+    ):
+        raise GuardError("deployment manifest contains duplicate distributions")
     if _canonical_distribution(metadata["name"]) != _canonical_distribution(distribution):
         raise GuardError(
             f"wheel distribution {metadata['name']!r} does not match {distribution!r}"
@@ -650,29 +1159,68 @@ def _verify_manifest_inputs(
             "publication blocked: release artifact hashes differ from deployment artifacts"
         )
 
-    runtime_state: dict[str, object] | None = None
-    if not args.allow_remote_attestation:
-        runtime = payload.get("runtime")
-        if not isinstance(runtime, dict) or not isinstance(runtime.get("python"), str):
-            raise GuardError("deployment manifest runtime evidence is invalid")
-        runtime_state = _runtime_state(
+    attested_runtime = _validated_attested_runtime_state(
+        payload.get("runtime"), specs, distribution, dependencies
+    )
+    versions = attested_runtime.get("versions")
+    if not isinstance(versions, dict) or versions.get(distribution) != metadata["version"]:
+        raise GuardError("attested runtime distribution version differs from wheel")
+    attested_service = _validated_attested_service_state(
+        payload.get("service"), profile, attested_runtime
+    )
+
+    live_runtime_rechecked = not args.allow_remote_attestation
+    live_service_rechecked = False
+    runtime_state = attested_runtime
+    if live_runtime_rechecked:
+        current_runtime = _runtime_state(
             specs,
-            Path(runtime["python"]),
+            Path(str(attested_runtime["python"])),
             distribution,
             dependencies,
         )
-        if runtime_state != runtime:
+        if current_runtime != attested_runtime:
             raise GuardError("publication blocked: current runtime differs from attested runtime")
+        runtime_state = current_runtime
+        if attested_service is not None:
+            current_service = _systemd_user_service_state(
+                str(attested_service["name"]), current_runtime
+            )
+            if current_service != attested_service:
+                raise GuardError(
+                    "publication blocked: current live service differs from attested service"
+                )
+            live_service_rechecked = True
     _validate_package_artifacts(repo, wheel, sdist, specs, runtime_state)
-    return specs, runtime_state
+    return specs, runtime_state, live_runtime_rechecked, live_service_rechecked
 
 
 def _assert_remote_release_refs(
-    repo: Path, remote: str, branch: str, tag: str, expected_head: str, version: str
+    repo: Path,
+    remote: str,
+    branch: str,
+    tag: str,
+    expected_head: str,
+    version: str,
+    profile: dict[str, object],
 ) -> dict[str, str]:
+    expected_branch = profile.get("remote_branch")
+    expected_repository = profile.get("remote_repository")
+    if not isinstance(expected_branch, str) or not isinstance(expected_repository, str):
+        raise GuardError("component has no publishable remote profile")
+    if branch != expected_branch:
+        raise GuardError(
+            f"release branch {branch!r} differs from pinned branch {expected_branch!r}"
+        )
     if tag not in {version, f"v{version}"}:
         raise GuardError(f"release tag {tag!r} does not match wheel version {version!r}")
     remote_url = _git(repo, "remote", "get-url", remote).stdout.strip()
+    canonical_remote = _canonical_remote_url(remote_url)
+    if canonical_remote != expected_repository:
+        raise GuardError(
+            "release remote differs from pinned component repository "
+            f"({canonical_remote!r} != {expected_repository!r})"
+        )
     branch_ref = f"refs/heads/{branch}"
     tag_ref = f"refs/tags/{tag}"
     peeled_ref = tag_ref + "^{}"
@@ -684,6 +1232,7 @@ def _assert_remote_release_refs(
     )
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
+        detail = detail.replace(remote_url, canonical_remote)
         raise GuardError(f"cannot verify remote release refs: {detail}")
     refs: dict[str, str] = {}
     for line in result.stdout.splitlines():
@@ -699,7 +1248,7 @@ def _assert_remote_release_refs(
         raise GuardError(
             f"publication blocked: remote {tag_ref} is not release HEAD {expected_head}"
         )
-    return {"remote": remote_url, "branch": branch_ref, "tag": tag_ref}
+    return {"remote": canonical_remote, "branch": branch_ref, "tag": tag_ref}
 
 
 def _index_api(repository: str, name: str, version: str, index_url: str) -> str:
@@ -752,9 +1301,17 @@ def _confirm_published(
                 for record in expected
                 if published.get(record["filename"]) != record
             ]
-            if not mismatches:
+            expected_names = {str(record["filename"]) for record in expected}
+            published_names = {name for name in published if isinstance(name, str)}
+            if not mismatches and published_names == expected_names:
                 return expected
-            last_error = "published artifact hashes do not yet match"
+            if published_names != expected_names:
+                last_error = (
+                    "published artifact set is not exact "
+                    f"({sorted(published_names)!r} != {sorted(expected_names)!r})"
+                )
+            else:
+                last_error = "published artifact hashes do not yet match"
         except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
             last_error = str(exc)
         if time.monotonic() >= deadline:
@@ -774,7 +1331,27 @@ def command_attest(args: argparse.Namespace) -> dict[str, object]:
     repo = args.repo.resolve()
     wheel = args.wheel.resolve()
     sdist = args.sdist.resolve()
-    specs = _package_specs(args)
+    profile = _component_profile(args.component)
+    expected_distribution = str(profile.get("distribution"))
+    if args.distribution != expected_distribution:
+        raise GuardError(
+            f"distribution {args.distribution!r} differs from component profile "
+            f"{expected_distribution!r}"
+        )
+    expected_signer = str(profile.get("signer"))
+    if args.signer != expected_signer:
+        raise GuardError(
+            f"signer {args.signer!r} differs from pinned signer {expected_signer!r}"
+        )
+    expected_fingerprint = profile.get("signer_fingerprint")
+    if expected_fingerprint is not None:
+        actual_fingerprint = _signing_key_fingerprint(args.signing_key_file)
+        if actual_fingerprint != expected_fingerprint:
+            raise GuardError(
+                "private signing key does not match the component trust profile "
+                f"({actual_fingerprint} != {expected_fingerprint})"
+            )
+    specs = _package_specs(args, repo, profile)
     checked = _assert_clean_worktrees(repo)
     metadata = _wheel_metadata(wheel)
     if _canonical_distribution(metadata["name"]) != _canonical_distribution(
@@ -796,6 +1373,12 @@ def command_attest(args: argparse.Namespace) -> dict[str, object]:
             f"{metadata['version']!r}"
         )
     _validate_package_artifacts(repo, wheel, sdist, specs, runtime_state)
+    service_name = _service_name(profile, getattr(args, "service_name", ""))
+    service_state = (
+        _systemd_user_service_state(service_name, runtime_state)
+        if service_name is not None
+        else None
+    )
     artifacts = [wheel, sdist, *(path.resolve() for path in args.artifact)]
     manifest: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
@@ -810,6 +1393,7 @@ def command_attest(args: argparse.Namespace) -> dict[str, object]:
         "wheel_metadata": metadata,
         "artifacts": _artifact_records(artifacts),
         "runtime": runtime_state,
+        "service": service_state,
         "clean_worktrees": checked,
     }
     _atomic_json(args.output.resolve(), manifest)
@@ -829,18 +1413,27 @@ def command_verify(args: argparse.Namespace) -> dict[str, object]:
     repo = args.repo.resolve()
     wheel = args.wheel.resolve()
     sdist = args.sdist.resolve()
+    payload = _load_manifest(args.manifest.resolve())
+    profile = _component_profile(payload.get("component"))
+    expected_signer = str(profile.get("signer"))
+    if args.signer and args.signer != expected_signer:
+        raise GuardError(
+            f"requested signer {args.signer!r} differs from pinned signer {expected_signer!r}"
+        )
     _verify_manifest_signature(
         args.manifest.resolve(),
         args.signature_file.resolve(),
         args.allowed_signers_file.resolve(),
-        args.signer,
+        expected_signer,
+        profile.get("signer_fingerprint"),
     )
-    payload = _load_manifest(args.manifest.resolve())
-    if payload.get("signer") != args.signer:
-        raise GuardError("deployment manifest signer differs from requested signer")
+    if payload.get("signer") != expected_signer:
+        raise GuardError("deployment manifest signer differs from component profile")
     _assert_fresh_manifest(payload, args.max_attestation_age_seconds)
     checked = _assert_clean_worktrees(repo)
-    specs, runtime_state = _verify_manifest_inputs(args, payload, repo, wheel, sdist)
+    specs, _runtime_state_evidence, runtime_rechecked, service_rechecked = (
+        _verify_manifest_inputs(args, payload, repo, wheel, sdist)
+    )
     return {
         "status": "ok",
         "component": payload.get("component"),
@@ -850,13 +1443,16 @@ def command_verify(args: argparse.Namespace) -> dict[str, object]:
             [wheel, sdist, *(path.resolve() for path in args.artifact)]
         ),
         "clean_worktrees": checked,
-        "live_runtime_rechecked": runtime_state is not None,
+        "signed_runtime_validated": True,
+        "live_runtime_rechecked": runtime_rechecked,
+        "live_service_rechecked": service_rechecked,
         "parity": "exact",
     }
 
 
 def command_publish(args: argparse.Namespace) -> dict[str, object]:
     result = command_verify(args)
+    profile = _component_profile(result.get("component"), publishing=True)
     repo = args.repo.resolve()
     wheel = args.wheel.resolve()
     sdist = args.sdist.resolve()
@@ -869,6 +1465,7 @@ def command_publish(args: argparse.Namespace) -> dict[str, object]:
         args.tag,
         _head(repo),
         metadata["version"],
+        profile,
     )
     command = [sys.executable, "-m", "twine", "upload", "--non-interactive"]
     if args.repository:
@@ -910,7 +1507,11 @@ def _add_verification_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--signature-file", type=Path, required=True)
     parser.add_argument("--allowed-signers-file", type=Path, required=True)
-    parser.add_argument("--signer", required=True)
+    parser.add_argument(
+        "--signer",
+        default="",
+        help="Optional assertion; the component profile pins the actual signer",
+    )
     parser.add_argument(
         "--max-attestation-age-seconds",
         type=int,
@@ -919,7 +1520,10 @@ def _add_verification_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--allow-remote-attestation",
         action="store_true",
-        help="Use a fresh signed remote attestation when runtime paths are not local",
+        help=(
+            "Validate fresh signed runtime/service evidence when their paths are remote; "
+            "signed wheel/runtime hashes are still compared"
+        ),
     )
 
 
@@ -950,6 +1554,11 @@ def build_parser() -> argparse.ArgumentParser:
     attest.add_argument("--runtime-python", type=Path, required=True)
     attest.add_argument("--dependency", action="append", default=[])
     attest.add_argument("--runtime-label", default="")
+    attest.add_argument(
+        "--service-name",
+        default="",
+        help="Running systemd user service; required or pinned by Linux profiles",
+    )
     attest.add_argument("--signing-key-file", type=Path, required=True)
     attest.add_argument("--signer", required=True)
     attest.add_argument("--output", type=Path, required=True)

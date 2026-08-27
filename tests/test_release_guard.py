@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import importlib.util
 import io
 import json
 import os
 import subprocess
-import sys
 import tarfile
 import tempfile
 import unittest
@@ -126,7 +126,7 @@ class ReleaseGuardTests(unittest.TestCase):
             }
             return {
                 "python": os.path.abspath(runtime_python),
-                "prefix": str(Path(sys.prefix).resolve()),
+                "prefix": str(runtime_dirs[0].parent.resolve()),
                 "imports": imports,
                 "versions": {name: versions[name] for name in distributions},
             }
@@ -154,7 +154,7 @@ class ReleaseGuardTests(unittest.TestCase):
             distribution="demo_distribution",
             runtime_package_dir=runtime_dirs,
             runtime_module=modules,
-            runtime_python=Path(sys.executable),
+            runtime_python=runtime_dirs[0].parent / "python",
             dependency=["demo-dependency"],
             runtime_label="test-runtime",
             signing_key_file=signing_key_file,
@@ -203,6 +203,7 @@ class ReleaseGuardTests(unittest.TestCase):
         signature: Path,
         allowed_signers: Path,
         signer: str,
+        expected_fingerprint: object,
     ) -> None:
         if not allowed_signers.is_file() or signer != "test-runtime":
             raise release_guard.GuardError("deployment manifest signature is invalid")
@@ -258,7 +259,7 @@ class ReleaseGuardTests(unittest.TestCase):
             ):
                 attested = release_guard.command_attest(attest_args)
                 verified = release_guard.command_verify(verify_args)
-                self.assertEqual(attested["schema_version"], 2)
+                self.assertEqual(attested["schema_version"], 3)
                 self.assertEqual(
                     verified["packages"], ["demo_pkg", "demo_server"]
                 )
@@ -310,6 +311,84 @@ class ReleaseGuardTests(unittest.TestCase):
             ), self.assertRaisesRegex(release_guard.GuardError, "signature is invalid"):
                 release_guard.command_verify(verify_args)
 
+    def test_remote_mode_still_compares_signed_runtime_hashes_to_wheel(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = self._init_repo(root)
+            wheel, sdist = self._write_artifacts(root)
+            runtime_dirs, modules = self._runtime(root)
+            key_file = root / "signing.key"
+            key_file.write_text("private test key", encoding="ascii")
+            manifest = root / "deployment.json"
+            with mock.patch.object(
+                release_guard,
+                "_runtime_probe",
+                side_effect=self._probe(runtime_dirs, modules),
+            ), mock.patch.object(
+                release_guard, "_sign_manifest_file", side_effect=self._sign
+            ):
+                release_guard.command_attest(
+                    self._attest_args(
+                        repo, wheel, sdist, runtime_dirs, modules, key_file, manifest
+                    )
+                )
+
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            package_files = payload["runtime"]["package_files"]["demo_server"]
+            package_files[next(iter(package_files))] = "0" * 64
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            self._sign(manifest, key_file)
+            verify_args = self._verify_args(
+                repo,
+                wheel,
+                sdist,
+                key_file,
+                manifest,
+                allow_remote_attestation=True,
+            )
+            with mock.patch.object(
+                release_guard,
+                "_verify_manifest_signature",
+                side_effect=self._verify_signature,
+            ), self.assertRaisesRegex(
+                release_guard.GuardError, "deployed runtime package demo_server and wheel"
+            ):
+                release_guard.command_verify(verify_args)
+
+    def test_component_profile_and_source_containment_are_mandatory(self) -> None:
+        profile = release_guard.COMPONENT_PROFILES["RealtimeSTT"]
+        self.assertEqual(
+            tuple(item[0] for item in profile["packages"]),
+            ("RealtimeSTT", "RealtimeSTT_server", "example_fastapi_server"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary).resolve()
+            with self.assertRaisesRegex(release_guard.GuardError, "stay inside"):
+                release_guard._repo_member(repo, "../outside", "source package")
+
+    def test_component_signer_key_fingerprint_is_pinned(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "deployment.json"
+            signature = root / "deployment.json.sig"
+            allowed = root / "allowed_signers"
+            manifest.write_text("{}", encoding="utf-8")
+            signature.write_text("invalid", encoding="ascii")
+            encoded = base64.b64encode(b"different-key").decode("ascii")
+            allowed.write_text(
+                f"linux-services ssh-ed25519 {encoded} test\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(release_guard.GuardError, "trust profile"):
+                release_guard._verify_manifest_signature(
+                    manifest,
+                    signature,
+                    allowed,
+                    "linux-services",
+                    release_guard.COMPONENT_PROFILES["RealtimeTTS"][
+                        "signer_fingerprint"
+                    ],
+                )
+
     def test_remote_branch_and_tag_must_both_equal_release_head(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -337,13 +416,26 @@ class ReleaseGuardTests(unittest.TestCase):
                 text=True,
                 check=True,
             ).stdout.strip()
-            result = release_guard._assert_remote_release_refs(
-                repo, "origin", "main", "v1.0", head, "1.0"
-            )
+            profile = {
+                "remote_repository": "example.invalid/demo",
+                "remote_branch": "main",
+            }
+            with mock.patch.object(
+                release_guard,
+                "_canonical_remote_url",
+                return_value="example.invalid/demo",
+            ):
+                result = release_guard._assert_remote_release_refs(
+                    repo, "origin", "main", "v1.0", head, "1.0", profile
+                )
             self.assertEqual(result["branch"], "refs/heads/main")
-            with self.assertRaisesRegex(release_guard.GuardError, "does not match"):
+            with mock.patch.object(
+                release_guard,
+                "_canonical_remote_url",
+                return_value="example.invalid/demo",
+            ), self.assertRaisesRegex(release_guard.GuardError, "does not match"):
                 release_guard._assert_remote_release_refs(
-                    repo, "origin", "main", "v2.0", head, "1.0"
+                    repo, "origin", "main", "v2.0", head, "1.0", profile
                 )
 
     def test_package_index_confirmation_compares_exact_hashes(self) -> None:
@@ -375,6 +467,33 @@ class ReleaseGuardTests(unittest.TestCase):
                 1,
             )
         self.assertEqual(confirmed, expected)
+
+        response["urls"].append(
+            {
+                "filename": "unexpected.zip",
+                "digests": {"sha256": "123"},
+                "size": 9,
+            }
+        )
+        encoded_with_extra = json.dumps(response).encode()
+        with mock.patch.object(
+            release_guard.urllib.request,
+            "urlopen",
+            return_value=io.BytesIO(encoded_with_extra),
+        ), mock.patch.object(
+            release_guard.time, "monotonic", side_effect=[0.0, 2.0]
+        ), mock.patch.object(
+            release_guard.time, "sleep"
+        ), self.assertRaisesRegex(
+            release_guard.GuardError, "artifact set is not exact"
+        ):
+            release_guard._confirm_published(
+                "pypi",
+                {"name": "demo", "version": "1.0"},
+                expected,
+                "",
+                1,
+            )
 
 
 if __name__ == "__main__":
