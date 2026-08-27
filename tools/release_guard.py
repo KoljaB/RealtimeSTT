@@ -722,7 +722,8 @@ def _same_path(left: object, right: object) -> bool:
 
 def _absolute_path(path: Path) -> Path:
     """Return an absolute path without resolving a venv interpreter symlink."""
-    return Path(os.path.abspath(os.fspath(path)))
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    return absolute.resolve() if os.name == "nt" else absolute
 
 
 def _same_executable_path(left: object, right: object) -> bool:
