@@ -9,6 +9,8 @@ claim, and this file does not authorize publication.
 
 - [ ] Base the final candidate on the current public master, then review the
   final commit, intended working-tree changes, branch, and remote divergence.
+- [ ] Run `python tools/release_guard.py check-worktrees --repo .` before
+  building; every linked worktree must be clean.
 - [ ] Build the exact candidate with `python -m build` and validate metadata with
   `python -m twine check dist/*`.
 - [ ] Resolve every declared base and extra dependency from the intended public
@@ -27,8 +29,14 @@ claim, and this file does not authorize publication.
   and newer remain outside this release's `Requires-Python` range.
 - [ ] Run Linux x86-64 Nemotron-live/Parakeet-final real-model acceptance with
   the release-pinned sherpa-onnx runtime and externally verified model bundles.
-- [ ] Publish one unique candidate to TestPyPI, download the exact wheel and
-  sdist into fresh environments, and repeat the package smoke checks.
+- [ ] Attest the exact deployed wheel/runtime with
+  `python tools/release_guard.py attest ...` and retain its manifest alongside
+  the wheel and sdist artifacts.
+- [ ] Verify and publish only through
+  `python tools/release_guard.py publish ... --repository testpypi` (or
+  `--repository pypi`); direct `twine upload` is prohibited.
+- [ ] Download the exact published wheel and sdist into fresh environments and
+  repeat the package smoke checks.
 - [ ] Review the final public Git tree and release notes for privacy, licenses,
   platform/model boundaries, rollback instructions, and user-facing accuracy.
 
@@ -44,6 +52,12 @@ artifacts and are not shipped in the Python distributions.
 This checklist defines gates. Exact-commit workflow URLs, published artifact
 hashes, and real-model results are recorded in the matching GitHub release,
 where the post-push and post-tag evidence can remain authoritative.
+
+The release guard is the publication boundary. A clean source checkout or a
+successful CI build does not prove that the running Linux service is the same
+code. The attestation manifest must be generated from the deployed package and
+the exact wheel being published; `release_guard.py publish` performs the final
+parity check before invoking Twine.
 
 ## Local preflight evidence
 
