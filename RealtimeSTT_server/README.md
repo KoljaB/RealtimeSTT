@@ -32,10 +32,10 @@ This directory contains the server and client implementations for the RealtimeST
 
 ## Installation
 
-Ensure you have Python 3.8 or higher installed. Install the required packages using:
+Use Python 3.11 or 3.12. Install the stable server package with:
 
 ```bash
-pip install git+https://github.com/KoljaB/RealtimeSTT.git@dev
+python -m pip install "RealtimeSTT[server]==1.1.0"
 ```
 
 ## Server Usage

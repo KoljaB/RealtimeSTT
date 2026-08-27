@@ -1,4 +1,4 @@
-# RealtimeSTT 1.1.0rc1 release readiness
+# RealtimeSTT 1.1.0 release readiness
 
 Status date: 2026-08-27
 
@@ -39,11 +39,11 @@ Windows remains a development target for this pair because cumulative-recovery
 authoritative finals require independent validation. Model weights are external
 artifacts and are not shipped in the Python distributions.
 
-## Evidence status
+## Evidence recording
 
-This checklist records gates, not results. No CI, real-model, TestPyPI, or
-production-PyPI publication is claimed here until evidence is attached to the
-exact final commit.
+This checklist defines gates. Exact-commit workflow URLs, published artifact
+hashes, and real-model results are recorded in the matching GitHub release,
+where the post-push and post-tag evidence can remain authoritative.
 
 ## Local preflight evidence
 
@@ -51,14 +51,14 @@ The following preparation checks passed on the candidate tree on 2026-08-27.
 They reduce local release risk but do not replace exact-commit CI, the Linux
 real-model gate, or TestPyPI installation:
 
-- Python 3.11.5: 574 unit tests passed with 15 environment/model skips; all 34
+- Python 3.11.5: 574 unit tests passed with 14 environment/model skips; all 34
   top-level Preview and tail-transcription contract tests passed.
 - Python 3.12.4: both the wheel and sdist installed outside the checkout from
   public dependencies with the `server,sherpa-onnx` extras. Package version,
   import provenance, packaged resources, both console entry points, and
   `pip check` passed for each artifact.
 - PyPA build, Twine metadata validation, and the archive/source privacy scan
-  passed for `realtimestt-1.1.0rc1-py3-none-any.whl` and
-  `realtimestt-1.1.0rc1.tar.gz`.
+  passed for `realtimestt-1.1.0-py3-none-any.whl` and
+  `realtimestt-1.1.0.tar.gz`.
 - The pinned `halo==0.0.31` dependency resolved from public PyPI and built in
   the fresh Python 3.12 environment.

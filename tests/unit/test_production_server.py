@@ -17,7 +17,7 @@ class ProductionServerSettingsTests(unittest.TestCase):
         settings = production.ProductionServerSettings()
 
         self.assertEqual(settings.host, "127.0.0.1")
-        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.1.0rc1")
+        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.1.0")
         capabilities = production.capabilities_for(settings)
         self.assertEqual(capabilities["apiVersion"], "v1")
         self.assertEqual(capabilities["protocolVersion"], "realtimestt.remote.v1")

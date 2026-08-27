@@ -1,11 +1,10 @@
 # Release Notes
 
-## 1.1.0rc1 - 2026-08-27
+## 1.1.0 - 2026-08-27
 
-This is a release candidate. No CI, real-model, TestPyPI, or production-PyPI
-publication is implied until the release-readiness checklist is complete.
-See [the release-readiness checklist](docs/release-1.1.0rc1-readiness.md) for
-the required evidence gates.
+This stable release promotes the externally validated `1.1.0rc1` candidate.
+See [the release-readiness checklist](docs/release-1.1.0-readiness.md) for the
+required evidence gates and supported platform boundaries.
 
 ### Added
 
@@ -45,8 +44,10 @@ the required evidence gates.
   cumulative-recovery behavior is independently validated.
 - Model weights remain external artifacts. Users must review and accept the
   exact model/runtime licenses before downloading or redistributing them.
-- Real-model acceptance, CI results, and exact TestPyPI installation must be
-  recorded for the final commit before any production release decision.
+- The final source tree must pass supported CI, Linux real-model acceptance,
+  and isolated wheel and sdist installation before stable publication.
+- `1.1.0` supersedes the `1.1.0rc1` prerelease; stable installations should pin
+  `RealtimeSTT==1.1.0` when an exact version is required.
 
 ## 1.0.4 - 2026-08-21
 

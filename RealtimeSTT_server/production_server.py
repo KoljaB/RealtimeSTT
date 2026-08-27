@@ -48,7 +48,7 @@ LOGGER = logging.getLogger("realtimestt.production_server")
 API_VERSION = "v1"
 PROTOCOL_VERSION = "realtimestt.remote.v1"
 SERVER_NAME = "RealtimeSTT production server"
-_PACKAGE_VERSION_FALLBACK = "1.1.0rc1"
+_PACKAGE_VERSION_FALLBACK = "1.1.0"
 
 
 def _package_version() -> str:
