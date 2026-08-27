@@ -11,6 +11,23 @@ import halo
 logger = logging.getLogger("realtimestt")
 
 
+def _spinner_text(recorder, attribute, default):
+    """
+    Returns configured spinner text with legacy recorder-like fallback.
+    """
+    return getattr(recorder, attribute, default)
+
+
+def _wakeword_spinner_text(recorder):
+    """
+    Returns configured wake-word spinner text with wake-word interpolation.
+    """
+    text = _spinner_text(recorder, "spinner_wakeword_text", "say {wake_words}")
+    if isinstance(text, str):
+        return text.format(wake_words=getattr(recorder, "wake_words", ""))
+    return text
+
+
 def run_callback(recorder, cb, *args, **kwargs):
     """
     Runs a callback according to the recorder threading setting.
@@ -47,21 +64,34 @@ def set_recorder_state(recorder, new_state):
     if new_state == "listening":
         if recorder.on_vad_detect_start:
             run_callback(recorder, recorder.on_vad_detect_start)
-        set_spinner(recorder, "speak now")
+        set_spinner(
+            recorder,
+            _spinner_text(recorder, "spinner_listening_text", "speak now"),
+        )
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 250
     elif new_state == "wakeword":
         if recorder.on_wakeword_detection_start:
             run_callback(recorder, recorder.on_wakeword_detection_start)
-        set_spinner(recorder, f"say {recorder.wake_words}")
+        set_spinner(recorder, _wakeword_spinner_text(recorder))
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 500
     elif new_state == "transcribing":
-        set_spinner(recorder, "transcribing")
+        set_spinner(
+            recorder,
+            _spinner_text(
+                recorder,
+                "spinner_transcribing_text",
+                "transcribing",
+            ),
+        )
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 50
     elif new_state == "recording":
-        set_spinner(recorder, "recording")
+        set_spinner(
+            recorder,
+            _spinner_text(recorder, "spinner_recording_text", "recording"),
+        )
         if recorder.spinner and recorder.halo:
             recorder.halo._interval = 100
     elif new_state == "inactive":
