@@ -30,11 +30,16 @@ claim, and this file does not authorize publication.
 - [ ] Run Linux x86-64 Nemotron-live/Parakeet-final real-model acceptance with
   the release-pinned sherpa-onnx runtime and externally verified model bundles.
 - [ ] Attest the exact deployed wheel/runtime with
-  `python tools/release_guard.py attest ...` and retain its manifest alongside
-  the wheel and sdist artifacts.
+  `python tools/release_guard.py attest ...` no more than 30 minutes before
+  publication. Include `RealtimeSTT`, `RealtimeSTT_server`, and
+  `example_fastapi_server`, the exact runtime Python/import paths, the required
+  wheel and sdist, and the private attestation key.
 - [ ] Verify and publish only through
   `python tools/release_guard.py publish ... --repository testpypi` (or
-  `--repository pypi`); direct `twine upload` is prohibited.
+  `--repository pypi`); direct `twine upload` is prohibited. Publication must
+  also prove that the remote release branch and version tag resolve to the
+  attested commit, then confirm both artifact hashes through the package-index
+  JSON API.
 - [ ] Download the exact published wheel and sdist into fresh environments and
   repeat the package smoke checks.
 - [ ] Review the final public Git tree and release notes for privacy, licenses,
@@ -55,9 +60,12 @@ where the post-push and post-tag evidence can remain authoritative.
 
 The release guard is the publication boundary. A clean source checkout or a
 successful CI build does not prove that the running Linux service is the same
-code. The attestation manifest must be generated from the deployed package and
-the exact wheel being published; `release_guard.py publish` performs the final
-parity check before invoking Twine.
+code. The guard compares all three shipped package trees across source, wheel,
+sdist, and runtime, probes their import paths with the declared runtime Python,
+and signs the result. Local runtimes are re-read during verification; remote
+Linux attestations are accepted only with a valid private-key signature and a
+maximum age of 30 minutes. `release_guard.py publish` additionally checks the
+remote branch/tag and confirms the uploaded hashes from the package index.
 
 ## Local preflight evidence
 
