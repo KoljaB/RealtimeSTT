@@ -5,7 +5,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import os
 import subprocess
 import tarfile
 import tempfile
@@ -125,7 +124,7 @@ class ReleaseGuardTests(unittest.TestCase):
                 "demo-dependency": "2.0",
             }
             return {
-                "python": os.path.abspath(runtime_python),
+                "python": str(release_guard._absolute_path(runtime_python)),
                 "prefix": str(runtime_dirs[0].parent.resolve()),
                 "imports": imports,
                 "versions": {name: versions[name] for name in distributions},
