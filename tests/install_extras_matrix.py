@@ -64,6 +64,15 @@ MATRIX = (
         ),
     ),
     MatrixCase(
+        name="transcribe-cpp",
+        extras="transcribe-cpp",
+        checks=BASE_CHECKS
+        + (
+            "dist:transcribe-cpp",
+            "module:transcribe_cpp",
+        ),
+    ),
+    MatrixCase(
         name="whispercpp-openwakeword",
         extras="whisper-cpp,openwakeword",
         checks=BASE_CHECKS
@@ -141,6 +150,8 @@ MATRIX = (
         + (
             "dist:faster-whisper",
             "dist:pywhispercpp",
+            "dist:transcribe-cpp",
+            "module:transcribe_cpp",
             "dist:openai-whisper",
             "dist:sherpa-onnx",
             "dist:transformers",

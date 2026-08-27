@@ -11,7 +11,14 @@ import time
 
 import numpy as np
 
-from .recording_buffers import get_frames_lock, snapshot_frames
+from .recording_buffers import (
+    get_frames_lock,
+    set_active_speech_tail_from_frames,
+    snapshot_active_speech_tail_audio,
+    snapshot_frames,
+)
+from .preview_transcription import submit_preview_transcription_request
+from .tail_transcription import append_pcm16_tail
 from .transcription import submit_transcription_request
 from .state import run_callback, set_recorder_state
 from .voice_activity import (
@@ -36,6 +43,60 @@ class _AudioDrainMarker:
 
     def __init__(self, complete):
         self.complete = complete
+
+
+def _live_transcription_text(recorder):
+    """
+    Returns the most complete current Live ASR text available.
+    """
+    for attr_name in (
+        "realtime_transcription_text",
+        "realtime_stabilized_text",
+        "realtime_stabilized_safetext",
+    ):
+        text = getattr(recorder, attr_name, "") or ""
+        if str(text).strip():
+            return str(text).strip()
+    return ""
+
+
+def _submit_preview_transcription_at_silence(
+    recorder,
+    live_text=None,
+    tail_audio=None,
+):
+    """
+    Starts one independent tail-only Preview ASR request at VAD silence.
+    """
+    if not getattr(recorder, "enable_preview_transcription", False):
+        return False
+    if getattr(recorder, "_preview_transcription_submitted", False):
+        return True
+
+    if live_text is None:
+        live_text = _live_transcription_text(recorder)
+
+    if tail_audio is None:
+        tail_audio = snapshot_active_speech_tail_audio(recorder)
+    if tail_audio.size == 0:
+        return False
+
+    accepted = submit_preview_transcription_request(
+        recorder,
+        tail_audio,
+        live_text,
+        recording_id=getattr(recorder, "realtime_recording_id", 0),
+    )
+    if accepted:
+        recorder._preview_transcription_submitted = True
+    return accepted
+
+
+# Keep the old internal helper name available to callers that imported it
+# while the behavior moves to the independent Preview category.
+def _submit_tail_transcription_at_silence(recorder):
+    """Deprecated alias for the independent Preview submission helper."""
+    return _submit_preview_transcription_at_silence(recorder)
 
 
 def drain_audio_input(recorder, timeout=None):
@@ -262,6 +323,10 @@ def run_recording_worker(recorder):
                             logger.debug('Debug: Adding buffered audio to frames')
                         with get_frames_lock(self):
                             self.frames.extend(pre_recording_frames)
+                            set_active_speech_tail_from_frames(
+                                self,
+                                self.frames,
+                            )
                         clear_pre_recording_buffer(self)
 
                         if self.use_extended_logging:
@@ -304,7 +369,8 @@ def run_recording_worker(recorder):
                                 samples_removed += wakeword_samples_to_remove
                                 samples_to_remove = 0
 
-                    wakeword_samples_to_remove = 0
+                        wakeword_samples_to_remove = 0
+                        set_active_speech_tail_from_frames(self, self.frames)
 
                 if self.use_extended_logging:
                     logger.debug('Debug: Checking if stop_recording_on_voice_deactivity is True')
@@ -427,7 +493,21 @@ def run_recording_worker(recorder):
 
                             logger.debug('Debug: Appending data to frames and stopping recording')
                         with get_frames_lock(self):
+                            append_pcm16_tail(self, data)
                             self.frames.append(data)
+                            # Freeze the Live hypothesis and tail before
+                            # stop() can clear or advance the recording state.
+                            self._pending_vad_live_text = _live_transcription_text(
+                                self
+                            )
+                            vad_tail_audio = snapshot_active_speech_tail_audio(
+                                self
+                            )
+                        _submit_preview_transcription_at_silence(
+                            self,
+                            live_text=self._pending_vad_live_text,
+                            tail_audio=vad_tail_audio,
+                        )
                         self.stop()
                         if not self.is_recording:
                             if self.speech_end_silence_start != 0:
@@ -487,6 +567,7 @@ def run_recording_worker(recorder):
                 if self.use_extended_logging:
                     logger.debug('Debug: Appending data to frames')
                 with get_frames_lock(self):
+                    append_pcm16_tail(self, data)
                     self.frames.append(data)
 
             if self.use_extended_logging:

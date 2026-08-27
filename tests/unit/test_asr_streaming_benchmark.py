@@ -18,7 +18,7 @@ class StreamingBenchmarkUtilityTests(unittest.TestCase):
             "ws://127.0.0.1:8010/v1/audio/transcriptions/stream",
         )
 
-    def test_agenttalk_display_language_names_map_to_supported_codes(self):
+    def test_display_language_names_map_to_supported_codes(self):
         expected = {
             "Auto": "auto",
             "English": "en",

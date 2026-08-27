@@ -195,12 +195,12 @@ Parakeet also supports transducer options such as `model_type`,
 The release-supported Nemotron-live/Parakeet-final production pair is Linux
 x86-64 with `sherpa-onnx==1.13.4`. Native Windows can load and run both models,
 and it is useful for development, but the Parakeet binding produced intermittent
-empty authoritative results on voiced cumulative-recovery fixtures during 1.0.3
-validation. An empty decode is indistinguishable from legitimate silence at the
-engine boundary, so native Windows Parakeet is not promoted for authoritative
-production finals in this release. Deploy this pair on Linux, or select another
-final engine (for example `faster_whisper`) while retaining Nemotron for live
-hypotheses.
+empty authoritative results on voiced cumulative-recovery fixtures during
+earlier validation. An empty decode is indistinguishable from legitimate
+silence at the engine boundary, so native Windows Parakeet is not promoted for
+authoritative production finals in this release. Deploy this pair on Linux, or
+select another final engine (for example `faster_whisper`) while retaining
+Nemotron for live hypotheses.
 
 ## Troubleshooting
 

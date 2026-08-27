@@ -13,7 +13,8 @@ AudioToTextRecorder(
 )
 ```
 
-For the 1.0.3 release, the production-supported mode is sentence punctuation:
+For the 1.1.0rc1 release candidate, the production-supported mode is sentence
+punctuation:
 
 ```python
 AudioToTextRecorder(

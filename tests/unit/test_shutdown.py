@@ -50,6 +50,28 @@ class FakeWorker:
             self.alive = False
 
 
+class OrderedWorker(FakeWorker):
+    def __init__(self, order, label):
+        super().__init__()
+        self.order = order
+        self.label = label
+
+    def join(self, timeout=None):
+        self.order.append(self.label)
+        super().join(timeout=timeout)
+
+
+class OrderedCloseable:
+    def __init__(self, order, label):
+        self.order = order
+        self.label = label
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+        self.order.append(self.label)
+
+
 def make_recorder(
         *,
         use_microphone=False,
@@ -204,6 +226,59 @@ class ShutdownTests(unittest.TestCase):
             any("Realtime thread did not stop within" in message
                 for message in logs.output)
         )
+
+    def test_models_close_before_realtime_and_preview_threads_join(self):
+        order = []
+        realtime_model = OrderedCloseable(order, "realtime-close")
+        ultrafast_model = OrderedCloseable(order, "ultrafast-close")
+        preview_model = OrderedCloseable(order, "preview-close")
+        recorder = make_recorder(
+            realtime_thread=OrderedWorker(order, "realtime-join"),
+        )
+        recorder.enable_realtime_transcription = True
+        recorder.realtime_transcription_model = realtime_model
+        recorder.ultrafast_realtime_transcription_model = ultrafast_model
+        recorder.preview_transcription_model = preview_model
+        recorder.preview_transcription_thread = OrderedWorker(
+            order,
+            "preview-join",
+        )
+
+        with mock.patch.object(shutdown_module.gc, "collect"):
+            shutdown_module.shutdown_recorder(recorder)
+
+        self.assertEqual(
+            order,
+            [
+                "realtime-close",
+                "ultrafast-close",
+                "preview-close",
+                "realtime-join",
+                "preview-join",
+            ],
+        )
+        self.assertEqual(realtime_model.close_calls, 1)
+        self.assertEqual(ultrafast_model.close_calls, 1)
+        self.assertEqual(preview_model.close_calls, 1)
+        self.assertIsNone(recorder.realtime_transcription_model)
+        self.assertIsNone(recorder.ultrafast_realtime_transcription_model)
+        self.assertIsNone(recorder.preview_transcription_model)
+
+    def test_shared_realtime_model_is_closed_only_once(self):
+        order = []
+        shared_model = OrderedCloseable(order, "shared-close")
+        recorder = make_recorder()
+        recorder.enable_realtime_transcription = True
+        recorder.realtime_transcription_model = shared_model
+        recorder.ultrafast_realtime_transcription_model = shared_model
+
+        with mock.patch.object(shutdown_module.gc, "collect"):
+            shutdown_module.shutdown_recorder(recorder)
+
+        self.assertEqual(order, ["shared-close"])
+        self.assertEqual(shared_model.close_calls, 1)
+        self.assertIsNone(recorder.realtime_transcription_model)
+        self.assertIsNone(recorder.ultrafast_realtime_transcription_model)
 
     def test_shutdown_remains_idempotent_after_worker_cleanup(self):
         recording_thread = FakeWorker()

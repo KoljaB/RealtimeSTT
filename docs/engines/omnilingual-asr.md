@@ -219,11 +219,12 @@ validate VRAM headroom before increasing model size.
 ## FastAPI Recipe
 
 Run the FastAPI server from a source checkout in WSL2/Linux when using
-Omnilingual. The `example_fastapi_server` reference app is not installed by the
-PyPI wheel; keeping it source-only keeps the wheel lean and avoids adding
-web-server dependencies for users who only need the recorder/API library. For
-pip-only installs, use the Python recorder/API smoke path above instead. If you
-want the FastAPI reference server, clone the repository or install from Git.
+Omnilingual. The Python backend is included in the PyPI wheel for shared
+imports, while the browser static assets and this reference app's separate
+dependency file remain source-checkout resources. The `server` extra provides
+the FastAPI dependency for packaged imports. To run the browser reference app,
+clone the repository or install from Git; pip-only installs can use the Python
+recorder/API smoke path above instead.
 
 ```bash
 PYTHONPATH=. python example_fastapi_server/server.py \

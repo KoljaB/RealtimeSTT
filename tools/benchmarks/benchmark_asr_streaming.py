@@ -91,7 +91,7 @@ class StreamClip:
 
 
 def map_language(value: Any) -> str:
-    """Map language names/codes used by AgentTalk manifests to ISO-like codes.
+    """Map display language names/codes in benchmark manifests to ISO-like codes.
 
     ``expected_detected_language`` is often a display name such as
     ``"German"`` while ``requested_language`` is ``"Auto"``.  Unknown values

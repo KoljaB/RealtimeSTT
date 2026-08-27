@@ -12,6 +12,7 @@ The compatibility default is `faster_whisper`.
 | Use case | Start with | Why |
 | --- | --- | --- |
 | Default local GPU/CPU Whisper path | `faster_whisper` | Install with `RealtimeSTT[faster-whisper]`; mature, supports common Whisper model names and CTranslate2 models. |
+| Lowest-latency warm GPU final transcription | `transcribe_cpp` | Resident transcribe.cpp Parakeet Q4 CUDA path; explicit device selection, no CPU fallback, and tuned short-clip settings. |
 | CPU-only experiments with small Whisper models | `whisper_cpp` | Uses whisper.cpp through `pywhispercpp`; good for low-dependency CPU testing. |
 | Compatibility with OpenAI's local Whisper package | `openai_whisper` | Uses the original `openai-whisper` Python package. |
 | English CPU server with manually downloaded ONNX models | `sherpa_onnx_moonshine` | Offline CPU INT8 path with predictable local model files. |
@@ -31,6 +32,7 @@ CLI-style names work where listed.
 | --- | --- | --- |
 | `faster_whisper` | Default production backend | [engines/faster-whisper.md](engines/faster-whisper.md) |
 | `whisper_cpp` | Optional production backend | [engines/whisper-cpp.md](engines/whisper-cpp.md) |
+| `transcribe_cpp`, `parakeet_transcribe_cpp` | Optional low-latency offline Parakeet CUDA/CPU backend | [engines/transcribe-cpp.md](engines/transcribe-cpp.md) |
 | `openai_whisper` | Optional production backend | [engines/openai-whisper.md](engines/openai-whisper.md) |
 | `moonshine`, `moonshine_streaming` | Experimental Transformers backend; English-only adapter | [engines/moonshine.md](engines/moonshine.md) |
 | `sherpa_onnx_moonshine`, `sherpa_moonshine`, `moonshine_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
@@ -108,6 +110,7 @@ meaningful for one engine may be ignored or invalid for another.
 | --- | --- | --- |
 | `faster_whisper` | Yes, for known Hugging Face/CTranslate2 model ids. | Local CTranslate2 model directories may be passed as `model`. |
 | `whisper_cpp` | Usually yes for model names supported by `pywhispercpp`. | Local ggml model paths or `download_root`/`models_dir` may be used. |
+| `transcribe_cpp` | No. | Download a compatible GGUF into a persistent directory and pass its local path; an optional SHA-256 can be verified at startup. |
 | `openai_whisper` | Yes, through `openai-whisper`. | Local model names/paths supported by that package. |
 | `moonshine`, `granite_speech`, `qwen3_asr`, `cohere_transcribe` | Yes, through Hugging Face or the engine package, subject to access. | `download_root` maps to cache options where supported. |
 | `funasr` | Yes, through ModelScope by default or Hugging Face with `hub="hf"`. | `download_root` sets `MODELSCOPE_CACHE` and `HF_HOME` defaults; local model directories may be passed as `model`. |

@@ -6,7 +6,7 @@ import setuptools
 from setuptools.command.build_py import build_py as _build_py
 
 
-current_version = "1.0.4"
+current_version = "1.1.0rc1"
 
 
 INSTALL_GUIDE = """
@@ -40,6 +40,7 @@ Available extras include:
 
 - faster-whisper: default CTranslate2 Whisper backend
 - whisper-cpp: whisper.cpp backend through pywhispercpp
+- transcribe-cpp: first-party transcribe.cpp Python binding; add the matching CUDA provider separately
 - openai-whisper: original OpenAI Whisper Python backend
 - sherpa-onnx: sherpa-onnx CPU backends
 - server/production-server: versioned FastAPI HTTP and WebSocket ASR server
@@ -184,6 +185,7 @@ base_requirements = [
 
 faster_whisper_requirements = [requirement("faster-whisper")]
 whisper_cpp_requirements = ["pywhispercpp"]
+transcribe_cpp_requirements = ["transcribe-cpp==0.2.1"]
 openai_whisper_requirements = ["openai-whisper"]
 sherpa_onnx_requirements = ["sherpa-onnx==1.13.4"]
 silero_vad_requirements = [
@@ -221,6 +223,7 @@ openwakeword_requirements = [requirement("openwakeword")]
 all_optional_requirements = unique_requirements(
     faster_whisper_requirements
     + whisper_cpp_requirements
+    + transcribe_cpp_requirements
     + openai_whisper_requirements
     + sherpa_onnx_requirements
     + production_server_requirements
@@ -240,6 +243,9 @@ extras_require = {
     "faster-whisper": faster_whisper_requirements,
     "whisper-cpp": whisper_cpp_requirements,
     "whispercpp": whisper_cpp_requirements,
+    "transcribe-cpp": transcribe_cpp_requirements,
+    "transcribecpp": transcribe_cpp_requirements,
+    "parakeet-transcribe-cpp": transcribe_cpp_requirements,
     "openai-whisper": openai_whisper_requirements,
     "sherpa-onnx": sherpa_onnx_requirements,
     "sherpa": sherpa_onnx_requirements,
@@ -303,7 +309,7 @@ setuptools.setup(
     description="A fast Voice Activity Detection and Transcription System",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/KoljaB/RealTimeSTT",
+    url="https://github.com/KoljaB/RealtimeSTT",
     packages=setuptools.find_packages(
         include=[
             "RealtimeSTT",
@@ -318,7 +324,7 @@ setuptools.setup(
     #     "Programming Language :: Python :: 3",
     #     "Operating System :: OS Independent",
     # ],
-    python_requires='>=3.11',
+    python_requires='>=3.11,<3.13',
     license='MIT',
     install_requires=base_requirements,
     extras_require=extras_require,

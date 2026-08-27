@@ -1,5 +1,53 @@
 # Release Notes
 
+## 1.1.0rc1 - 2026-08-27
+
+This is a release candidate. No CI, real-model, TestPyPI, or production-PyPI
+publication is implied until the release-readiness checklist is complete.
+See [the release-readiness checklist](docs/release-1.1.0rc1-readiness.md) for
+the required evidence gates.
+
+### Added
+
+- Added correlated Preview `resume` handling for the versioned production
+  WebSocket API, including an ordered acknowledgement barrier and explicit
+  candidate/audio provenance fields.
+- Added an opt-in authenticated late full-turn correction operation for
+  Preview-only deployments, bounded by a configurable maximum audio duration.
+- Added recorder Preview/tail transcription support with package-level result
+  types and the documented dual-realtime merge contracts.
+
+### Changed
+
+- Preview-only production turns retain the complete logical-turn audio for model
+  input; live text remains diagnostic and is never substituted for Preview or
+  Final output.
+- Empty Preview results use one bounded silence-padding retry, while Final
+  remains authoritative whenever Final ASR is enabled.
+- Preview admission is now bounded and coalesced: one native dispatch lane
+  retains only the latest pending snapshot while an older inference is active.
+- Unexpected live-lane exits now produce structured, observable degraded events
+  while preserving the authoritative-final fallback path.
+- Raw-PCM responses propagate provider-reported language and finite language
+  probability metadata when the selected provider supplies it.
+- Realtime punctuation splitting commits the frame boundary atomically, and the
+  local Preview worker rejects new speculative requests once its bounded queue
+  is full.
+- Release packaging checks now validate the requested version, inspect archive
+  names/content for private material, and install both wheel and sdist from
+  outside the source checkout.
+
+### Release boundaries
+
+- The documented Nemotron-live/Parakeet-final profile targets Linux x86-64 with
+  the pinned sherpa-onnx runtime. Native Windows remains a development target
+  for this pair; use another authoritative final engine there unless the
+  cumulative-recovery behavior is independently validated.
+- Model weights remain external artifacts. Users must review and accept the
+  exact model/runtime licenses before downloading or redistributing them.
+- Real-model acceptance, CI results, and exact TestPyPI installation must be
+  recorded for the final commit before any production release decision.
+
 ## 1.0.4 - 2026-08-21
 
 ### Fixed
@@ -86,8 +134,8 @@
   streaming WebSocket APIs. Non-loopback binds require bearer authentication
   and TLS. The server includes bounded queues and sessions, backpressure,
   limits, structured errors, warmup, and graceful resource cleanup.
-- Added a reproducible same-host A/B benchmark harness for the AgentTalk/raw
-  PCM16 contract and release CI for unit, distribution, and isolated wheel
+- Added a reproducible same-host A/B benchmark harness for the raw PCM16 client
+  contract and release CI for unit, distribution, and isolated wheel
   installation checks.
 
 ### Changed

@@ -33,6 +33,7 @@ revision, API, and distribution path you use.
 | --- | --- | --- | --- |
 | `faster_whisper` | [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper/blob/master/LICENSE) is MIT. Its inference runtime, [CTranslate2](https://github.com/OpenNMT/CTranslate2), is MIT. | OpenAI Whisper code and model assets are published in the [`openai/whisper`](https://github.com/openai/whisper/blob/main/LICENSE) repository under MIT. | Generally permissive, subject to preserving MIT notices when redistributing. |
 | `whisper_cpp` | [`whisper.cpp`](https://github.com/ggml-org/whisper.cpp) is MIT. RealtimeSTT uses the `pywhispercpp` package, so check that package metadata before redistributing wheels. | Uses OpenAI Whisper-family model files; check whether you use original OpenAI files or third-party conversions. | Generally permissive for original Whisper assets, but converted model files should be checked individually. |
+| `transcribe_cpp`, `parakeet_transcribe_cpp` | [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) and its Python binding are MIT. CUDA and ggml binaries retain their bundled third-party notices. | NVIDIA Parakeet-TDT 0.6B v3 and the handy-computer GGUF conversion are CC-BY-4.0. | Preserve attribution for the Parakeet model and upstream notices when redistributing the runtime or model. |
 | `openai_whisper` | [`openai-whisper`](https://github.com/openai/whisper/blob/main/LICENSE) is MIT. | OpenAI Whisper assets in the same repository are MIT. | Generally permissive, subject to MIT notice preservation. |
 | `sherpa_onnx_moonshine`, `sherpa_onnx_parakeet` | [`sherpa-onnx`](https://github.com/k2-fsa/sherpa-onnx) is Apache-2.0. ONNX Runtime is MIT. | The model bundle determines the model license. For common upstream families, Useful Sensors Moonshine Streaming is MIT and NVIDIA Parakeet is CC-BY-4.0. | Keep the license and attribution files that ship with the selected sherpa-onnx model bundle. Do not assume every bundle has the same terms. |
 | `sherpa_onnx_nemotron` | [`sherpa-onnx`](https://github.com/k2-fsa/sherpa-onnx) is Apache-2.0. ONNX Runtime is MIT. | The exact Nemotron 3.5 streaming bundle is distributed under NVIDIA's Open Model Data Warehouse License Agreement v1.1. | Preserve the model's license/attribution files and review NVIDIA's terms before redistribution. |
@@ -61,6 +62,8 @@ revision, API, and distribution path you use.
 - CTranslate2: https://github.com/OpenNMT/CTranslate2
 - OpenAI Whisper: https://github.com/openai/whisper/blob/main/LICENSE
 - whisper.cpp: https://github.com/ggml-org/whisper.cpp
+- transcribe.cpp: https://github.com/handy-computer/transcribe.cpp
+- Parakeet v3 GGUF: https://huggingface.co/handy-computer/parakeet-tdt-0.6b-v3-gguf
 - sherpa-onnx: https://github.com/k2-fsa/sherpa-onnx
 - ONNX Runtime: https://github.com/microsoft/onnxruntime
 - kroko-onnx: https://github.com/kroko-ai/kroko-onnx

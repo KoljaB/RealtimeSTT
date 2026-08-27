@@ -10,6 +10,11 @@ from .base import TranscriptionEngineConfig, UnsupportedTranscriptionEngineError
 ENGINE_CLASS_PATHS = {
     "faster_whisper": (".faster_whisper_engine", "FasterWhisperEngine"),
     "whisper_cpp": (".whisper_cpp_engine", "WhisperCppEngine"),
+    "transcribe_cpp": (".transcribe_cpp_engine", "TranscribeCppEngine"),
+    "parakeet_transcribe_cpp": (
+        ".transcribe_cpp_engine",
+        "TranscribeCppEngine",
+    ),
     "openai_whisper": (".openai_whisper_engine", "OpenAIWhisperEngine"),
     "openai_api": (".openai_api_engine", "OpenAIAPIEngine"),
     "parakeet": (".parakeet_engine", "ParakeetEngine"),

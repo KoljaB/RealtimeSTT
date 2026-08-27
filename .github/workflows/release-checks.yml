@@ -39,8 +39,10 @@ jobs:
         run: python -m unittest discover -s tests/unit -p "test_*.py"
 
   package:
-    name: build and clean wheel smoke
+    name: build and clean distribution smoke
     runs-on: ubuntu-latest
+    env:
+      PACKAGE_VERSION: "1.1.0rc1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,16 +57,201 @@ jobs:
         run: python -m build
       - name: Validate distribution metadata
         run: python -m twine check dist/*
-      - name: Install and inspect the wheel in isolation
+      - name: Inspect distribution filenames and privacy
         shell: bash
         run: |
-          python -m venv .wheel-smoke
-          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
-          .wheel-smoke/bin/python -m pip install --upgrade pip
-          .wheel-smoke/bin/python -m pip install "${wheel}[server,sherpa-onnx]"
-          .wheel-smoke/bin/python -c "import importlib.metadata as m; import RealtimeSTT; import RealtimeSTT_server.production_server; import example_fastapi_server.server; assert m.version('realtimestt') == '1.0.4'"
-          .wheel-smoke/bin/stt-server-production --help
-          .wheel-smoke/bin/stt-install-sherpa-models --help
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          root = Path.cwd()
+          version = os.environ["PACKAGE_VERSION"]
+          expected = {
+              f"realtimestt-{version}-py3-none-any.whl",
+              f"realtimestt-{version}.tar.gz",
+          }
+          dist = root / "dist"
+          actual = {path.name for path in dist.iterdir() if path.is_file()}
+          if actual != expected:
+              raise SystemExit(
+                  f"unexpected distribution filenames: {sorted(actual)!r}"
+              )
+
+          forbidden_name_fragments = (
+              "docs/handoffs",
+              "docs_private",
+              "tests_private",
+              "test-results",
+              "test_outputs",
+              "test-model-cache",
+              ".venvs",
+              "sessions",
+          )
+          forbidden_name_suffixes = (
+              ".log", ".jsonl", ".pem", ".key", ".onnx", ".pt", ".pth",
+              ".bin", ".safetensors", ".ckpt",
+          )
+          forbidden_source_suffixes = (".log", ".jsonl", ".pem", ".key")
+          text_suffixes = {
+              ".bat", ".cfg", ".csv", ".in", ".ini", ".json", ".md", ".py",
+              ".rst", ".sh", ".toml", ".txt", ".yaml", ".yml",
+          }
+          private_markers = (
+              "d:\\projekte\\",
+              "c:\\users\\",
+          )
+          private_network = re.compile(
+              r"(?<![\w.])(?:10(?:\.\d{1,3}){3}|"
+              r"192\.168(?:\.\d{1,3}){2}|"
+              r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})"
+              r"(?::\d+)?(?![\w.])"
+          )
+          credential_patterns = (
+              re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+              re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+              re.compile(r"\b(?:ghp|github_pat|xox[baprs])-[-A-Za-z0-9_]{20,}\b"),
+          )
+
+          def check_name(archive_name, member_name):
+              normalized = member_name.replace("\\", "/").casefold()
+              suffixes = (
+                  forbidden_source_suffixes
+                  if archive_name == "source"
+                  else forbidden_name_suffixes
+              )
+              if (
+                  any(fragment in normalized for fragment in forbidden_name_fragments)
+                  or normalized.endswith(suffixes)
+              ):
+                  raise SystemExit(
+                      f"forbidden archive member: {archive_name}:{member_name}"
+                  )
+
+          def is_text_member(name):
+              leaf = name.rsplit("/", 1)[-1]
+              return leaf in {"METADATA", "PKG-INFO"} or Path(leaf).suffix.lower() in text_suffixes
+
+          def check_text(archive_name, member_name, data):
+              if len(data) > 4_000_000 or not is_text_member(member_name):
+                  return
+              try:
+                  text = data.decode("utf-8")
+              except UnicodeDecodeError:
+                  return
+              lowered = text.casefold()
+              if (
+                  any(marker in lowered for marker in private_markers)
+                  or private_network.search(lowered)
+                  or any(pattern.search(text) for pattern in credential_patterns)
+              ):
+                  raise SystemExit(
+                      f"private content marker found in {archive_name}:{member_name}"
+                  )
+
+          for archive in sorted(dist.iterdir()):
+              if archive.suffix == ".whl":
+                  with zipfile.ZipFile(archive) as handle:
+                      for member in handle.infolist():
+                          check_name(archive.name, member.filename)
+                          check_text(archive.name, member.filename, handle.read(member))
+              elif archive.name.endswith(".tar.gz"):
+                  with tarfile.open(archive, "r:gz") as handle:
+                      for member in handle.getmembers():
+                          check_name(archive.name, member.name)
+                          if member.isfile():
+                              stream = handle.extractfile(member)
+                              check_text(archive.name, member.name, stream.read() if stream else b"")
+
+          tracked = subprocess.run(
+              ["git", "ls-files"], check=True, capture_output=True, text=True
+          ).stdout.splitlines()
+          for relative in tracked:
+              path = root / relative
+              if not path.exists():
+                  continue
+              check_name("source", relative)
+              if path.is_file() and path.stat().st_size <= 4_000_000:
+                  check_text("source", relative, path.read_bytes())
+
+          print(f"distribution privacy check passed for {len(actual)} archives")
+          PY
+      - name: Install and inspect distributions outside checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$(mktemp -d)"
+          trap 'rm -rf "$smoke_root"' EXIT
+          python -m venv "$smoke_root/venv"
+          python_bin="$smoke_root/venv/bin/python"
+          wheel="$(find dist -maxdepth 1 -type f -name "realtimestt-${PACKAGE_VERSION}-*.whl" -print -quit)"
+          sdist="$(find dist -maxdepth 1 -type f -name "realtimestt-${PACKAGE_VERSION}.tar.gz" -print -quit)"
+          test -n "$wheel"
+          test -n "$sdist"
+          "$python_bin" -m pip install --upgrade pip
+          "$python_bin" -m pip install --no-cache-dir "${wheel}[server,sherpa-onnx]"
+          pushd "$smoke_root"
+          "$python_bin" - <<'PY'
+          import importlib
+          import importlib.resources
+          import os
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          expected = os.environ["PACKAGE_VERSION"]
+          checkout = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          venv_root = Path(sys.prefix).resolve()
+          assert version("realtimestt") == expected
+          assert importlib.resources.files("RealtimeSTT").joinpath("assets/warmup_audio.wav").is_file()
+          assert importlib.resources.files("RealtimeSTT_server").joinpath("PRODUCTION_SERVER.md").is_file()
+          for name in ("RealtimeSTT", "RealtimeSTT_server.production_server", "example_fastapi_server.server"):
+              module = importlib.import_module(name)
+              path = Path(module.__file__).resolve()
+              if checkout == path or checkout in path.parents:
+                  raise SystemExit(f"{name} imported from checkout: {path}")
+              if venv_root != path and venv_root not in path.parents:
+                  raise SystemExit(f"{name} imported outside venv: {path}")
+              print(f"{name}: {path}")
+          PY
+          "$python_bin" -m pip check
+          "$smoke_root/venv/bin/stt-server-production" --help
+          "$smoke_root/venv/bin/stt-install-sherpa-models" --help
+          popd
+          "$python_bin" -m pip uninstall -y realtimestt
+          "$python_bin" -m pip install --no-cache-dir "${sdist}[server,sherpa-onnx]"
+          pushd "$smoke_root"
+          "$python_bin" - <<'PY'
+          import importlib
+          import importlib.resources
+          import os
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          expected = os.environ["PACKAGE_VERSION"]
+          checkout = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          venv_root = Path(sys.prefix).resolve()
+          assert version("realtimestt") == expected
+          assert importlib.resources.files("RealtimeSTT").joinpath("assets/warmup_audio.wav").is_file()
+          assert importlib.resources.files("RealtimeSTT_server").joinpath("PRODUCTION_SERVER.md").is_file()
+          for name in ("RealtimeSTT", "RealtimeSTT_server.production_server", "example_fastapi_server.server"):
+              module = importlib.import_module(name)
+              path = Path(module.__file__).resolve()
+              if checkout == path or checkout in path.parents:
+                  raise SystemExit(f"{name} imported from checkout: {path}")
+              if venv_root != path and venv_root not in path.parents:
+                  raise SystemExit(f"{name} imported outside venv: {path}")
+              print(f"{name}: {path}")
+          PY
+          "$python_bin" -m pip check
+          "$smoke_root/venv/bin/stt-server-production" --help
+          "$smoke_root/venv/bin/stt-install-sherpa-models" --help
+          popd
 
   real-model-acceptance:
     name: real sherpa-onnx model acceptance (Nemotron + Parakeet)

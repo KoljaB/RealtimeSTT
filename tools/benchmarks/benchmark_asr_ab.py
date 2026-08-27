@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run a reproducible A/B benchmark against PCM16 ASR HTTP endpoints.
 
-The wire contract is the endpoint used by AgentTalk and the WWZ CPU reference
-server: POST raw mono 16 kHz little-endian PCM16 to ``/transcribe-pcm16`` and
+The wire contract is shared by the production and CPU reference servers: POST
+raw mono 16 kHz little-endian PCM16 to ``/transcribe-pcm16`` and
 read a JSON object containing at least ``text``.  The tool deliberately keeps
 the target URL configurable so a candidate RealtimeSTT deployment can be
 started on a separate port and compared without touching the reference.

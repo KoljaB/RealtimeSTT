@@ -117,15 +117,35 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True, wor
             print("No audio data available for transcription")
             #logger.info("No audio data available for transcription")
             _consume_current_transcription_force_lowercase_start(recorder)
+            recorder._current_transcription_tail_audio = None
+            recorder._current_transcription_live_text = None
             return ""
 
         try:
+            options = None
+            if request_word_timestamps:
+                options = {"word_timestamps": True}
+
+            def _await_transcription_result():
+                """
+                Waits for all pending requests and returns the latest result.
+                """
+                while recorder.transcribe_count > 0:
+                    logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {recorder.transcribe_count}")
+                    response = receive_transcription_result(recorder, timeout=0.1)
+                    if response is None:
+                        if recorder.interrupt_stop_event.is_set():
+                            recorder.was_interrupted.set()
+                            _set_state_after_transcription(recorder)
+                            return None
+                        continue
+                    status, result = response
+                    recorder.transcribe_count -= 1
+                return status, result
+
             if recorder.transcribe_count == 0:
                 logger.debug("Adding transcription request, no early transcription started")
                 start_time = time.time()
-                options = None
-                if request_word_timestamps:
-                    options = {"word_timestamps": True}
                 submit_transcription_request(
                     recorder,
                     audio_bytes,
@@ -134,17 +154,12 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True, wor
                     options,
                 )
 
-            while recorder.transcribe_count > 0:
-                logger.debug(F"Receive from parent_transcription_pipe after sendiung transcription request, transcribe_count: {recorder.transcribe_count}")
-                response = receive_transcription_result(recorder, timeout=0.1)
-                if response is None:
-                    if recorder.interrupt_stop_event.is_set():
-                        recorder.was_interrupted.set()
-                        _set_state_after_transcription(recorder)
-                        return ""
-                    continue
-                status, result = response
-                recorder.transcribe_count -= 1
+            response = _await_transcription_result()
+            if response is None:
+                recorder._current_transcription_tail_audio = None
+                recorder._current_transcription_live_text = None
+                return ""
+            status, result = response
 
             recorder.allowed_to_early_transcribe = True
             _set_state_after_transcription(recorder)
@@ -175,12 +190,18 @@ def perform_final_transcription(recorder, audio_bytes=None, use_prompt=True, wor
                         print(f"Model {recorder.main_model_type} completed transcription in {transcription_time:.2f} seconds")
                     else:
                         logger.debug(f"Model {recorder.main_model_type} completed transcription in {transcription_time:.2f} seconds")
+                recorder._current_transcription_tail_audio = None
+                recorder._current_transcription_live_text = None
                 return "" if recorder.interrupt_stop_event.is_set() else transcription
             else:
                 _consume_current_transcription_force_lowercase_start(recorder)
+                recorder._current_transcription_tail_audio = None
+                recorder._current_transcription_live_text = None
                 logger.error(f"Transcription error: {result}")
                 raise Exception(result)
         except Exception as e:
             _consume_current_transcription_force_lowercase_start(recorder)
+            recorder._current_transcription_tail_audio = None
+            recorder._current_transcription_live_text = None
             logger.error(f"Error during transcription: {str(e)}", exc_info=True)
             raise e

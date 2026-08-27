@@ -3,6 +3,7 @@ import queue
 import threading
 import time
 import unittest
+from unittest import mock
 
 try:
     import numpy as np
@@ -18,6 +19,8 @@ try:
         _select_realtime_punctuation_split_hint,
         run_realtime_worker,
     )
+    import RealtimeSTT.core.realtime as realtime_module
+    from RealtimeSTT.core.recording_buffers import get_frames_lock
     from RealtimeSTT.core.realtime_text_stabilizer import RealtimeTextStabilizer
     from RealtimeSTT.transcription_engines import (
         TranscriptionInfo,
@@ -293,6 +296,72 @@ class RealtimePunctuationSplitTests(unittest.TestCase):
             recorder.is_recording = False
             if thread.is_alive():
                 self.stop_worker(recorder, thread)
+
+    def test_split_commit_preserves_frames_appended_during_queue_handoff(self):
+        recorder = self.make_recorder_stub()
+        queue_entered = threading.Event()
+        allow_queue_return = threading.Event()
+        append_finished = threading.Event()
+        late_frame = self.make_frame(samples=4000)
+        original_queue_recorded_audio = realtime_module.queue_recorded_audio
+
+        def blocking_queue_recorded_audio(*args, **kwargs):
+            queue_entered.set()
+            allow_queue_return.wait(timeout=2.0)
+            return original_queue_recorded_audio(*args, **kwargs)
+
+        def append_late_frame():
+            if not queue_entered.wait(timeout=2.0):
+                return
+            with get_frames_lock(recorder):
+                recorder.frames.append(late_frame)
+            append_finished.set()
+
+        appender = threading.Thread(target=append_late_frame, daemon=True)
+        appender.start()
+        baseline_samples = 0
+        with mock.patch.object(
+            realtime_module,
+            "queue_recorded_audio",
+            blocking_queue_recorded_audio,
+        ):
+            worker = self.run_worker(recorder)
+            try:
+                for _ in range(10):
+                    frame = self.make_frame(samples=8000)
+                    with get_frames_lock(recorder):
+                        recorder.frames.append(frame)
+                    baseline_samples += 8000
+                    if queue_entered.wait(timeout=0.15):
+                        break
+
+                self.assertTrue(queue_entered.is_set())
+                # Capture must wait for the atomic snapshot/swap boundary.
+                time.sleep(0.05)
+                self.assertFalse(append_finished.is_set())
+                allow_queue_return.set()
+                self.assertTrue(append_finished.wait(timeout=1.0))
+                self.assertTrue(
+                    wait_until(
+                        lambda: recorder.recorded_audio_queue.qsize() == 1,
+                        timeout=1.0,
+                    )
+                )
+                self.stop_worker(recorder, worker)
+
+                with recorder.recorded_audio_queue.mutex:
+                    queued = recorder.recorded_audio_queue.queue[0]
+                self.assertEqual(
+                    sample_count(queued["frames"]) + sample_count(recorder.frames),
+                    baseline_samples + 4000,
+                )
+            finally:
+                allow_queue_return.set()
+                recorder.is_recording = False
+                if worker.is_alive():
+                    self.stop_worker(recorder, worker)
+        appender.join(timeout=1.0)
+        self.assertFalse(appender.is_alive())
 
     def test_punctuation_split_does_not_block_on_busy_final_transcription(self):
         recorder = self.make_recorder_stub()

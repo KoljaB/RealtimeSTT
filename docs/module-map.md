@@ -32,7 +32,7 @@ engines, wake-word backends, and model runtimes are loaded lazily so importing
 | `RealtimeSTT/transcription_engines/base.py` | `TranscriptionEngineConfig`, `TranscriptionResult`, `TranscriptionInfo`, `BaseTranscriptionEngine`, `StreamingTranscriptionSession`, and engine errors. | Engine adapters should continue normalizing output into this contract. |
 | `RealtimeSTT/transcription_engines/factory.py` | Engine alias normalization, lazy adapter loading, `create_transcription_engine()`, and `get_supported_transcription_engines()`. | Keep existing aliases and unsupported-engine error text compatible unless intentionally changed. |
 | `RealtimeSTT_server/stt_server.py` | Legacy dual-websocket server CLI and runtime callbacks. | Compatibility path; avoid mixing legacy server cleanup with recorder refactors. |
-| `RealtimeSTT_server/production_server.py` | Packaged versioned HTTP/WebSocket production server and `stt-server-production` entry point. | Preserve the v1 serialized protocol, operational endpoints, security defaults, and AgentTalk PCM16 compatibility contract. |
+| `RealtimeSTT_server/production_server.py` | Packaged versioned HTTP/WebSocket production server and `stt-server-production` entry point. | Preserve the v1 serialized protocol, operational endpoints, security defaults, and raw PCM16 client compatibility contract. |
 | `example_fastapi_server/server.py` | Shared multi-user backend and source-checkout browser reference CLI. | Its Python backend is packaged for the production facade; static browser assets remain a source-checkout reference. |
 | `example_fastapi_server/protocol.py` | Binary packet encode/decode helpers and protocol validation errors. | Packet shape is a service boundary. Keep serialized formats stable. |
 

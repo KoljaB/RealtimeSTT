@@ -15,11 +15,17 @@ from .realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )
+from .realtime_merge import StickyRealtimeTranscriptionMerger
 from .realtime_callbacks import (
     publish_realtime_transcription_stabilized,
     publish_realtime_transcription_update,
 )
-from .recording_buffers import get_frames_lock, queue_recorded_audio, snapshot_frames
+from .recording_buffers import (
+    get_frames_lock,
+    queue_recorded_audio,
+    set_active_speech_tail_from_frames,
+    snapshot_frames,
+)
 from .state import run_callback
 from .text_formatting import preprocess_output
 from .transcription import call_transcription_executor
@@ -640,6 +646,9 @@ def run_realtime_worker(recorder):
     streaming_session = None
     streaming_session_recording_id = None
     streaming_session_frame_count = 0
+    ultrafast_streaming_session = None
+    ultrafast_streaming_session_recording_id = None
+    ultrafast_streaming_session_frame_count = 0
 
     def _streaming_realtime_target():
         """
@@ -823,6 +832,170 @@ def run_realtime_worker(recorder):
             _close_streaming_session()
             return None
 
+    def _ultrafast_streaming_target():
+        """Returns the optional second realtime streaming model."""
+
+        target = getattr(
+            self,
+            "ultrafast_realtime_transcription_model",
+            None,
+        )
+        if target is None or not getattr(target, "supports_streaming", False):
+            return None
+        if not hasattr(target, "create_streaming_session"):
+            return None
+        return target
+
+    def _close_ultrafast_streaming_session():
+        """Closes the active ultrafast streaming session."""
+
+        nonlocal ultrafast_streaming_session
+        nonlocal ultrafast_streaming_session_recording_id
+        nonlocal ultrafast_streaming_session_frame_count
+
+        if ultrafast_streaming_session is not None and hasattr(
+            ultrafast_streaming_session,
+            "close",
+        ):
+            try:
+                ultrafast_streaming_session.close()
+            except Exception as error:
+                logger.debug(
+                    "Could not close ultrafast streaming session: %s",
+                    error,
+                    exc_info=True,
+                )
+
+        ultrafast_streaming_session = None
+        ultrafast_streaming_session_recording_id = None
+        ultrafast_streaming_session_frame_count = 0
+
+    def _finish_ultrafast_streaming_session(frames_snapshot=None):
+        """Finishes and closes the active ultrafast streaming session."""
+
+        nonlocal ultrafast_streaming_session_frame_count
+
+        if ultrafast_streaming_session is None:
+            return None
+
+        try:
+            if frames_snapshot:
+                frame_count = len(frames_snapshot)
+                if frame_count >= ultrafast_streaming_session_frame_count:
+                    remaining_frames = frames_snapshot[
+                        ultrafast_streaming_session_frame_count:frame_count
+                    ]
+                    audio_array = _frames_to_audio_array(
+                        remaining_frames,
+                        enforce_min_samples=False,
+                    )
+                    if audio_array is not None:
+                        ultrafast_streaming_session.accept_audio(
+                            audio_array,
+                            sample_rate=_safe_get_sample_rate(),
+                        )
+                        ultrafast_streaming_session_frame_count = frame_count
+
+            return ultrafast_streaming_session.finish()
+        except Exception as error:
+            logger.debug(
+                "Could not finish ultrafast streaming session: %s",
+                error,
+                exc_info=True,
+            )
+            return None
+        finally:
+            _close_ultrafast_streaming_session()
+
+    def _ensure_ultrafast_streaming_session(recording_id):
+        """Ensures the ultrafast lane has a session for this recording."""
+
+        nonlocal ultrafast_streaming_session
+        nonlocal ultrafast_streaming_session_recording_id
+        nonlocal ultrafast_streaming_session_frame_count
+
+        target = _ultrafast_streaming_target()
+        if target is None:
+            _close_ultrafast_streaming_session()
+            return None
+
+        if (
+            ultrafast_streaming_session is None
+            or ultrafast_streaming_session_recording_id != recording_id
+        ):
+            if ultrafast_streaming_session is not None:
+                try:
+                    previous_frames = snapshot_frames(self, "last_frames")
+                except Exception:
+                    previous_frames = None
+                _finish_ultrafast_streaming_session(previous_frames)
+            else:
+                _close_ultrafast_streaming_session()
+
+            try:
+                ultrafast_streaming_session = _create_streaming_session(target)
+            except Exception as error:
+                logger.warning(
+                    "Ultrafast streaming session creation failed: %s",
+                    error,
+                    exc_info=True,
+                )
+                ultrafast_streaming_session = None
+                return None
+
+            ultrafast_streaming_session_recording_id = recording_id
+            ultrafast_streaming_session_frame_count = 0
+
+        return ultrafast_streaming_session
+
+    def _transcribe_with_ultrafast_streaming_model(
+        frames_snapshot,
+        sample_rate,
+        recording_id,
+    ):
+        """Decodes only frames not yet consumed by the ultrafast lane."""
+
+        nonlocal ultrafast_streaming_session_frame_count
+
+        session = _ensure_ultrafast_streaming_session(recording_id)
+        if session is None:
+            return None
+
+        frame_count = len(frames_snapshot or ())
+        if frame_count < ultrafast_streaming_session_frame_count:
+            _close_ultrafast_streaming_session()
+            session = _ensure_ultrafast_streaming_session(recording_id)
+            if session is None:
+                return None
+
+        new_frames = frames_snapshot[
+            ultrafast_streaming_session_frame_count:frame_count
+        ]
+        audio_array = _frames_to_audio_array(
+            new_frames,
+            enforce_min_samples=False,
+        )
+        if audio_array is None:
+            logger.debug(
+                "Skipping ultrafast streaming decode because no new audio "
+                "is available"
+            )
+            return None
+
+        try:
+            session.accept_audio(audio_array, sample_rate=sample_rate)
+            session.decode()
+            ultrafast_streaming_session_frame_count = frame_count
+            return session.get_result()
+        except Exception as error:
+            logger.warning(
+                "Ultrafast streaming transcription skipped: %s",
+                error,
+                exc_info=True,
+            )
+            _close_ultrafast_streaming_session()
+            return None
+
     def _safe_realtime_callback(callback, *args):
         """
         Invokes a realtime callback without breaking the worker.
@@ -832,6 +1005,172 @@ def run_realtime_worker(recorder):
             run_callback(self, callback, *args)
         except Exception as e:
             logger.error(f"Realtime callback failed: {e}", exc_info=True)
+
+    def _get_realtime_transcription_merger(recording_id):
+        """Returns the recorder merger, creating it for legacy stubs."""
+
+        merger = getattr(self, "realtime_transcription_merger", None)
+        if merger is None:
+            merger = StickyRealtimeTranscriptionMerger()
+            merger.reset(recording_id)
+            self.realtime_transcription_merger = merger
+        return merger
+
+    def _dual_realtime_publish_allowed(completed_at_wall_time):
+        recording_start_time = getattr(self, "recording_start_time", None)
+        return bool(
+            self.is_recording
+            and recording_start_time is not None
+            and completed_at_wall_time - recording_start_time
+            > self.init_realtime_after_seconds
+        )
+
+    def _segment_preview_text(text):
+        raw_text = "" if text is None else str(text).strip()
+        if getattr(self, "_force_current_recording_lowercase_start", False):
+            raw_text = _lowercase_first_text(raw_text)
+        return raw_text
+
+    def _preprocess_dual_realtime_text(text):
+        force_lowercase_start = getattr(
+            self,
+            "_force_current_recording_lowercase_start",
+            False,
+        )
+        return preprocess_output(
+            text,
+            preview=True,
+            ensure_sentence_starting_uppercase=(
+                self.ensure_sentence_starting_uppercase
+                and not force_lowercase_start
+            ),
+            ensure_sentence_ends_with_period=(
+                self.ensure_sentence_ends_with_period
+            ),
+        )
+
+    def _record_realtime_merge_result(result, publish_allowed):
+        """Stores every merge transition and emits its structured event."""
+
+        self.last_realtime_transcription_merge_result = result
+        self.merged_realtime_transcription_text = result.text
+        callback = getattr(
+            self,
+            "on_realtime_transcription_merge_update",
+            None,
+        )
+        if callback and publish_allowed:
+            _safe_realtime_callback(callback, result)
+
+    def _publish_merged_realtime_text_if_changed(publish_allowed):
+        """Publishes at most one final merged text for the current pass."""
+
+        merger = getattr(self, "realtime_transcription_merger", None)
+        if merger is None:
+            return
+        result = merger.snapshot()
+        self.merged_realtime_transcription_text = result.text
+        if not publish_allowed or not result.text:
+            return
+        if result.text == getattr(
+            self,
+            "last_merged_realtime_transcription",
+            "",
+        ):
+            return
+
+        self.last_merged_realtime_transcription = result.text
+        callback = getattr(
+            self,
+            "on_merged_realtime_transcription_update",
+            None,
+        )
+        if callback:
+            _safe_realtime_callback(
+                callback,
+                _preprocess_dual_realtime_text(result.text),
+            )
+
+    def _observe_ultrafast_transcription(
+        transcription_result,
+        recording_id,
+        sample_count,
+        completed_at_wall_time,
+    ):
+        """Publishes raw ultrafast text and updates the sticky merger."""
+
+        ultrafast_text, language, language_probability = (
+            _extract_text_and_language(transcription_result)
+        )
+        ultrafast_text = "" if ultrafast_text is None else str(
+            ultrafast_text
+        ).strip()
+        sequence = getattr(
+            self,
+            "ultrafast_realtime_observation_sequence",
+            0,
+        ) + 1
+        result = _get_realtime_transcription_merger(
+            recording_id
+        ).observe_ultrafast(
+            ultrafast_text,
+            recording_id=recording_id,
+            sequence=sequence,
+            audio_end_sample_exclusive=sample_count,
+        )
+        if result.status == "stale_ignored":
+            return result
+
+        self.ultrafast_realtime_observation_sequence = sequence
+        publish_allowed = _dual_realtime_publish_allowed(
+            completed_at_wall_time
+        )
+
+        self.detected_ultrafast_realtime_language = language
+        self.detected_ultrafast_realtime_language_probability = (
+            language_probability
+        )
+        if ultrafast_text:
+            self.ultrafast_realtime_transcription_text = ultrafast_text
+            self.last_ultrafast_transcription = ultrafast_text
+            callback = getattr(
+                self,
+                "on_ultrafast_transcription_update",
+                None,
+            )
+            if callback and publish_allowed:
+                _safe_realtime_callback(callback, ultrafast_text)
+
+        _record_realtime_merge_result(result, publish_allowed)
+        return result
+
+    def _observe_slow_transcription_for_merge(
+        slow_text,
+        recording_id,
+        sequence,
+        sample_count,
+        completed_at_wall_time,
+    ):
+        """Updates the authoritative backbone without touching Final ASR."""
+
+        slow_text = _segment_preview_text(slow_text)
+        if not slow_text:
+            return None
+        publish_allowed = _dual_realtime_publish_allowed(
+            completed_at_wall_time
+        )
+        result = _get_realtime_transcription_merger(
+            recording_id
+        ).observe_slow(
+            slow_text,
+            recording_id=recording_id,
+            sequence=sequence,
+            audio_end_sample_exclusive=sample_count,
+        )
+        if result.status == "stale_ignored":
+            return result
+        _record_realtime_merge_result(result, publish_allowed)
+        return result
 
     def _lowercase_first_text(text):
         """
@@ -863,19 +1202,26 @@ def run_realtime_worker(recorder):
 
     def _reset_after_punctuation_split(right_frames, punctuation, sample_rate):
         """
-        Starts a new realtime segment from the right-side audio remainder.
+        Starts a new realtime segment after the frame swap is committed.
+
+        The caller owns both the punctuation-split lock and the atomic frame
+        replacement.  Keeping streaming/session resets here ensures they run
+        on the same serialized boundary as ordinary realtime processing.
         """
 
         remaining_seconds = _count_frame_samples(right_frames) / float(sample_rate)
-        with get_frames_lock(self):
-            self.frames = list(right_frames)
-            self.last_frames = []
         self.text_storage = []
         self.realtime_transcription_text = ""
         self.realtime_stabilized_text = ""
         self.realtime_stabilized_safetext = ""
         self.realtime_observation_sequence = 0
+        self.ultrafast_realtime_observation_sequence = 0
         self.realtime_recording_id = getattr(self, "realtime_recording_id", 0) + 1
+        self.ultrafast_realtime_transcription_text = ""
+        self.merged_realtime_transcription_text = ""
+        self.last_ultrafast_transcription = ""
+        self.last_merged_realtime_transcription = ""
+        self.last_realtime_transcription_merge_result = None
         self.recording_start_monotonic = time.monotonic() - remaining_seconds
         self.recording_start_time = time.time() - remaining_seconds
         self._force_current_recording_lowercase_start = punctuation == ","
@@ -886,7 +1232,11 @@ def run_realtime_worker(recorder):
             started_at_monotonic=self.recording_start_monotonic,
             started_at_wall_time=self.recording_start_time,
         )
+        merger = getattr(self, "realtime_transcription_merger", None)
+        if merger is not None:
+            merger.reset(self.realtime_recording_id)
         _close_streaming_session()
+        _close_ultrafast_streaming_session()
 
     def _maybe_split_on_stable_punctuation(event, frames_snapshot, sample_rate):
         """
@@ -910,6 +1260,7 @@ def run_realtime_worker(recorder):
         sample_count = _count_frame_samples(frames_snapshot)
         if sample_count < sample_rate * 2:
             return False
+        expected_recording_id = getattr(self, "realtime_recording_id", 0)
         attempt_key = (split_marks, hint, sample_count // sample_rate)
         with _get_realtime_punctuation_split_lock(self):
             if getattr(self, "_realtime_punctuation_split_busy", False):
@@ -944,24 +1295,45 @@ def run_realtime_worker(recorder):
                 if split_sample <= 0:
                     return
 
-                current_frames = list(_snapshot_frames() or frames_snapshot)
-                current_sample_count = _count_frame_samples(current_frames)
-                if split_sample >= current_sample_count:
-                    return
-                left_frames, right_frames = _split_frames_at_sample(current_frames, split_sample)
-                if not left_frames or not right_frames:
-                    return
-
-                queue_recorded_audio(
-                    self,
-                    left_frames,
-                    force_lowercase_start=getattr(
-                        self,
-                        "_force_current_recording_lowercase_start",
-                        False,
-                    ),
-                )
-                _reset_after_punctuation_split(right_frames, punctuation, sample_rate)
+                # Commit the split under the same lock used by realtime model
+                # and streaming-session state.  The frame snapshot and swap
+                # share the recorder lock, so capture cannot append between
+                # them and have that audio overwritten by an older snapshot.
+                with _get_realtime_punctuation_split_lock(self):
+                    if (
+                        not getattr(self, "is_recording", False)
+                        or getattr(self, "realtime_recording_id", 0)
+                        != expected_recording_id
+                    ):
+                        return
+                    with get_frames_lock(self):
+                        current_frames = list(getattr(self, "frames", None) or ())
+                        current_sample_count = _count_frame_samples(current_frames)
+                        if split_sample >= current_sample_count:
+                            return
+                        left_frames, right_frames = _split_frames_at_sample(
+                            current_frames,
+                            split_sample,
+                        )
+                        if not left_frames or not right_frames:
+                            return
+                        queue_recorded_audio(
+                            self,
+                            left_frames,
+                            force_lowercase_start=getattr(
+                                self,
+                                "_force_current_recording_lowercase_start",
+                                False,
+                            ),
+                        )
+                        self.frames = list(right_frames)
+                        self.last_frames = []
+                        set_active_speech_tail_from_frames(self, right_frames)
+                    _reset_after_punctuation_split(
+                        right_frames,
+                        punctuation,
+                        sample_rate,
+                    )
             finally:
                 with _get_realtime_punctuation_split_lock(self):
                     self._realtime_punctuation_split_busy = False
@@ -1130,7 +1502,7 @@ def run_realtime_worker(recorder):
 
     last_transcription_time = time.time()
 
-    def _run_realtime_transcription(trigger_reason):
+    def _run_realtime_transcription_locked(trigger_reason):
         """
         Runs one realtime transcription pass for buffered audio.
         """
@@ -1143,7 +1515,24 @@ def run_realtime_worker(recorder):
         sample_rate = _safe_get_sample_rate()
         recording_id = getattr(self, "realtime_recording_id", 0)
         streaming_target = _streaming_realtime_target()
+        ultrafast_streaming_target = _ultrafast_streaming_target()
         created_at_monotonic = time.monotonic()
+
+        frame_count = len(frames_snapshot or ())
+        sample_count = _count_frame_samples(frames_snapshot)
+        if ultrafast_streaming_target is not None and frames_snapshot:
+            ultrafast_result = _transcribe_with_ultrafast_streaming_model(
+                frames_snapshot,
+                sample_rate,
+                recording_id,
+            )
+            if ultrafast_result is not None:
+                _observe_ultrafast_transcription(
+                    ultrafast_result,
+                    recording_id,
+                    sample_count,
+                    time.time(),
+                )
 
         if streaming_target is not None:
             if not frames_snapshot:
@@ -1158,12 +1547,18 @@ def run_realtime_worker(recorder):
                 recording_id,
             )
             if transcription_result is None:
+                _publish_merged_realtime_text_if_changed(
+                    _dual_realtime_publish_allowed(time.time())
+                )
                 return False
         else:
             audio_array = _frames_to_audio_array(frames_snapshot)
 
             if audio_array is None:
                 logger.debug("Skipping realtime transcription because audio buffer is empty")
+                _publish_merged_realtime_text_if_changed(
+                    _dual_realtime_publish_allowed(time.time())
+                )
                 return False
 
             sample_count = int(audio_array.size)
@@ -1221,6 +1616,10 @@ def run_realtime_worker(recorder):
                 detected_language_probability,
                 frames_snapshot,
             )
+            if ultrafast_streaming_target is not None:
+                _publish_merged_realtime_text_if_changed(
+                    _dual_realtime_publish_allowed(completed_at_wall_time)
+                )
             return False
 
         self.realtime_transcription_success_count += 1
@@ -1243,7 +1642,24 @@ def run_realtime_worker(recorder):
             detected_language_probability,
             frames_snapshot,
         )
+        if ultrafast_streaming_target is not None:
+            _observe_slow_transcription_for_merge(
+                realtime_text,
+                recording_id,
+                observation_sequence,
+                sample_count,
+                completed_at_wall_time,
+            )
+            _publish_merged_realtime_text_if_changed(
+                _dual_realtime_publish_allowed(completed_at_wall_time)
+            )
         return True
+
+    def _run_realtime_transcription(trigger_reason):
+        """Serialize realtime state with a background punctuation split."""
+
+        with _get_realtime_punctuation_split_lock(self):
+            return _run_realtime_transcription_locked(trigger_reason)
 
     use_syllable_boundaries = bool(
         getattr(self, "realtime_transcription_use_syllable_boundaries", False)
@@ -1400,14 +1816,20 @@ def run_realtime_worker(recorder):
     while self.is_running:
         try:
             if not self.is_recording:
-                if streaming_session is not None:
+                if (
+                    streaming_session is not None
+                    or ultrafast_streaming_session is not None
+                ):
                     try:
                         finished_frames = snapshot_frames(self, "last_frames")
                     except Exception:
                         finished_frames = None
                     if not finished_frames:
                         finished_frames = _snapshot_frames()
-                    _finish_streaming_session(finished_frames)
+                    if streaming_session is not None:
+                        _finish_streaming_session(finished_frames)
+                    if ultrafast_streaming_session is not None:
+                        _finish_ultrafast_streaming_session(finished_frames)
 
                 # Important:
                 # Reset timer while idle so the worker does not instantly
@@ -1456,5 +1878,7 @@ def run_realtime_worker(recorder):
 
     if streaming_session is not None:
         _finish_streaming_session(_snapshot_frames())
+    if ultrafast_streaming_session is not None:
+        _finish_ultrafast_streaming_session(_snapshot_frames())
 
     logger.debug("Realtime worker stopped")

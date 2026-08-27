@@ -19,6 +19,8 @@ from .realtime import (
     run_realtime_worker,
 )
 from .realtime_text_stabilizer import RealtimeTextStabilizer
+from .realtime_merge import StickyRealtimeTranscriptionMerger
+from .preview_transcription import start_preview_transcription_worker
 from .recording import run_recording_worker
 from ..transcription_engines import (
     TranscriptionEngineConfig,
@@ -29,7 +31,10 @@ from .safepipe import SafePipe
 from .wakeword import OPENWAKEWORD_BACKENDS, setup_wakeword_detection
 from .audio_input_worker import run_audio_data_worker
 from .runtime import read_stdout_pipe, start_recorder_worker
-from .transcription import run_transcription_worker
+from .transcription import (
+    SharedFinalModelExecutor,
+    run_transcription_worker,
+)
 from .voice_activity import warmup_voice_activity_detectors
 
 
@@ -63,6 +68,7 @@ def initialize_recorder(
     _initialize_transcription_runtime(recorder, recorder_cls)
     _start_audio_reader(recorder, recorder_cls)
     _initialize_realtime_transcription_model(recorder)
+    _initialize_preview_transcription_model(recorder)
     _initialize_wakeword_detection(
         recorder,
         normalized_wakeword_backend,
@@ -175,6 +181,69 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
     recorder.on_realtime_text_stabilization_update = (
         init_args["on_realtime_text_stabilization_update"]
     )
+    recorder.ultrafast_realtime_model_type = init_args[
+        "ultrafast_realtime_model_type"
+    ]
+    recorder.ultrafast_realtime_transcription_engine = (
+        init_args["ultrafast_realtime_transcription_engine"]
+        or recorder.realtime_transcription_engine
+    )
+    recorder.ultrafast_realtime_transcription_engine_options = (
+        init_args["ultrafast_realtime_transcription_engine_options"]
+        if init_args["ultrafast_realtime_transcription_engine_options"]
+        is not None
+        else recorder.realtime_transcription_engine_options
+    )
+    recorder.ultrafast_realtime_transcription_model = None
+    recorder._ultrafast_uses_realtime_model = False
+    recorder.on_ultrafast_transcription_update = init_args[
+        "on_ultrafast_transcription_update"
+    ]
+    recorder.on_merged_realtime_transcription_update = init_args[
+        "on_merged_realtime_transcription_update"
+    ]
+    recorder.on_realtime_transcription_merge_update = init_args[
+        "on_realtime_transcription_merge_update"
+    ]
+    recorder.ultrafast_realtime_max_tail_words = int(
+        init_args["ultrafast_realtime_max_tail_words"]
+    )
+
+    recorder.enable_preview_transcription = bool(
+        init_args["enable_preview_transcription"]
+    )
+    recorder.preview_model_type = (
+        init_args["preview_model_type"] or init_args["model"]
+    )
+    recorder.preview_transcription_engine = (
+        init_args["preview_transcription_engine"]
+        or init_args["transcription_engine"]
+    )
+    recorder.preview_transcription_engine_options = (
+        init_args["preview_transcription_engine_options"]
+        if init_args["preview_transcription_engine_options"] is not None
+        else recorder.transcription_engine_options
+    )
+    recorder.preview_transcription_tail_seconds = float(
+        init_args["preview_transcription_tail_seconds"]
+    )
+    recorder.preview_transcription_min_live_words_for_fuzzy_repair = int(
+        init_args["preview_transcription_min_live_words_for_fuzzy_repair"]
+    )
+    recorder.on_preview_transcription_finished = (
+        init_args["on_preview_transcription_finished"]
+    )
+    recorder.preview_transcription_executor = (
+        init_args["preview_transcription_executor"]
+    )
+    recorder._uses_external_preview_transcription_executor = (
+        recorder.preview_transcription_executor is not None
+    )
+    recorder.preview_transcription_uses_main_model = False
+    recorder._preview_uses_main_model = False
+    recorder._preview_uses_shared_final_worker = False
+    recorder.preview_transcription_model = None
+    recorder.preview_transcription_worker = None
     recorder.realtime_punctuation_split_marks = (
         _normalize_realtime_punctuation_split_marks(
             init_args["realtime_punctuation_split_marks"]
@@ -225,8 +294,20 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
     recorder.realtime_stabilized_text = ""
     recorder.realtime_stabilized_safetext = ""
     recorder.realtime_text_stabilizer = RealtimeTextStabilizer()
+    recorder.realtime_transcription_merger = StickyRealtimeTranscriptionMerger(
+        max_ultrafast_tail_words=(
+            recorder.ultrafast_realtime_max_tail_words
+        )
+    )
+    recorder.realtime_transcription_merger.reset(0)
     recorder.realtime_recording_id = 0
     recorder.realtime_observation_sequence = 0
+    recorder.ultrafast_realtime_observation_sequence = 0
+    recorder.ultrafast_realtime_transcription_text = ""
+    recorder.merged_realtime_transcription_text = ""
+    recorder.last_ultrafast_transcription = ""
+    recorder.last_merged_realtime_transcription = ""
+    recorder.last_realtime_transcription_merge_result = None
     recorder.realtime_text_stabilization_event = None
     recorder.realtime_stabilization_accepted_count = 0
     recorder.realtime_stabilization_outlier_count = 0
@@ -255,6 +336,16 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
     recorder.last_transcription_bytes = None
     recorder.last_transcription_bytes_b64 = None
     recorder.last_transcription_metadata = None
+    recorder.active_speech_tail_buffer = bytearray()
+    recorder._current_transcription_live_text = None
+    recorder._current_transcription_tail_audio = None
+    recorder._preview_transcription_submitted = False
+    recorder._pending_vad_live_text = None
+    recorder.preview_transcription_queue = None
+    recorder.preview_transcription_stop_event = None
+    recorder.preview_transcription_thread = None
+    recorder.last_preview_transcription = ""
+    recorder.last_preview_transcription_result = None
     recorder.last_preroll_selection = None
     recorder._pending_preroll_selection = None
     recorder.initial_prompt = init_args["initial_prompt"]
@@ -398,12 +489,16 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
     recorder.stdout_thread = None
     recorder.parent_transcription_pipe = None
     recorder.parent_stdout_pipe = None
+    recorder.shared_preview_transcription_result_queue = None
     child_transcription_pipe = None
     child_stdout_pipe = None
 
     if not recorder._uses_external_transcription_executor:
         recorder.parent_transcription_pipe, child_transcription_pipe = SafePipe()
         recorder.parent_stdout_pipe, child_stdout_pipe = SafePipe()
+        if _should_share_preview_model(recorder):
+            recorder.shared_preview_transcription_result_queue = mp.Queue()
+            recorder._preview_uses_shared_final_worker = True
 
     recorder.device = "cuda" if recorder.device == "cuda" and torch.cuda.is_available() else "cpu"
 
@@ -432,7 +527,69 @@ def _initialize_transcription_runtime(recorder, recorder_cls):
                 recorder.batch_size,
                 recorder.faster_whisper_vad_filter,
                 recorder.normalize_audio,
+                recorder.shared_preview_transcription_result_queue,
             )
+        )
+
+
+def _values_equal(left, right):
+    """Compares optional engine settings without assuming scalar values."""
+
+    if left is right:
+        return True
+    try:
+        result = left == right
+    except Exception:
+        return False
+    return result if isinstance(result, bool) else False
+
+
+def _should_share_preview_model(recorder):
+    """Returns whether Preview can use the loaded Final model safely."""
+
+    return bool(
+        getattr(recorder, "enable_preview_transcription", False)
+        and not getattr(
+            recorder,
+            "_uses_external_preview_transcription_executor",
+            False,
+        )
+        and recorder.preview_model_type == recorder.main_model_type
+        and recorder.preview_transcription_engine
+        == recorder.transcription_engine
+        and _values_equal(
+            recorder.preview_transcription_engine_options,
+            recorder.transcription_engine_options,
+        )
+    )
+
+
+def _should_share_ultrafast_realtime_model(recorder):
+    """Returns whether both realtime lanes can share one loaded model."""
+
+    return bool(
+        getattr(recorder, "ultrafast_realtime_model_type", None)
+        and getattr(recorder, "realtime_transcription_model", None) is not None
+        and recorder.ultrafast_realtime_model_type
+        == recorder.realtime_model_type
+        and recorder.ultrafast_realtime_transcription_engine
+        == recorder.realtime_transcription_engine
+        and _values_equal(
+            recorder.ultrafast_realtime_transcription_engine_options,
+            recorder.realtime_transcription_engine_options,
+        )
+    )
+
+
+def _require_streaming_realtime_model(model, lane_name):
+    """Rejects an optional lane that cannot maintain streaming sessions."""
+
+    if not getattr(model, "supports_streaming", False) or not hasattr(
+        model,
+        "create_streaming_session",
+    ):
+        raise ValueError(
+            f"{lane_name} realtime model must support streaming sessions"
         )
 
 
@@ -514,6 +671,143 @@ def _initialize_realtime_transcription_model(recorder):
         logger.debug(
             f"{recorder.realtime_transcription_engine} realtime speech to text transcription model initialized successfully"
         )
+
+    if not (
+        recorder.enable_realtime_transcription
+        and recorder.ultrafast_realtime_model_type
+    ):
+        return
+
+    try:
+        if _should_share_ultrafast_realtime_model(recorder):
+            recorder.ultrafast_realtime_transcription_model = (
+                recorder.realtime_transcription_model
+            )
+            recorder._ultrafast_uses_realtime_model = True
+        else:
+            logger.info(
+                "Initializing %s ultrafast realtime transcription model %s",
+                recorder.ultrafast_realtime_transcription_engine,
+                recorder.ultrafast_realtime_model_type,
+            )
+            recorder.ultrafast_realtime_transcription_model = (
+                create_transcription_engine(
+                    recorder.ultrafast_realtime_transcription_engine,
+                    TranscriptionEngineConfig(
+                        model=recorder.ultrafast_realtime_model_type,
+                        download_root=recorder.download_root,
+                        compute_type=recorder.compute_type,
+                        gpu_device_index=recorder.gpu_device_index,
+                        device=recorder.device,
+                        beam_size=recorder.beam_size_realtime,
+                        initial_prompt=recorder.initial_prompt_realtime,
+                        suppress_tokens=recorder.suppress_tokens,
+                        batch_size=recorder.realtime_batch_size,
+                        vad_filter=recorder.faster_whisper_vad_filter,
+                        normalize_audio=recorder.normalize_audio,
+                        engine_options=(
+                            recorder.ultrafast_realtime_transcription_engine_options
+                        ),
+                    ),
+                )
+            )
+
+        _require_streaming_realtime_model(
+            recorder.ultrafast_realtime_transcription_model,
+            "ultrafast",
+        )
+
+        if not recorder._ultrafast_uses_realtime_model:
+            current_dir = os.path.dirname(
+                os.path.dirname(os.path.realpath(__file__))
+            )
+            warmup_audio_path = os.path.join(
+                current_dir,
+                "assets",
+                "warmup_audio.wav",
+            )
+            warmup_audio_data, _ = sf.read(
+                warmup_audio_path,
+                dtype="float32",
+            )
+            recorder.ultrafast_realtime_transcription_model.warmup(
+                warmup_audio_data
+            )
+    except Exception as error:
+        logger.exception(
+            "Error initializing ultrafast realtime transcription model: %s",
+            error,
+        )
+        raise
+
+    logger.debug("Ultrafast realtime transcription model initialized")
+
+
+def _initialize_preview_transcription_model(recorder):
+    """
+    Initializes the optional independent speculative Preview model.
+    """
+
+    if not recorder.enable_preview_transcription:
+        return
+
+    recorder._preview_uses_main_model = _should_share_preview_model(recorder)
+    if recorder._preview_uses_main_model:
+        recorder.preview_transcription_uses_main_model = True
+        if recorder._uses_external_transcription_executor:
+            recorder.preview_transcription_executor = (
+                recorder.transcription_executor
+            )
+        else:
+            recorder.preview_transcription_executor = SharedFinalModelExecutor(
+                recorder
+            )
+        recorder._uses_external_preview_transcription_executor = True
+        start_preview_transcription_worker(recorder)
+        return
+
+    if not recorder._uses_external_preview_transcription_executor:
+        try:
+            logger.info(
+                f"Initializing {recorder.preview_transcription_engine} preview "
+                f"transcription model {recorder.preview_model_type}, "
+                f"device: {recorder.device}, compute type: {recorder.compute_type}, "
+                f"download root: {recorder.download_root}"
+            )
+            recorder.preview_transcription_model = create_transcription_engine(
+                recorder.preview_transcription_engine,
+                TranscriptionEngineConfig(
+                    model=recorder.preview_model_type,
+                    download_root=recorder.download_root,
+                    compute_type=recorder.compute_type,
+                    gpu_device_index=recorder.gpu_device_index,
+                    device=recorder.device,
+                    beam_size=recorder.beam_size_realtime,
+                    initial_prompt=recorder.initial_prompt,
+                    suppress_tokens=recorder.suppress_tokens,
+                    batch_size=0,
+                    vad_filter=recorder.faster_whisper_vad_filter,
+                    normalize_audio=recorder.normalize_audio,
+                    engine_options=recorder.preview_transcription_engine_options,
+                ),
+            )
+
+            current_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            warmup_audio_path = os.path.join(
+                current_dir,
+                "assets",
+                "warmup_audio.wav",
+            )
+            warmup_audio_data, _ = sf.read(warmup_audio_path, dtype="float32")
+            recorder.preview_transcription_model.warmup(warmup_audio_data)
+        except Exception as error:
+            logger.exception(
+                "Error initializing preview transcription model: %s",
+                error,
+            )
+            raise
+
+    start_preview_transcription_worker(recorder)
 
 
 def _initialize_wakeword_detection(

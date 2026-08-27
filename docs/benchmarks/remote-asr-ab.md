@@ -94,7 +94,7 @@ zero, no final or completion event was missing, and median completion time
 after `finalize` was 0.1039 seconds. The report JSON SHA-256 is
 `67965a36fca40f1b423c00955bf51209451511ded8dfa954b142250d10514a58`.
 
-The separate AgentTalk seven-language fixture covers English, German, French,
+The separate external seven-language fixture covers English, German, French,
 Spanish, Italian, Portuguese, and Russian. On the same candidate code and
 models it passed 7/7 exact final texts at both 100 ms and 37 ms packet sizes,
 with zero event/audio sequence failures. The final texts were invariant across

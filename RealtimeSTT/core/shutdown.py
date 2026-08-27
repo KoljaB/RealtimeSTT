@@ -5,6 +5,7 @@ Internal recorder shutdown helpers.
 import gc
 import logging
 
+from .preview_transcription import stop_preview_transcription_worker
 
 logger = logging.getLogger("realtimestt")
 
@@ -162,6 +163,25 @@ def _close_resource(resource, resource_name):
         )
 
 
+def _close_transcription_models(recorder):
+    """Cancels resident realtime/Preview engines before joining their threads."""
+
+    seen = set()
+    for attribute, resource_name in (
+        ("realtime_transcription_model", "realtime transcription model"),
+        (
+            "ultrafast_realtime_transcription_model",
+            "ultrafast realtime transcription model",
+        ),
+        ("preview_transcription_model", "Preview transcription model"),
+    ):
+        resource = getattr(recorder, attribute, None)
+        if resource is None or id(resource) in seen:
+            continue
+        seen.add(id(resource))
+        _close_resource(resource, resource_name)
+
+
 def shutdown_recorder(recorder):
     """
     Stops worker threads, subprocesses, pipes, and realtime resources.
@@ -181,6 +201,9 @@ def shutdown_recorder(recorder):
         recorder.shutdown_event.set()
         recorder.is_recording = False
         recorder.is_running = False
+
+        # close() is the cancellation signal for native in-flight inference.
+        _close_transcription_models(recorder)
 
         logger.debug('Finishing recording thread')
         _finish_thread(
@@ -208,6 +231,14 @@ def shutdown_recorder(recorder):
             getattr(recorder, "parent_transcription_pipe", None),
             "parent transcription pipe",
         )
+        _close_resource(
+            getattr(
+                recorder,
+                "shared_preview_transcription_result_queue",
+                None,
+            ),
+            "shared Preview result queue",
+        )
 
         logger.debug('Finishing realtime thread')
         _finish_thread(
@@ -215,8 +246,25 @@ def shutdown_recorder(recorder):
             "Realtime thread",
         )
 
+        logger.debug('Finishing preview transcription thread')
+        stop_preview_transcription_worker(recorder)
+        _finish_thread(
+            getattr(recorder, "preview_transcription_thread", None),
+            "Preview transcription thread",
+        )
+
         if getattr(recorder, "enable_realtime_transcription", False):
             if getattr(recorder, "realtime_transcription_model", None):
                 del recorder.realtime_transcription_model
                 recorder.realtime_transcription_model = None
+            if getattr(
+                recorder,
+                "ultrafast_realtime_transcription_model",
+                None,
+            ):
+                del recorder.ultrafast_realtime_transcription_model
+                recorder.ultrafast_realtime_transcription_model = None
+        if getattr(recorder, "preview_transcription_model", None):
+            del recorder.preview_transcription_model
+            recorder.preview_transcription_model = None
         gc.collect()

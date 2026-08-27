@@ -87,6 +87,10 @@ recorder = AudioToTextRecorder(
 | `realtime_transcription_engine` | `None` | Realtime backend. `None` uses `transcription_engine`. |
 | `realtime_transcription_engine_options` | `None` | Engine-specific options for realtime. `None` reuses `transcription_engine_options`. |
 | `realtime_model_type` | `"tiny"` | Realtime model name or path. |
+| `ultrafast_realtime_model_type` | `None` | Optional second streaming model name or path. `None` disables the second lane and preserves the single-model behavior. |
+| `ultrafast_realtime_transcription_engine` | `None` | Backend for the ultrafast lane. `None` reuses `realtime_transcription_engine`. The selected backend must support streaming sessions. |
+| `ultrafast_realtime_transcription_engine_options` | `None` | Engine-specific ultrafast options. `None` reuses `realtime_transcription_engine_options`. Identical slow/fast configurations share one loaded model but use independent streaming sessions. |
+| `ultrafast_realtime_max_tail_words` | `5` | Maximum number of safely anchored words the ultrafast lane may append. Reduce it to limit the speculative error radius. |
 | `realtime_processing_pause` | `0.2` | Seconds between realtime transcription attempts. Lower values increase load. |
 | `init_realtime_after_seconds` | `0.2` | Initial delay after recording starts before the first realtime update. |
 | `realtime_batch_size` | `16` | Realtime transcription batch size. |
@@ -96,6 +100,16 @@ recorder = AudioToTextRecorder(
 | `realtime_boundary_detector_sensitivity` | `0.6` | Boundary detector sensitivity, from conservative `0` to eager `1`. |
 | `realtime_boundary_followup_delays` | `(0.05, 0.2)` | Extra realtime update delays after a detected boundary. `None` or empty disables follow-ups. |
 | `realtime_punctuation_split_marks` | `"off"` | Opt-in punctuation-based splitting for long active recordings. See [realtime-punctuation-splitting.md](realtime-punctuation-splitting.md). |
+
+When the ultrafast lane is enabled, `realtime_model_type` remains the
+authoritative backbone. The second model may append at most five words after
+a safe exact 4-/3-word tail anchor. A constrained 4-word fuzzy anchor requires
+two compatible observations. Within one backbone generation, accepted fast
+words are sticky: an unaligned, shorter, or conflicting fast hypothesis does
+not retract text already shown. When the authoritative hypothesis changes, its
+new text replaces the old generation; if the latest fast hypothesis cannot be
+anchored, the authoritative text is published alone. Final transcription is
+unchanged and never consumes the merged preview text.
 
 ## Wake Word Parameters
 
@@ -123,6 +137,9 @@ All callbacks are optional. By default they run in the recorder flow; set
 | `on_realtime_transcription_update` | New interim realtime text is available. Receives text. |
 | `on_realtime_transcription_stabilized` | Higher-quality stabilized realtime text is available. Receives text. |
 | `on_realtime_text_stabilization_update` | Structured realtime stabilization event is available. |
+| `on_ultrafast_transcription_update` | New raw text from the optional ultrafast lane is available. Receives text. |
+| `on_merged_realtime_transcription_update` | The sticky merged display text changed. Receives the complete merged text. |
+| `on_realtime_transcription_merge_update` | Any structured dual-lane merge transition is available, including held/no-anchor states. Receives `RealtimeTranscriptionMergeResult`. |
 | `on_vad_start` | Voice activity is detected. |
 | `on_vad_stop` | Voice activity ends. |
 | `on_vad_detect_start` | Recorder starts listening for voice activity. |

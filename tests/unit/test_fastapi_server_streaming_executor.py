@@ -12,7 +12,7 @@ try:
         ServerSettings,
         SharedEngineWorker,
     )
-    from RealtimeSTT.transcription_engines import TranscriptionResult
+    from RealtimeSTT.transcription_engines import TranscriptionInfo, TranscriptionResult
 except Exception as exc:  # pragma: no cover - optional server dependencies
     FairInferenceQueue = None
     IMPORT_ERROR = exc
@@ -108,6 +108,66 @@ class FastAPIServerStreamingExecutorTests(unittest.TestCase):
         worker.engine = engine
         worker.ready.set()
         return worker, engine
+
+    def test_worker_preserves_provider_language_metadata(self):
+        results = []
+        result_ready = threading.Event()
+
+        class MetadataEngine(FakeStreamingEngine):
+            def transcribe(self, audio, language=None, use_prompt=True):
+                self.transcribe_calls.append((audio, language, use_prompt))
+                return TranscriptionResult(
+                    text="hallo welt",
+                    info=TranscriptionInfo(
+                        language="de",
+                        language_probability=0.93,
+                    ),
+                    metadata={"detected_language": "de", "provider": "fake"},
+                )
+
+        def capture_result(result):
+            results.append(result)
+            result_ready.set()
+
+        engine = MetadataEngine()
+        settings = ServerSettings(model_warmup=False)
+        inference_queue = FairInferenceQueue("final", settings)
+        worker = SharedEngineWorker(
+            "final",
+            settings,
+            inference_queue,
+            lambda: engine,
+            capture_result,
+        )
+        worker.start()
+        try:
+            submitted = inference_queue.submit(
+                InferenceJob(
+                    request_id="metadata-request",
+                    session_id="metadata-session",
+                    kind="final",
+                    audio=[1, 2, 3],
+                    language="auto",
+                    use_prompt=False,
+                    segment_id=1,
+                    sequence=1,
+                    generation=1,
+                    created_at=time.monotonic(),
+                )
+            )
+            self.assertTrue(submitted.accepted)
+            self.assertTrue(result_ready.wait(timeout=2.0))
+        finally:
+            worker.stop()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].text, "hallo welt")
+        self.assertEqual(results[0].info.language, "de")
+        self.assertAlmostEqual(results[0].info.language_probability, 0.93)
+        self.assertEqual(
+            results[0].metadata,
+            {"detected_language": "de", "provider": "fake"},
+        )
 
     def test_streaming_proxy_forwards_incremental_operations_and_closes(self):
         worker, engine = self.make_worker()

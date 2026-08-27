@@ -5,12 +5,13 @@ import datetime
 import json
 import logging
 import math
+import os
 import threading
 import time
 import uuid
 import wave
 import weakref
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
@@ -152,11 +153,18 @@ STARTUP_ONLY_SETTINGS = {
     "language",
     "model",
     "model_warmup",
+    "main_cpu_affinity",
     "normalize_audio",
     "port",
     "realtime_model",
+    "realtime_cpu_affinity",
     "realtime_transcription_engine",
     "realtime_transcription_engine_options",
+    "ultrafast_realtime_model_type",
+    "ultrafast_realtime_cpu_affinity",
+    "ultrafast_realtime_transcription_engine",
+    "ultrafast_realtime_transcription_engine_options",
+    "ultrafast_realtime_max_tail_words",
     "transcription_engine",
     "transcription_engine_options",
     "tuning_description",
@@ -179,6 +187,7 @@ INT_SETTINGS = {
     "port",
     "realtime_batch_size",
     "realtime_degradation_threshold_ms",
+    "ultrafast_realtime_max_tail_words",
     "webrtc_sensitivity",
 }
 
@@ -216,14 +225,125 @@ OPTIONAL_STRING_SETTINGS = {
     "initial_prompt_realtime",
     "openwakeword_model_paths",
     "realtime_transcription_engine",
+    "ultrafast_realtime_model_type",
+    "ultrafast_realtime_transcription_engine",
 }
 
 DICT_SETTINGS = {
     "realtime_transcription_engine_options",
     "transcription_engine_options",
+    "ultrafast_realtime_transcription_engine_options",
 }
 
 TUPLE_FLOAT_SETTINGS = {"realtime_boundary_followup_delays"}
+
+CPU_AFFINITY_SETTING_NAMES = (
+    "main_cpu_affinity",
+    "realtime_cpu_affinity",
+    "ultrafast_realtime_cpu_affinity",
+)
+
+
+def normalize_cpu_affinity(value, setting_name="cpu_affinity"):
+    """Normalize an optional comma-separated CPU mask.
+
+    The setting is intentionally a tuple so it can be supplied from Python
+    configuration as well as the CLI.  A small ``0-3`` range convenience is
+    accepted for production masks; duplicates are removed and the result is
+    sorted for stable public configuration and tests.
+    """
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{setting_name} must contain non-negative CPU indexes")
+    if isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    else:
+        try:
+            items = list(value) if not isinstance(value, int) else [value]
+        except TypeError as exc:
+            raise ValueError(
+                f"{setting_name} must be a comma-separated list of CPU indexes"
+            ) from exc
+
+    indexes = set()
+    for item in items:
+        if isinstance(item, bool):
+            raise ValueError(f"{setting_name} must contain non-negative CPU indexes")
+        if isinstance(item, int):
+            start = end = item
+        else:
+            token = str(item).strip()
+            if not token:
+                raise ValueError(
+                    f"{setting_name} must be a comma-separated list of CPU indexes"
+                )
+            if "-" in token:
+                bounds = [bound.strip() for bound in token.split("-")]
+                if len(bounds) != 2 or not all(bounds):
+                    raise ValueError(
+                        f"{setting_name} contains an invalid CPU range: {token}"
+                    )
+                try:
+                    start, end = (int(bound) for bound in bounds)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{setting_name} contains an invalid CPU range: {token}"
+                    ) from exc
+            else:
+                try:
+                    start = end = int(token)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{setting_name} must contain non-negative CPU indexes"
+                    ) from exc
+        if start < 0 or end < start:
+            raise ValueError(f"{setting_name} must contain non-negative CPU indexes")
+        if end - start > 4096:
+            raise ValueError(f"{setting_name} CPU range is too large")
+        indexes.update(range(start, end + 1))
+
+    if not indexes:
+        raise ValueError(
+            f"{setting_name} must be a non-empty list of CPU indexes or null"
+        )
+    return tuple(sorted(indexes))
+
+
+def _cpu_affinity_arg(value):
+    try:
+        return normalize_cpu_affinity(value, "CPU affinity")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def set_current_thread_cpu_affinity(worker_name, affinity):
+    """Pin one scheduler worker before it creates its native inference pool.
+
+    Linux accepts a native thread ID in ``sched_setaffinity``.  Other
+    platforms keep the historical behavior and ignore the optional setting.
+    A configured Linux mask that cannot be applied is allowed to fail worker
+    initialization, which makes the server's health/readiness state honest.
+    """
+
+    if not affinity:
+        return
+    setter = getattr(os, "sched_setaffinity", None)
+    if not callable(setter):
+        LOGGER.warning(
+            "CPU affinity for %s is configured but unsupported on this platform; ignoring it",
+            worker_name,
+        )
+        return
+    native_id = threading.get_native_id()
+    setter(native_id, set(affinity))
+    LOGGER.info(
+        "Pinned %s inference worker native thread %s to CPUs %s",
+        worker_name,
+        native_id,
+        ",".join(str(cpu) for cpu in affinity),
+    )
 
 
 @dataclass
@@ -237,12 +357,21 @@ class ServerSettings:
     language: str = "en"
     transcription_engine: str = "faster_whisper"
     realtime_transcription_engine: Optional[str] = None
+    ultrafast_realtime_model_type: Optional[str] = None
+    ultrafast_realtime_transcription_engine: Optional[str] = None
     transcription_engine_options: Optional[Dict[str, Any]] = None
     realtime_transcription_engine_options: Optional[Dict[str, Any]] = None
+    ultrafast_realtime_transcription_engine_options: Optional[Dict[str, Any]] = None
+    ultrafast_realtime_max_tail_words: int = 5
     download_root: Optional[str] = None
     compute_type: str = "default"
     device: str = "cuda"
     gpu_device_index: int = 0
+    # Optional Linux CPU masks for the worker that owns each native ASR pool.
+    # ``main`` also owns Preview/Final queue work.
+    main_cpu_affinity: Optional[Tuple[int, ...]] = None
+    realtime_cpu_affinity: Optional[Tuple[int, ...]] = None
+    ultrafast_realtime_cpu_affinity: Optional[Tuple[int, ...]] = None
     beam_size: int = 5
     beam_size_realtime: int = 3
     batch_size: int = 16
@@ -288,10 +417,19 @@ class ServerSettings:
     vad_energy_threshold: float = 250.0
     model_warmup: bool = True
 
+    def __post_init__(self):
+        for setting_name in CPU_AFFINITY_SETTING_NAMES:
+            setattr(
+                self,
+                setting_name,
+                normalize_cpu_affinity(getattr(self, setting_name), setting_name),
+            )
+
     def public_dict(self):
         data = asdict(self)
         data.pop("transcription_engine_options", None)
         data.pop("realtime_transcription_engine_options", None)
+        data.pop("ultrafast_realtime_transcription_engine_options", None)
         data["wake_word_enabled"] = self.wake_word_enabled()
         return data
 
@@ -649,6 +787,10 @@ class InferenceResult:
     queue_delay: float
     inference_duration: float
     total_latency: float
+    # Optional provider data is appended with defaults so existing scheduler
+    # integrations that construct InferenceResult positionally stay valid.
+    info: Any = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1109,6 +1251,16 @@ class SharedEngineWorker:
 
     def _worker(self):
         try:
+            affinity_setting = {
+                "main": "main_cpu_affinity",
+                "realtime": "realtime_cpu_affinity",
+                "ultrafast": "ultrafast_realtime_cpu_affinity",
+            }.get(self.name)
+            if affinity_setting is not None:
+                set_current_thread_cpu_affinity(
+                    self.name,
+                    getattr(self.settings, affinity_setting, None),
+                )
             self.engine = self.engine_factory()
             self._warmup()
         except Exception as exc:
@@ -1127,6 +1279,8 @@ class SharedEngineWorker:
             started_at = time.monotonic()
             text = ""
             error = None
+            info = None
+            metadata = {}
 
             try:
                 if self.engine is None:
@@ -1142,6 +1296,10 @@ class SharedEngineWorker:
                         use_prompt=job.use_prompt,
                     )
                 text = (getattr(result, "text", "") or "").strip()
+                info = getattr(result, "info", None)
+                provider_metadata = getattr(result, "metadata", None)
+                if isinstance(provider_metadata, dict):
+                    metadata = dict(provider_metadata)
                 self.completed_jobs += 1
             except Exception as exc:
                 self.failed_jobs += 1
@@ -1172,6 +1330,8 @@ class SharedEngineWorker:
                     queue_delay=queue_delay,
                     inference_duration=inference_duration,
                     total_latency=total_latency,
+                    info=info,
+                    metadata=metadata,
                 )
             )
 
@@ -1298,6 +1458,11 @@ class InferenceScheduler:
             if settings.use_main_model_for_realtime
             else FairInferenceQueue("realtime", settings, drop_callback)
         )
+        self.ultrafast_queue = (
+            FairInferenceQueue("ultrafast", settings, drop_callback)
+            if settings.ultrafast_realtime_model_type
+            else None
+        )
         self.main_worker = SharedEngineWorker(
             "main",
             settings,
@@ -1316,22 +1481,38 @@ class InferenceScheduler:
                 result_callback,
                 error_callback,
             )
+        self.ultrafast_worker = None
+        if self.ultrafast_queue is not None:
+            self.ultrafast_worker = SharedEngineWorker(
+                "ultrafast",
+                settings,
+                self.ultrafast_queue,
+                self._create_ultrafast_realtime_engine,
+                result_callback,
+                error_callback,
+            )
 
     def start(self):
         self.main_worker.start()
         if self.realtime_worker is not None:
             self.realtime_worker.start()
+        if self.ultrafast_worker is not None:
+            self.ultrafast_worker.start()
 
     def stop(self):
         self.main_worker.stop()
         if self.realtime_worker is not None:
             self.realtime_worker.stop()
+        if self.ultrafast_worker is not None:
+            self.ultrafast_worker.stop()
 
     def wait_ready(self, timeout=None):
         deadline = None if timeout is None else time.monotonic() + timeout
         workers = [self.main_worker]
         if self.realtime_worker is not None:
             workers.append(self.realtime_worker)
+        if self.ultrafast_worker is not None:
+            workers.append(self.ultrafast_worker)
 
         for worker in workers:
             remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
@@ -1340,13 +1521,18 @@ class InferenceScheduler:
         return True
 
     def healthy(self):
-        if self.main_worker.load_error is not None:
-            return False
-        if self.realtime_worker is not None and self.realtime_worker.load_error is not None:
-            return False
-        return True
+        workers = [
+            self.main_worker,
+            self.realtime_worker,
+            self.ultrafast_worker,
+        ]
+        return all(worker is None or worker.load_error is None for worker in workers)
 
     def submit(self, job: InferenceJob):
+        if job.kind == "ultrafast":
+            if self.ultrafast_queue is None:
+                raise RuntimeError("The ultrafast realtime inference queue is unavailable")
+            return self.ultrafast_queue.submit(job)
         if job.kind == "realtime" and not self.settings.use_main_model_for_realtime:
             return self.realtime_queue.submit(job)
         return self.main_queue.submit(job)
@@ -1354,10 +1540,12 @@ class InferenceScheduler:
     def streaming_worker(self, kind="realtime"):
         """Return the loaded worker that owns the requested model lane."""
 
+        if kind == "ultrafast":
+            if self.ultrafast_worker is None:
+                raise RuntimeError("The ultrafast realtime inference worker is unavailable")
+            return self.ultrafast_worker
         if kind != "realtime":
-            raise RuntimeError(
-                "Streaming sessions are supported only for the realtime model lane"
-            )
+            raise RuntimeError(f"Unknown streaming model lane: {kind}")
         worker = self.main_worker if self.settings.use_main_model_for_realtime else self.realtime_worker
         if worker is None:
             raise RuntimeError("The realtime inference worker is unavailable")
@@ -1367,20 +1555,26 @@ class InferenceScheduler:
         self.main_queue.cancel_session(session_id)
         if self.realtime_queue is not self.main_queue:
             self.realtime_queue.cancel_session(session_id)
+        if self.ultrafast_queue is not None:
+            self.ultrafast_queue.cancel_session(session_id)
 
     def cancel_request(self, request_id):
         cancelled = self.main_queue.cancel_request(request_id)
         if self.realtime_queue is not self.main_queue:
             cancelled = self.realtime_queue.cancel_request(request_id) or cancelled
+        if self.ultrafast_queue is not None:
+            cancelled = self.ultrafast_queue.cancel_request(request_id) or cancelled
         return cancelled
 
     def snapshot(self):
+        if self.ultrafast_worker is not None:
+            mode = "balanced-main-plus-realtime-plus-ultrafast"
+        elif self.settings.use_main_model_for_realtime:
+            mode = "low-memory-one-model"
+        else:
+            mode = "balanced-main-plus-realtime"
         data = {
-            "mode": (
-                "low-memory-one-model"
-                if self.settings.use_main_model_for_realtime
-                else "balanced-main-plus-realtime"
-            ),
+            "mode": mode,
             "queues": {"main": self.main_queue.snapshot()},
             "workers": {"main": self.main_worker.snapshot()},
         }
@@ -1388,6 +1582,10 @@ class InferenceScheduler:
             data["queues"]["realtime"] = self.realtime_queue.snapshot()
         if self.realtime_worker is not None:
             data["workers"]["realtime"] = self.realtime_worker.snapshot()
+        if self.ultrafast_queue is not None:
+            data["queues"]["ultrafast"] = self.ultrafast_queue.snapshot()
+        if self.ultrafast_worker is not None:
+            data["workers"]["ultrafast"] = self.ultrafast_worker.snapshot()
         return data
 
     def _create_main_engine(self):
@@ -1441,6 +1639,38 @@ class InferenceScheduler:
             ),
         )
 
+    def _create_ultrafast_realtime_engine(self):
+        from RealtimeSTT.transcription_engines import (
+            TranscriptionEngineConfig,
+            create_transcription_engine,
+        )
+
+        return create_transcription_engine(
+            self.settings.ultrafast_realtime_transcription_engine
+            or self.settings.realtime_transcription_engine
+            or self.settings.transcription_engine,
+            TranscriptionEngineConfig(
+                model=self.settings.ultrafast_realtime_model_type,
+                download_root=self.settings.download_root,
+                compute_type=self.settings.compute_type,
+                gpu_device_index=self.settings.gpu_device_index,
+                device=effective_device(self.settings.device),
+                beam_size=self.settings.beam_size_realtime,
+                initial_prompt=self.settings.initial_prompt_realtime,
+                batch_size=self.settings.realtime_batch_size,
+                vad_filter=self.settings.vad_filter,
+                normalize_audio=self.settings.normalize_audio,
+                engine_options=(
+                    self.settings.ultrafast_realtime_transcription_engine_options
+                    if self.settings.ultrafast_realtime_transcription_engine_options is not None
+                    else (
+                        self.settings.realtime_transcription_engine_options
+                        if self.settings.realtime_transcription_engine_options is not None
+                        else self.settings.transcription_engine_options
+                    )
+                ),
+            ),
+        )
 
 class SchedulerTranscriptionExecutor:
     def __init__(self, service, session_id, kind):
@@ -3323,7 +3553,13 @@ class RealtimeSTTService:
             raise RuntimeError(result.error)
 
         current_session.record_executor_result(result)
-        return TranscriptionResult(text=result.text)
+        result_kwargs = {
+            "text": result.text,
+            "metadata": dict(result.metadata or {}),
+        }
+        if result.info is not None:
+            result_kwargs["info"] = result.info
+        return TranscriptionResult(**result_kwargs)
 
     def complete_pending_recorder_transcription(self, result: InferenceResult):
         with self._pending_recorder_lock:
@@ -3684,15 +3920,45 @@ def parse_args(argv=None):
     )
     parser.add_argument("--model", default="small.en")
     parser.add_argument("--realtime-model", default="tiny.en")
+    parser.add_argument(
+        "--ultrafast-realtime-model",
+        "--ultrafast-realtime-model-type",
+        dest="ultrafast_realtime_model_type",
+    )
+    parser.add_argument("--ultrafast-realtime-max-tail-words", type=int, default=5)
     parser.add_argument("--language", default="en")
     parser.add_argument("--engine", "--transcription-engine", dest="transcription_engine", default="faster_whisper")
     parser.add_argument("--realtime-engine", "--realtime-transcription-engine", dest="realtime_transcription_engine")
+    parser.add_argument(
+        "--ultrafast-realtime-engine",
+        "--ultrafast-realtime-transcription-engine",
+        dest="ultrafast_realtime_transcription_engine",
+    )
     parser.add_argument("--engine-options", dest="transcription_engine_options")
     parser.add_argument("--realtime-engine-options", dest="realtime_transcription_engine_options")
+    parser.add_argument(
+        "--ultrafast-realtime-engine-options",
+        dest="ultrafast_realtime_transcription_engine_options",
+    )
     parser.add_argument("--download-root")
     parser.add_argument("--compute-type", default="default")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--gpu-device-index", type=int, default=0)
+    parser.add_argument(
+        "--main-cpu-affinity",
+        type=_cpu_affinity_arg,
+        help="Optional Linux CPU list/ranges for the main Preview/Final worker, e.g. 0-3,8",
+    )
+    parser.add_argument(
+        "--realtime-cpu-affinity",
+        type=_cpu_affinity_arg,
+        help="Optional Linux CPU list/ranges for the accurate realtime worker, e.g. 10",
+    )
+    parser.add_argument(
+        "--ultrafast-realtime-cpu-affinity",
+        type=_cpu_affinity_arg,
+        help="Optional Linux CPU list/ranges for the ultrafast realtime worker, e.g. 12-14",
+    )
     parser.add_argument("--beam-size", type=int)
     parser.add_argument("--beam-size-realtime", type=int)
     parser.add_argument("--batch-size", type=int)
@@ -3774,18 +4040,30 @@ def settings_from_args(args):
         tuning_description=TUNING_PROFILES[tuning_profile]["description"],
         model=args.model,
         realtime_model=args.realtime_model,
+        ultrafast_realtime_model_type=args.ultrafast_realtime_model_type,
+        ultrafast_realtime_max_tail_words=args.ultrafast_realtime_max_tail_words,
         language=args.language,
         transcription_engine=normalize_engine_name(args.transcription_engine),
         realtime_transcription_engine=normalize_engine_name(args.realtime_transcription_engine),
+        ultrafast_realtime_transcription_engine=normalize_engine_name(
+            args.ultrafast_realtime_transcription_engine
+        ),
         transcription_engine_options=parse_json_object(args.transcription_engine_options, "--engine-options"),
         realtime_transcription_engine_options=parse_json_object(
             args.realtime_transcription_engine_options,
             "--realtime-engine-options",
         ),
+        ultrafast_realtime_transcription_engine_options=parse_json_object(
+            args.ultrafast_realtime_transcription_engine_options,
+            "--ultrafast-realtime-engine-options",
+        ),
         download_root=args.download_root,
         compute_type=args.compute_type,
         device=args.device,
         gpu_device_index=args.gpu_device_index,
+        main_cpu_affinity=args.main_cpu_affinity,
+        realtime_cpu_affinity=args.realtime_cpu_affinity,
+        ultrafast_realtime_cpu_affinity=args.ultrafast_realtime_cpu_affinity,
         beam_size=_value_or_default(args, defaults, "beam_size"),
         beam_size_realtime=_value_or_default(args, defaults, "beam_size_realtime"),
         batch_size=_value_or_default(args, defaults, "batch_size"),

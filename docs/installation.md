@@ -25,16 +25,17 @@ request the matching extra.
 
 ## Python Environment
 
-Use Python 3.11 or newer. The current pinned core dependency set includes
-packages whose published wheels require Python 3.11+.
+The current CI matrix covers Python 3.11 and 3.12. The core dependency set
+includes packages whose published wheels require Python 3.11+. Python 3.13 and
+newer are not release targets until dependency and CI gates are available.
 
 Some optional engines have narrower platform targets than the core package:
 
 | Feature | Practical install target |
 | --- | --- |
-| Core RealtimeSTT | Python 3.11 or newer. |
+| Core RealtimeSTT | Python 3.11 and 3.12 in the current CI matrix. |
 | Meta Omnilingual ASR | Linux or WSL2 with Python 3.11.x. Native Windows cannot run the Omnilingual runtime, and Python 3.12.x currently cannot resolve the upstream `omnilingual-asr>=0.2.0` package from PyPI because its metadata excludes normal 3.12 patch releases. |
-| Kroko-ONNX Windows builder | Windows x64 with CPython 3.12.x for `stt-install-kroko --build`. The core package may install on Python 3.11+, but the current Kroko Windows wheel builder does not. |
+| Kroko-ONNX Windows builder | Windows x64 with CPython 3.12.x for `stt-install-kroko --build`. The current core CI matrix covers Python 3.11 and 3.12, but the Kroko Windows wheel builder is narrower than the core range. |
 
 Use a virtual environment when possible:
 

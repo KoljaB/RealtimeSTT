@@ -92,6 +92,21 @@ def build_recorder_init_args(
     silero_onnx_model_path,
     silero_onnx_threads,
     deactivity_silence_confirmation_duration,
+    enable_preview_transcription,
+    preview_model_type,
+    preview_transcription_engine,
+    preview_transcription_engine_options,
+    preview_transcription_tail_seconds,
+    on_preview_transcription_finished,
+    preview_transcription_executor,
+    preview_transcription_min_live_words_for_fuzzy_repair,
+    ultrafast_realtime_model_type,
+    ultrafast_realtime_transcription_engine,
+    ultrafast_realtime_transcription_engine_options,
+    on_ultrafast_transcription_update,
+    on_merged_realtime_transcription_update,
+    on_realtime_transcription_merge_update,
+    ultrafast_realtime_max_tail_words,
 ):
     """
     Returns the legacy constructor argument mapping in signature order.
@@ -197,5 +212,34 @@ def build_recorder_init_args(
         "silero_onnx_threads": silero_onnx_threads,
         "deactivity_silence_confirmation_duration": (
             deactivity_silence_confirmation_duration
+        ),
+        "enable_preview_transcription": enable_preview_transcription,
+        "preview_model_type": preview_model_type,
+        "preview_transcription_engine": preview_transcription_engine,
+        "preview_transcription_engine_options": (
+            preview_transcription_engine_options
+        ),
+        "preview_transcription_tail_seconds": preview_transcription_tail_seconds,
+        "on_preview_transcription_finished": on_preview_transcription_finished,
+        "preview_transcription_executor": preview_transcription_executor,
+        "preview_transcription_min_live_words_for_fuzzy_repair": (
+            preview_transcription_min_live_words_for_fuzzy_repair
+        ),
+        "ultrafast_realtime_model_type": ultrafast_realtime_model_type,
+        "ultrafast_realtime_transcription_engine": (
+            ultrafast_realtime_transcription_engine
+        ),
+        "ultrafast_realtime_transcription_engine_options": (
+            ultrafast_realtime_transcription_engine_options
+        ),
+        "on_ultrafast_transcription_update": on_ultrafast_transcription_update,
+        "on_merged_realtime_transcription_update": (
+            on_merged_realtime_transcription_update
+        ),
+        "on_realtime_transcription_merge_update": (
+            on_realtime_transcription_merge_update
+        ),
+        "ultrafast_realtime_max_tail_words": (
+            ultrafast_realtime_max_tail_words
         ),
     }

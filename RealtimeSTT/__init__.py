@@ -16,6 +16,8 @@ __all__ = [
     "TranscriptionEngineError",
     "TranscriptionInfo",
     "TranscriptionResult",
+    "PreviewTranscriptionResult",
+    "RealtimeTranscriptionMergeResult",
     "UnsupportedTranscriptionEngineError",
 ]
 
@@ -65,6 +67,14 @@ def __getattr__(name):
         from .engines import TranscriptionResult
 
         return TranscriptionResult
+    if name == "PreviewTranscriptionResult":
+        from .core.preview_transcription import PreviewTranscriptionResult
+
+        return PreviewTranscriptionResult
+    if name == "RealtimeTranscriptionMergeResult":
+        from .core.realtime_merge import RealtimeTranscriptionMergeResult
+
+        return RealtimeTranscriptionMergeResult
     if name == "UnsupportedTranscriptionEngineError":
         from .engines import UnsupportedTranscriptionEngineError
 

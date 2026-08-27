@@ -12,9 +12,13 @@ from .recording_buffers import (
     get_next_recorded_audio,
     queue_recorded_audio,
     set_audio_from_frames,
+    set_active_speech_tail_from_frames,
+    snapshot_active_speech_tail_audio,
     snapshot_frames,
+    tail_audio_from_frames,
 )
 from .state import run_callback, set_recorder_state
+from .tail_transcription import clear_pcm16_tail
 from .voice_activity import reset_silero_vad_state
 
 
@@ -38,13 +42,29 @@ def start_recording(recorder, frames=None):
     logger.info("recording started")
     set_recorder_state(recorder, "recording")
     recorder.text_storage = []
+    recorder.realtime_transcription_text = ""
     recorder.realtime_stabilized_text = ""
     recorder.realtime_stabilized_safetext = ""
     recorder._force_current_recording_lowercase_start = False
+    recorder._preview_transcription_submitted = False
+    recorder._pending_vad_live_text = None
     recorder.realtime_observation_sequence = 0
+    recorder.ultrafast_realtime_observation_sequence = 0
     recorder.realtime_recording_id = (
         getattr(recorder, "realtime_recording_id", 0) + 1
     )
+    recorder.ultrafast_realtime_transcription_text = ""
+    recorder.merged_realtime_transcription_text = ""
+    recorder.last_ultrafast_transcription = ""
+    recorder.last_merged_realtime_transcription = ""
+    recorder.last_realtime_transcription_merge_result = None
+    realtime_transcription_merger = getattr(
+        recorder,
+        "realtime_transcription_merger",
+        None,
+    )
+    if realtime_transcription_merger is not None:
+        realtime_transcription_merger.reset(recorder.realtime_recording_id)
     recorder.recording_start_monotonic = time.monotonic()
     recorder.last_preroll_selection = getattr(
         recorder,
@@ -56,6 +76,7 @@ def start_recording(recorder, frames=None):
     recorder.wake_word_detect_time = 0
     with get_frames_lock(recorder):
         recorder.frames = list(frames) if frames else []
+        set_active_speech_tail_from_frames(recorder, recorder.frames)
 
     recorder.recording_start_time = time.time()
     recorder.speech_end_silence_candidate_start = 0
@@ -106,8 +127,22 @@ def stop_recording(
         return recorder
 
     logger.info("recording stopped")
+    stopped_live_text = getattr(recorder, "_pending_vad_live_text", None)
+    if stopped_live_text is None:
+        stopped_live_text = getattr(
+            recorder,
+            "realtime_transcription_text",
+            "",
+        ) or ""
+        if not stopped_live_text:
+            stopped_live_text = getattr(
+                recorder,
+                "realtime_stabilized_text",
+                "",
+            ) or ""
     with get_frames_lock(recorder):
         stopped_frames = copy.deepcopy(recorder.frames)
+        stopped_tail_audio = snapshot_active_speech_tail_audio(recorder)
         recorder.last_frames = copy.deepcopy(stopped_frames)
         recorder.frames = []
         recorder.is_recording = False
@@ -118,7 +153,11 @@ def stop_recording(
         stopped_frames,
         backdate_stop_seconds,
         backdate_resume_seconds,
+        tail_audio=(stopped_tail_audio if stopped_tail_audio.size else None),
+        live_text=stopped_live_text,
     )
+    recorder._pending_vad_live_text = None
+    clear_pcm16_tail(recorder)
     recorder.recording_stop_time = time.time()
     realtime_text_stabilizer = getattr(
         recorder,
@@ -199,6 +238,12 @@ def wait_for_recorded_audio(recorder):
             recorder._current_transcription_force_lowercase_start = (
                 queued_recording.get("force_lowercase_start", False)
             )
+            recorder._current_transcription_live_text = copy.deepcopy(
+                queued_recording.get("live_text", "")
+            )
+            recorder._current_transcription_tail_audio = copy.deepcopy(
+                queued_recording.get("tail_audio")
+            )
             if recorder.is_recording:
                 recorder.stop_recording_event.clear()
         else:
@@ -211,6 +256,11 @@ def wait_for_recorded_audio(recorder):
                 recorder,
                 "_force_current_recording_lowercase_start",
                 False,
+            )
+            recorder._current_transcription_live_text = None
+            recorder._current_transcription_tail_audio = tail_audio_from_frames(
+                recorder,
+                frames,
             )
 
         frames_to_read = set_audio_from_frames(

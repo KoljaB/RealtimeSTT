@@ -11,4 +11,4 @@ numpy<2.0.0
 soundfile==0.13.1
 # RealtimeSTT's default Silero VAD path is CPU ONNX Runtime even when ASR runs on GPU.
 silero-vad[onnx-cpu]>=6.2.1; python_version >= "3.8"
-# torch and torchaudio requirements are in requirements-torch-gpu.txt
+# torch and torchaudio requirements are in requirements-gpu-torch.txt

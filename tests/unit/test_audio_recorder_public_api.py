@@ -183,6 +183,33 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
                 audio_recorder.DEACTIVITY_SILENCE_CONFIRMATION_DURATION,
                 float,
             ),
+            ("enable_preview_transcription", False, bool),
+            ("preview_model_type", None, Optional[str]),
+            ("preview_transcription_engine", None, Optional[str]),
+            ("preview_transcription_engine_options", None, Optional[dict]),
+            ("preview_transcription_tail_seconds", 3.0, float),
+            ("on_preview_transcription_finished", None, empty),
+            ("preview_transcription_executor", None, Optional[Callable]),
+            (
+                "preview_transcription_min_live_words_for_fuzzy_repair",
+                3,
+                int,
+            ),
+            ("ultrafast_realtime_model_type", None, Optional[str]),
+            (
+                "ultrafast_realtime_transcription_engine",
+                None,
+                Optional[str],
+            ),
+            (
+                "ultrafast_realtime_transcription_engine_options",
+                None,
+                Optional[dict],
+            ),
+            ("on_ultrafast_transcription_update", None, empty),
+            ("on_merged_realtime_transcription_update", None, empty),
+            ("on_realtime_transcription_merge_update", None, empty),
+            ("ultrafast_realtime_max_tail_words", 5, int),
         ]
 
         self.assertEqual(list(signature.parameters), [item[0] for item in expected])
@@ -241,6 +268,14 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
         self.assertIs(RealtimeSpeechBoundaryDetector, core_detector)
         self.assertIs(SpeechBoundaryEvent, core_event)
         self.assertIs(SpeechBoundaryResult, core_result)
+
+    def test_package_level_realtime_merge_result_is_exported(self):
+        from RealtimeSTT import RealtimeTranscriptionMergeResult
+        from RealtimeSTT.core.realtime_merge import (
+            RealtimeTranscriptionMergeResult as core_result,
+        )
+
+        self.assertIs(RealtimeTranscriptionMergeResult, core_result)
 
     def test_redundant_private_facade_wrappers_are_not_reintroduced(self):
         audio_recorder = import_audio_recorder(self)

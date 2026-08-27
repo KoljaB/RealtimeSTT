@@ -72,7 +72,8 @@ See the [Kroko-ONNX engine guide](docs/engines/kroko-onnx.md),
 
 ## Install
 
-Use Python 3.11 or newer for the current pinned dependency set.
+The current CI matrix covers Python 3.11 and 3.12. Python 3.13 and newer are
+not release targets until dependency and CI gates are available.
 
 ```bash
 pip install "RealtimeSTT[faster-whisper]"

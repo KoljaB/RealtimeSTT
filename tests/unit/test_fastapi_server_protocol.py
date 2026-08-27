@@ -2,6 +2,7 @@ import json
 import queue
 import threading
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -25,6 +26,8 @@ from example_fastapi_server.server import (
     RealtimeSTTService,
     SegmentState,
     ServerSettings,
+    SharedEngineWorker,
+    set_current_thread_cpu_affinity,
     parse_args,
     settings_from_args,
 )
@@ -176,6 +179,63 @@ class FastAPIServerProtocolTests(unittest.TestCase):
         self.assertEqual(settings.max_global_inference_queue_depth, 17)
         self.assertTrue(settings.use_main_model_for_realtime)
         self.assertFalse(settings.model_warmup)
+
+    def test_optional_cpu_affinity_masks_parse_and_normalize(self):
+        args = parse_args([
+            "--main-cpu-affinity",
+            "0-2,2,6",
+            "--realtime-cpu-affinity",
+            "10",
+            "--ultrafast-realtime-cpu-affinity",
+            "12,14",
+        ])
+
+        settings = settings_from_args(args)
+
+        self.assertEqual(settings.main_cpu_affinity, (0, 1, 2, 6))
+        self.assertEqual(settings.realtime_cpu_affinity, (10,))
+        self.assertEqual(settings.ultrafast_realtime_cpu_affinity, (12, 14))
+
+    def test_worker_applies_affinity_before_native_engine_creation(self):
+        events = []
+
+        def make_engine():
+            events.append(("factory", set_affinity.call_count))
+            return object()
+
+        settings = ServerSettings(
+            model_warmup=False,
+            realtime_cpu_affinity=(4, 6),
+        )
+        realtime_queue = FairInferenceQueue("realtime", settings)
+        realtime_queue.close()
+        worker = SharedEngineWorker(
+            "realtime",
+            settings,
+            realtime_queue,
+            make_engine,
+            lambda result: None,
+        )
+
+        with (
+            mock.patch(
+                "example_fastapi_server.server.os.sched_setaffinity",
+                create=True,
+            ) as set_affinity,
+            mock.patch(
+                "example_fastapi_server.server.threading.get_native_id",
+                return_value=321,
+            ),
+        ):
+            worker._worker()
+
+        set_affinity.assert_called_once_with(321, {4, 6})
+        self.assertEqual(events, [("factory", 1)])
+
+    def test_cpu_affinity_helper_is_noop_without_a_configured_mask(self):
+        with mock.patch("example_fastapi_server.server.os.sched_setaffinity", create=True) as set_affinity:
+            set_current_thread_cpu_affinity("main", None)
+        set_affinity.assert_not_called()
 
     def test_wake_word_settings_parse_from_cli(self):
         args = parse_args([
