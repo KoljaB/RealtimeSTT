@@ -332,6 +332,13 @@ setuptools.setup(
     package_data={
         "RealtimeSTT": ["assets/warmup_audio.wav"],
         "RealtimeSTT_server": ["PRODUCTION_SERVER.md", "README.md", "index.html"],
+        "example_fastapi_server": [
+            "MULTI_USER_IMPLEMENTATION_GUIDE.md",
+            "README.md",
+            "requirements.txt",
+            "run_multi_user_perf.cmd",
+            "static/index.html",
+        ],
     },
     include_package_data=True,
     cmdclass={"build_py": build_py},
