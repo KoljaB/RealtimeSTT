@@ -538,6 +538,41 @@ class ProductionSessionRaceRegressionTests(unittest.TestCase):
         self.assertEqual(job.generation, 7)
         self.assertEqual(job.deadline_at, job.created_at)
 
+    def test_preview_cancel_event_retires_accepted_scheduler_job(self):
+        service = _FinalSubmissionService(outcome="never")
+        cancel_event = threading.Event()
+        errors = []
+
+        def transcribe():
+            try:
+                production._service_turn_transcription(
+                    service,
+                    audio=b"pcm",
+                    language="en",
+                    timeout=1.0,
+                    session_id="preview-session",
+                    generation=8,
+                    cancel_event=cancel_event,
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=transcribe, daemon=True)
+        thread.start()
+        self.assertTrue(service.scheduler.wait_for_job_count(1, timeout=0.5))
+
+        cancel_event.set()
+        thread.join(timeout=0.25)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], production._PreviewAdmissionCancelled)
+        self.assertEqual(
+            service.scheduler.cancelled_requests,
+            [service.scheduler.jobs[0].request_id],
+        )
+        self.assertEqual(service.pending_count(), 0)
+
     def test_cancel_does_not_block_event_loop_on_slow_stream_cancel(self):
         """Native stream cancellation must never run on the ASGI loop."""
 

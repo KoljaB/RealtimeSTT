@@ -70,8 +70,17 @@ class FakeSession:
         self.state_lock = threading.Lock()
         self.entered = threading.Event()
         self.cancelled = threading.Event()
+        self.before_clear = None
+        self.release_clear = None
 
     def run(self, pcm, **options):
+        # The real binding clears its per-session cancellation flag at the
+        # beginning of each run, making a cancelled session reusable.
+        if self.before_clear is not None:
+            self.before_clear.set()
+            if not self.release_clear.wait(0.5):
+                raise AssertionError("native run clear barrier was not released")
+        self.cancelled.clear()
         with self.state_lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -497,6 +506,72 @@ class TranscribeCppEngineTests(unittest.TestCase):
         self.assertEqual(len(errors), 1)
         self.assertIn("transcription failed: aborted", str(errors[0]))
         self.assertEqual(backend.model.close_order, ["session", "model"])
+
+    def test_cancel_active_aborts_only_current_run_and_reuses_session(self):
+        backend = self.make_backend()
+        backend.session.delay = 1.0
+        errors = []
+
+        def run():
+            try:
+                backend.transcribe(np.array([0.0], dtype=np.float32))
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        self.assertTrue(backend.session.entered.wait(0.5))
+
+        self.assertTrue(backend.cancel_active())
+        thread.join(timeout=0.5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIn("transcription failed: aborted", str(errors[0]))
+
+        backend.session.delay = 0.0
+        result = backend.transcribe(np.array([0.25], dtype=np.float32))
+        self.assertEqual(result.text.strip(), "hello")
+        backend.close()
+
+    def test_cancel_active_bridges_session_start_clear_race(self):
+        backend = self.make_backend()
+        backend.session.delay = 1.0
+        backend.session.before_clear = threading.Event()
+        backend.session.release_clear = threading.Event()
+        cancel_event = threading.Event()
+        errors = []
+
+        def run():
+            try:
+                backend.transcribe(
+                    np.array([0.0], dtype=np.float32),
+                    _cancel_event=cancel_event,
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        self.assertTrue(backend.session.before_clear.wait(0.5))
+
+        cancel_event.set()
+        self.assertTrue(backend.cancel_active())
+        self.assertTrue(backend.session.cancelled.wait(0.2))
+        backend.session.release_clear.set()
+        thread.join(timeout=0.5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIn("transcription failed: aborted", str(errors[0]))
+        self.assertGreaterEqual(backend.model.cancel_calls, 2)
+
+        backend.session.before_clear = None
+        backend.session.release_clear = None
+        backend.session.delay = 0.0
+        result = backend.transcribe(np.array([0.25], dtype=np.float32))
+        self.assertEqual(result.text.strip(), "hello")
+        backend.close()
 
     def test_engine_does_not_mutate_process_tuning_environment(self):
         options = {

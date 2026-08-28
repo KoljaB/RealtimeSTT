@@ -232,6 +232,135 @@ class FastAPIServerProtocolTests(unittest.TestCase):
         set_affinity.assert_called_once_with(321, {4, 6})
         self.assertEqual(events, [("factory", 1)])
 
+    def test_worker_cancels_active_job_and_reuses_engine(self):
+        class CancelableEngine:
+            def __init__(self):
+                self.entered = threading.Event()
+                self.cancelled = threading.Event()
+                self.calls = 0
+
+            def transcribe(self, audio, language=None, use_prompt=True):
+                del audio, language, use_prompt
+                self.calls += 1
+                self.cancelled.clear()
+                self.entered.set()
+                if self.calls == 1:
+                    if not self.cancelled.wait(1.0):
+                        raise AssertionError("active inference was not cancelled")
+                    raise RuntimeError("native inference aborted")
+                return TranscriptionResult(text="fresh result")
+
+            def cancel_active(self):
+                self.cancelled.set()
+                return True
+
+        settings = ServerSettings(model_warmup=False)
+        inference_queue = FairInferenceQueue("main", settings)
+        engine = CancelableEngine()
+        results = []
+        result_ready = threading.Event()
+
+        def receive(result):
+            results.append(result)
+            result_ready.set()
+
+        worker = SharedEngineWorker(
+            "main",
+            settings,
+            inference_queue,
+            lambda: engine,
+            receive,
+        )
+        worker.start()
+        try:
+            self.assertTrue(worker.ready.wait(0.5))
+            old = self._job("same", "final", segment_id=1)
+            self.assertTrue(inference_queue.submit(old).accepted)
+            self.assertTrue(engine.entered.wait(0.5))
+
+            self.assertTrue(worker.cancel_request(old.request_id))
+            self.assertTrue(result_ready.wait(0.5))
+            self.assertEqual(results[0].request_id, old.request_id)
+            self.assertEqual(results[0].error, "cancelled")
+            self.assertEqual(results[0].metadata, {"cancelled": True})
+            self.assertEqual(worker.cancelled_jobs, 1)
+            self.assertEqual(worker.failed_jobs, 0)
+
+            result_ready.clear()
+            engine.entered.clear()
+            fresh = self._job("same", "final", segment_id=2)
+            self.assertTrue(inference_queue.submit(fresh).accepted)
+            self.assertTrue(result_ready.wait(0.5))
+            self.assertEqual(results[1].request_id, fresh.request_id)
+            self.assertEqual(results[1].text, "fresh result")
+            self.assertIsNone(results[1].error)
+            self.assertEqual(worker.completed_jobs, 1)
+            self.assertEqual(engine.calls, 2)
+        finally:
+            worker.stop()
+
+    def test_worker_cancel_before_native_start_skips_inference(self):
+        class ObservedEngine:
+            def __init__(self):
+                self.transcribe_calls = 0
+                self.cancel_calls = 0
+
+            def transcribe(self, audio, language=None, use_prompt=True):
+                del audio, language, use_prompt
+                self.transcribe_calls += 1
+                return TranscriptionResult(text="must not run")
+
+            def cancel_active(self):
+                self.cancel_calls += 1
+                return True
+
+        settings = ServerSettings(model_warmup=False)
+        inference_queue = FairInferenceQueue("main", settings)
+        engine = ObservedEngine()
+        results = []
+        result_ready = threading.Event()
+
+        def receive(result):
+            results.append(result)
+            result_ready.set()
+
+        worker = SharedEngineWorker(
+            "main",
+            settings,
+            inference_queue,
+            lambda: engine,
+            receive,
+        )
+        worker.start()
+        self.assertTrue(worker.ready.wait(0.5))
+        worker.engine_lock.acquire()
+        try:
+            job = self._job("same", "final", segment_id=3)
+            self.assertTrue(inference_queue.submit(job).accepted)
+            deadline = time_now_plus(0.5)
+            while time_now_plus(0) < deadline:
+                with worker._active_job_lock:
+                    if worker._active_request_id == job.request_id:
+                        break
+                threading.Event().wait(0.001)
+            else:
+                self.fail("worker did not claim the queued job")
+
+            self.assertTrue(worker.cancel_request(job.request_id))
+        finally:
+            worker.engine_lock.release()
+
+        try:
+            self.assertTrue(result_ready.wait(0.5))
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].request_id, job.request_id)
+            self.assertEqual(results[0].error, "cancelled")
+            self.assertEqual(engine.transcribe_calls, 0)
+            self.assertEqual(engine.cancel_calls, 0)
+            self.assertEqual(worker.cancelled_jobs, 1)
+        finally:
+            worker.stop()
+
     def test_cpu_affinity_helper_is_noop_without_a_configured_mask(self):
         with mock.patch("example_fastapi_server.server.os.sched_setaffinity", create=True) as set_affinity:
             set_current_thread_cpu_affinity("main", None)

@@ -1133,6 +1133,7 @@ class SharedEngineWorker:
         self.started_at = time.monotonic()
         self.completed_jobs = 0
         self.failed_jobs = 0
+        self.cancelled_jobs = 0
         self.queue_delay = RunningStats()
         self.inference_duration = RunningStats()
         self.total_latency = RunningStats()
@@ -1141,6 +1142,11 @@ class SharedEngineWorker:
         # safe to run concurrently, so every ordinary and streaming operation
         # goes through this one lock.
         self.engine_lock = threading.RLock()
+        self._active_job_lock = threading.Lock()
+        self._active_request_id = None
+        self._active_cancel_event = None
+        self._native_request_id = None
+        self._cancel_requested_ids = {}
         self._streaming_sessions = set()
         self._engine_closed = False
 
@@ -1243,11 +1249,81 @@ class SharedEngineWorker:
             "healthy": self.load_error is None,
             "completedJobs": self.completed_jobs,
             "failedJobs": self.failed_jobs,
+            "cancelledJobs": self.cancelled_jobs,
             "busyRatio": min(1.0, self.busy_seconds / elapsed),
             "queueDelay": self.queue_delay.snapshot_ms(),
             "inferenceDuration": self.inference_duration.snapshot_ms(),
             "totalLatency": self.total_latency.snapshot_ms(),
         }
+
+    def cancel_request(self, request_id):
+        """Cancel exactly one claimed native job, including the dequeue race."""
+
+        cancel = None
+        with self._active_job_lock:
+            # Remember the request even when queue.get() has returned but the
+            # worker has not installed its active marker yet. Keep insertion
+            # order so defensive eviction can never discard the active id.
+            if self._active_request_id != request_id:
+                self._cancel_requested_ids[request_id] = True
+                while len(self._cancel_requested_ids) > 1024:
+                    oldest = next(iter(self._cancel_requested_ids))
+                    self._cancel_requested_ids.pop(oldest, None)
+                return False
+            if self._active_cancel_event is not None:
+                self._active_cancel_event.set()
+            if self._native_request_id == request_id:
+                cancel = getattr(self.engine, "cancel_active", None)
+        if not callable(cancel):
+            return True
+        try:
+            cancel()
+        except Exception:
+            LOGGER.debug(
+                "Could not cancel active %s inference request %s",
+                self.name,
+                request_id,
+                exc_info=True,
+            )
+        return True
+
+    def _claim_job(self, request_id):
+        with self._active_job_lock:
+            if self._cancel_requested_ids.pop(request_id, False):
+                return None
+            cancel_event = threading.Event()
+            self._active_request_id = request_id
+            self._active_cancel_event = cancel_event
+            return cancel_event
+
+    def _begin_native_job(self, request_id, cancel_event):
+        with self._active_job_lock:
+            if (
+                self._active_request_id != request_id
+                or self._active_cancel_event is not cancel_event
+                or cancel_event.is_set()
+            ):
+                return False
+            self._native_request_id = request_id
+            return True
+
+    def _end_native_job(self, request_id):
+        with self._active_job_lock:
+            if self._native_request_id == request_id:
+                self._native_request_id = None
+
+    def _release_job(self, request_id):
+        with self._active_job_lock:
+            cancel_event = self._active_cancel_event
+            cancelled = bool(
+                cancel_event is not None and cancel_event.is_set()
+            ) or self._cancel_requested_ids.pop(request_id, False)
+            if self._active_request_id == request_id:
+                self._active_request_id = None
+                self._active_cancel_event = None
+            if self._native_request_id == request_id:
+                self._native_request_id = None
+            return cancelled
 
     def _worker(self):
         try:
@@ -1281,30 +1357,65 @@ class SharedEngineWorker:
             error = None
             info = None
             metadata = {}
+            failure = None
+            cancel_event = self._claim_job(job.request_id)
+            claimed = cancel_event is not None
 
             try:
-                if self.engine is None:
-                    raise RuntimeError(f"{self.name} inference engine is unavailable")
-                with self.engine_lock:
-                    if self.engine is None or self._engine_closed:
-                        raise RuntimeError(
-                            f"{self.name} inference engine is unavailable"
-                        )
-                    result = self.engine.transcribe(
-                        job.audio,
-                        language=job.language if job.language else None,
-                        use_prompt=job.use_prompt,
-                    )
-                text = (getattr(result, "text", "") or "").strip()
-                info = getattr(result, "info", None)
-                provider_metadata = getattr(result, "metadata", None)
-                if isinstance(provider_metadata, dict):
-                    metadata = dict(provider_metadata)
-                self.completed_jobs += 1
+                if claimed:
+                    if self.engine is None:
+                        raise RuntimeError(f"{self.name} inference engine is unavailable")
+                    with self.engine_lock:
+                        if self.engine is None or self._engine_closed:
+                            raise RuntimeError(
+                                f"{self.name} inference engine is unavailable"
+                            )
+                        if self._begin_native_job(job.request_id, cancel_event):
+                            try:
+                                cancellable = getattr(
+                                    self.engine, "transcribe_cancellable", None
+                                )
+                                if callable(cancellable):
+                                    result = cancellable(
+                                        job.audio,
+                                        language=job.language or None,
+                                        use_prompt=job.use_prompt,
+                                        cancel_event=cancel_event,
+                                    )
+                                else:
+                                    result = self.engine.transcribe(
+                                        job.audio,
+                                        language=job.language or None,
+                                        use_prompt=job.use_prompt,
+                                    )
+                            finally:
+                                self._end_native_job(job.request_id)
+                            text = (getattr(result, "text", "") or "").strip()
+                            info = getattr(result, "info", None)
+                            provider_metadata = getattr(result, "metadata", None)
+                            if isinstance(provider_metadata, dict):
+                                metadata = dict(provider_metadata)
             except Exception as exc:
-                self.failed_jobs += 1
                 error = str(exc)
-                LOGGER.exception("Inference job failed: %s", job.request_id)
+                failure = exc
+
+            cancel_requested = not claimed or self._release_job(job.request_id)
+            if cancel_requested:
+                text = ""
+                info = None
+                metadata = {"cancelled": True}
+                error = "cancelled"
+                self.cancelled_jobs += 1
+            elif error is not None:
+                self.failed_jobs += 1
+                LOGGER.error(
+                    "Inference job failed: %s: %s",
+                    job.request_id,
+                    error,
+                    exc_info=(type(failure), failure, failure.__traceback__),
+                )
+            else:
+                self.completed_jobs += 1
 
             completed_at = time.monotonic()
             queue_delay = max(0.0, started_at - job.created_at)
@@ -1559,11 +1670,24 @@ class InferenceScheduler:
             self.ultrafast_queue.cancel_session(session_id)
 
     def cancel_request(self, request_id):
-        cancelled = self.main_queue.cancel_request(request_id)
+        main_queued = self.main_queue.cancel_request(request_id)
+        cancelled = main_queued
+        if not main_queued:
+            cancelled = self.main_worker.cancel_request(request_id) or cancelled
         if self.realtime_queue is not self.main_queue:
-            cancelled = self.realtime_queue.cancel_request(request_id) or cancelled
+            realtime_queued = self.realtime_queue.cancel_request(request_id)
+            cancelled = realtime_queued or cancelled
+            if not realtime_queued and self.realtime_worker is not None:
+                cancelled = (
+                    self.realtime_worker.cancel_request(request_id) or cancelled
+                )
         if self.ultrafast_queue is not None:
-            cancelled = self.ultrafast_queue.cancel_request(request_id) or cancelled
+            ultrafast_queued = self.ultrafast_queue.cancel_request(request_id)
+            cancelled = ultrafast_queued or cancelled
+            if not ultrafast_queued and self.ultrafast_worker is not None:
+                cancelled = (
+                    self.ultrafast_worker.cancel_request(request_id) or cancelled
+                )
         return cancelled
 
     def snapshot(self):

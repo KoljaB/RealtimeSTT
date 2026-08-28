@@ -123,6 +123,8 @@ class TranscribeCppBackend:
         self.engine_options = dict(config.engine_options or {})
         self._lock = threading.Lock()
         self._close_lock = threading.Lock()
+        self._run_state_lock = threading.Lock()
+        self._active_run_finished = None
         self._closed = False
         self._resources_closed = False
 
@@ -341,6 +343,7 @@ class TranscribeCppBackend:
     def transcribe(self, audio, language=None, word_timestamps=False, **options):
         """Runs one serialized inference against the resident native session."""
 
+        cancel_event = options.pop("_cancel_event", None)
         pcm, pcm_view = self._prepare_pcm(audio)
         run_options = dict(self.run_options)
         run_options.update(options)
@@ -354,7 +357,26 @@ class TranscribeCppBackend:
                     raise TranscriptionEngineError(
                         "The 'transcribe_cpp' engine is closed."
                     )
-                result = self.session.run(pcm_view, **run_options)
+                if cancel_event is not None and cancel_event.is_set():
+                    raise TranscriptionEngineError(
+                        "transcribe-cpp transcription was cancelled before start"
+                    )
+                run_finished = threading.Event()
+                with self._run_state_lock:
+                    self._active_run_finished = run_finished
+                try:
+                    # Cancellation may have arrived after the first check but
+                    # before this run became visible to cancel_active().
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise TranscriptionEngineError(
+                            "transcribe-cpp transcription was cancelled before start"
+                        )
+                    result = self.session.run(pcm_view, **run_options)
+                finally:
+                    with self._run_state_lock:
+                        if self._active_run_finished is run_finished:
+                            self._active_run_finished = None
+                    run_finished.set()
             return result
         except TranscriptionEngineError:
             raise
@@ -365,6 +387,47 @@ class TranscribeCppBackend:
         finally:
             # Keep the NumPy owner alive until the native call has returned.
             del pcm
+
+    def cancel_active(self):
+        """Cooperatively abort the current native run without closing the session.
+
+        Do not take ``_lock`` here: the run that needs interrupting owns it
+        until native inference returns.
+        """
+
+        with self._close_lock:
+            if self._closed:
+                return False
+            with self._run_state_lock:
+                run_finished = self._active_run_finished
+            if run_finished is None or run_finished.is_set():
+                return False
+            session = getattr(self, "session", None)
+            cancel = getattr(session, "cancel", None)
+            if not callable(cancel):
+                return False
+            cancel()
+
+            def repeat_until_run_observes_cancel():
+                # Session.run() clears its per-session flag on entry. A
+                # second pulse after that clear closes the start race while
+                # this exact run's Event prevents poisoning the next run.
+                while not run_finished.wait(0.001):
+                    try:
+                        cancel()
+                    except Exception:
+                        logging.debug(
+                            "Could not repeat transcribe-cpp cancellation.",
+                            exc_info=True,
+                        )
+                        return
+
+            threading.Thread(
+                target=repeat_until_run_observes_cancel,
+                name="RealtimeSTT-transcribe-cpp-cancel",
+                daemon=True,
+            ).start()
+            return True
 
     def close(self):
         """Releases the native session before its owning model."""
@@ -514,6 +577,33 @@ class TranscribeCppEngine(BaseTranscriptionEngine):
             ),
             metadata=metadata,
         )
+
+    def transcribe_cancellable(
+        self,
+        audio,
+        language=None,
+        use_prompt=True,
+        word_timestamps=False,
+        *,
+        cancel_event,
+        **options,
+    ):
+        """Transcribe while forwarding one request's cancellation token."""
+
+        options["_cancel_event"] = cancel_event
+        return self.transcribe(
+            audio,
+            language=language,
+            use_prompt=use_prompt,
+            word_timestamps=word_timestamps,
+            **options,
+        )
+
+    def cancel_active(self):
+        """Abort only the backend run currently using this engine."""
+
+        cancel = getattr(self.backend, "cancel_active", None)
+        return bool(callable(cancel) and cancel())
 
     def close(self):
         close = getattr(self.backend, "close", None)
