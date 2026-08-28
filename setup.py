@@ -6,7 +6,7 @@ import setuptools
 from setuptools.command.build_py import build_py as _build_py
 
 
-current_version = "1.1.0"
+current_version = "1.1.1"
 
 
 INSTALL_GUIDE = """

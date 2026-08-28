@@ -1,5 +1,33 @@
 # Release Notes
 
+## 1.1.1 - 2026-08-28
+
+This patch release fixes stale Preview ASR work delaying newer full-turn
+snapshots. See [the release-readiness checklist](docs/release-1.1.1-readiness.md)
+for the required evidence gates and supported platform boundaries.
+
+### Fixed
+
+- Superseded `transcribe.cpp` Preview inference can now be cancelled while the
+  native decode is active without closing or reloading the resident model.
+- Request cancellation now reaches an active shared-engine job and covers the
+  dequeue, model-lock, and native-start races without cancelling a later job.
+- Production Preview admission now retires an accepted scheduler request as
+  soon as its snapshot is superseded, and stale completion loses the race.
+
+### Changed
+
+- Shared-engine metrics report cancelled jobs separately from failed jobs.
+- Engines may expose request-scoped cancellable transcription while existing
+  transcription engines retain their previous behavior.
+
+### Release boundaries
+
+- The Miep-side 64 ms continuation hysteresis is maintained in Miep and is not
+  part of the RealtimeSTT distribution.
+- The documented Nemotron-live/Parakeet-final profile remains a Linux x86-64
+  production target.
+
 ## 1.1.0 - 2026-08-27
 
 This stable release promotes the externally validated `1.1.0rc1` candidate.
