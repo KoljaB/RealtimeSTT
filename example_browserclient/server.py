@@ -3,6 +3,7 @@ if __name__ == '__main__':
     from RealtimeSTT import AudioToTextRecorder
     import asyncio
     import websockets
+    import ssl
     import threading
     import numpy as np
     from scipy.signal import resample
@@ -94,6 +95,11 @@ if __name__ == '__main__':
             print(f"Error in resampling: {e}")
             return audio_data
 
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_cert = "/etc/nginx/ssl/rtstt.test.pem"
+    ssl_key = "/etc/nginx/ssl/rtstt.test.key"
+    ssl_context.load_cert_chain(ssl_cert, keyfile=ssl_key)
+
     async def echo(websocket):
         global client_websocket
         print("Client connected")
@@ -135,7 +141,8 @@ if __name__ == '__main__':
         recorder_ready.wait()
 
         print("Server started. Press Ctrl+C to stop the server.")
-        async with websockets.serve(echo, "localhost", 9001):
+        async with websockets.serve(echo, "localhost", 8001), \
+                websockets.serve(echo, "0.0.0.0", 8002, ssl=ssl_context):
             try:
                 await asyncio.Future()  # run forever
             except asyncio.CancelledError:
