@@ -35,7 +35,7 @@ This directory contains the server and client implementations for the RealtimeST
 Use Python 3.11 or 3.12. Install the stable server package with:
 
 ```bash
-python -m pip install "RealtimeSTT[server]==1.1.1"
+python -m pip install "RealtimeSTT[server]==1.1.2"
 ```
 
 ## Server Usage

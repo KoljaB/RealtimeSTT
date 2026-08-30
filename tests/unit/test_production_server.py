@@ -17,7 +17,7 @@ class ProductionServerSettingsTests(unittest.TestCase):
         settings = production.ProductionServerSettings()
 
         self.assertEqual(settings.host, "127.0.0.1")
-        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.1.1")
+        self.assertEqual(production._PACKAGE_VERSION_FALLBACK, "1.1.2")
         capabilities = production.capabilities_for(settings)
         self.assertEqual(capabilities["apiVersion"], "v1")
         self.assertEqual(capabilities["protocolVersion"], "realtimestt.remote.v1")
@@ -69,6 +69,19 @@ class ProductionServerSettingsTests(unittest.TestCase):
         )
         self.assertEqual(capabilities["previewInputCoverage"], "full_turn")
         self.assertEqual(capabilities["models"]["preview"]["inputCoverage"], "full_turn")
+        self.assertEqual(
+            capabilities["preview"],
+            {
+                "inputCoverage": "full_turn",
+                "earlyRms": {
+                    "supported": True,
+                    "requestMode": "early_rms",
+                    "firstAttemptSilenceMs": 25.0,
+                    "maxAttempts": 1,
+                    "emptyRetry": False,
+                },
+            },
+        )
         self.assertNotIn("tailSeconds", capabilities["models"]["preview"])
         self.assertNotIn("previewTailSeconds", capabilities)
         self.assertNotIn("previewTailSeconds", capabilities["limits"])

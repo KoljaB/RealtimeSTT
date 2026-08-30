@@ -123,7 +123,8 @@ class InstallSherpaModelsTests(unittest.TestCase):
 
         def opener(request, timeout=None):
             range_header = request.get_header("Range")
-            calls.append((range_header, timeout))
+            user_agent = request.get_header("User-agent")
+            calls.append((range_header, user_agent, timeout))
             if range_header is None:
                 return _Response(archive[:split], fail_after=split)
             self.assertEqual("bytes=%d-" % split, range_header)
@@ -142,6 +143,10 @@ class InstallSherpaModelsTests(unittest.TestCase):
         destination = installer.install_model(manifest, self.root, urlopen_fn=opener)
         self.assertTrue((destination / "tokens.txt").is_file())
         self.assertEqual(2, len(calls))
+        self.assertEqual(
+            {"RealtimeSTT/1.1.2 sherpa-model-installer"},
+            {call[1] for call in calls},
+        )
         self.assertEqual("bytes=%d-" % split, calls[1][0])
         self.assertFalse(partial.exists())
         self.assertTrue(

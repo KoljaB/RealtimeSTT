@@ -119,9 +119,13 @@ At Preview request time, the complete buffered turn is transcribed immediately.
 After a correlated Resume, the complete retained logical turn is transcribed
 again; the candidate boundary fences request ownership but does not truncate
 the model input. Accurate live text is diagnostic context only; it neither
-shortens the Preview input nor replaces the Preview model result. If the first
-Preview transcription is empty, the
-server appends 500 ms of zero PCM and retries exactly once. A still-empty retry
+shortens the Preview input nor replaces the Preview model result. If an
+authoritative Preview transcription is empty, the server appends 500 ms of zero
+PCM and retries exactly once. Missing, unknown, and malformed `previewMode`
+values are authoritative. The exact advisory `previewMode = "early_rms"` adds a
+25 ms zero-PCM decoder flush to its first and only attempt, skips that second
+decode, and publishes a still-empty result immediately; endpoint and
+failure-recovery requests remain authoritative. A still-empty authoritative retry
 publishes `status = "empty"`; a model failure publishes `status = "error"`.
 Neither path substitutes `liveText` as Preview text. Preview never waits for
 either live worker and never uses `mergedText` or `ultrafastSuffix` as its
@@ -153,7 +157,9 @@ short `/v1/...` aliases:
 * `GET /api/v1/ready` returns `503` until shared model workers are ready and
   healthy.
 * `GET /api/v1/capabilities` reports final/live providers and models, active
-  languages, PCM format/sample rates, limits, and operations.
+  languages, PCM format/sample rates, limits, and operations. The
+  `preview.earlyRms` contract advertises the exact advisory request mode,
+  first-attempt decoder-flush silence, attempt limit, and empty-retry policy.
 
 `GET /health` remains available for HTTP ASR probes and includes the familiar
 `engine`, `model`, `device`, `provider`, `compute_type`, `ready`, and warmup

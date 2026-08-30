@@ -73,14 +73,20 @@ class ProductionPreviewTests(unittest.TestCase):
         )
 
     @staticmethod
-    async def _preview_event(protocol, manager, request_id="request"):
-        response = await protocol.preview(
-            {
-                "type": "preview",
-                "turnId": "turn",
-                "previewRequestId": request_id,
-            }
-        )
+    async def _preview_event(
+        protocol,
+        manager,
+        request_id="request",
+        preview_mode=None,
+    ):
+        payload = {
+            "type": "preview",
+            "turnId": "turn",
+            "previewRequestId": request_id,
+        }
+        if preview_mode is not None:
+            payload["previewMode"] = preview_mode
+        response = await protocol.preview(payload)
         assert response is not None
         if not await asyncio.to_thread(manager.published.wait, 1.0):
             raise AssertionError("Preview result was not published")
@@ -181,6 +187,104 @@ class ProductionPreviewTests(unittest.TestCase):
             [attempt["inputSeconds"] for attempt in timing["asrAttempts"]],
             [2.0, 2.5],
         )
+
+    def test_early_rms_empty_preview_uses_one_25ms_flush_attempt(self):
+        service = _PreviewService(text="")
+        pcm = b"\x01\x00" * (production.SERVER_SAMPLE_RATE * 2)
+        protocol, service, manager = self._protocol(pcm=pcm, service=service)
+
+        response, event = asyncio.run(
+            self._preview_event(
+                protocol,
+                manager,
+                preview_mode="early_rms",
+            )
+        )
+
+        self.assertEqual(len(service.calls), 1)
+        first_audio = service.calls[0][0]
+        expected_source_samples = production.SERVER_SAMPLE_RATE * 2
+        expected_flush_samples = production.SERVER_SAMPLE_RATE // 40
+        self.assertEqual(
+            first_audio.size,
+            expected_source_samples + expected_flush_samples,
+        )
+        self.assertTrue((first_audio[:expected_source_samples] != 0.0).all())
+        self.assertTrue((first_audio[expected_source_samples:] == 0.0).all())
+        self.assertEqual(response["previewMode"], "early_rms")
+        self.assertEqual(event["previewMode"], "early_rms")
+        self.assertEqual(event["status"], "empty")
+        timing = event["previewTiming"]
+        self.assertEqual(timing["asrAttemptCount"], 1)
+        self.assertFalse(timing["emptyRetryAttempted"])
+        self.assertEqual(timing["emptyRetrySilenceMs"], 0.0)
+        self.assertEqual(timing["emptyRetrySuppressedReason"], "early_rms")
+        self.assertEqual(timing["firstAttemptSilenceMs"], 25.0)
+        self.assertEqual(timing["asrAttempts"][0]["addedSilenceMs"], 25.0)
+        self.assertAlmostEqual(timing["asrAttempts"][0]["inputSeconds"], 2.025)
+
+    def test_early_rms_nonempty_preview_publishes_one_padded_result(self):
+        service = _PreviewService(text="kept preview")
+        pcm = b"\x01\x00" * production.SERVER_SAMPLE_RATE
+        protocol, service, manager = self._protocol(pcm=pcm, service=service)
+
+        response, event = asyncio.run(
+            self._preview_event(
+                protocol,
+                manager,
+                preview_mode="early_rms",
+            )
+        )
+
+        self.assertEqual(len(service.calls), 1)
+        self.assertEqual(
+            service.calls[0][0].size,
+            production.SERVER_SAMPLE_RATE + production.SERVER_SAMPLE_RATE // 40,
+        )
+        self.assertEqual(response["type"], "previewing")
+        self.assertEqual(event["status"], "full_buffer")
+        self.assertEqual(event["text"], "kept preview")
+        timing = event["previewTiming"]
+        self.assertEqual(timing["asrAttemptCount"], 1)
+        self.assertEqual(timing["firstAttemptSilenceMs"], 25.0)
+        self.assertEqual(timing["asrAttempts"][0]["addedSilenceMs"], 25.0)
+
+    def test_explicit_authoritative_and_unknown_modes_keep_empty_retry(self):
+        for preview_mode in (
+            "authoritative",
+            "unexpected",
+            True,
+            {"mode": "early_rms"},
+        ):
+            with self.subTest(preview_mode=preview_mode):
+                service = _PreviewService(text="")
+                pcm = b"\x01\x00" * production.SERVER_SAMPLE_RATE
+                protocol, service, manager = self._protocol(
+                    pcm=pcm,
+                    service=service,
+                )
+
+                response, event = asyncio.run(
+                    self._preview_event(
+                        protocol,
+                        manager,
+                        preview_mode=preview_mode,
+                    )
+                )
+
+                self.assertEqual(len(service.calls), 2)
+                self.assertEqual(
+                    service.calls[0][0].size,
+                    production.SERVER_SAMPLE_RATE,
+                )
+                self.assertEqual(response["previewMode"], "authoritative")
+                self.assertEqual(event["previewMode"], "authoritative")
+                timing = event["previewTiming"]
+                self.assertEqual(timing["asrAttemptCount"], 2)
+                self.assertTrue(timing["emptyRetryAttempted"])
+                self.assertIsNone(timing["emptyRetrySuppressedReason"])
+                self.assertEqual(timing["firstAttemptSilenceMs"], 0.0)
+                self.assertEqual(timing["asrAttempts"][0]["addedSilenceMs"], 0.0)
 
     def test_empty_preview_at_four_seconds_retries_once_with_500ms_silence(self):
         service = _PreviewService(text="")
@@ -584,6 +688,7 @@ class ProductionPreviewTests(unittest.TestCase):
             "",
             None,
             0,
+            "authoritative",
             1,
             turn.preview_cancelled,
         )
@@ -633,7 +738,7 @@ class ProductionPreviewTests(unittest.TestCase):
 
     def test_preview_dispatcher_start_window_keeps_single_owner(self):
         protocol, _service, _manager = self._protocol(pcm=b"")
-        work = (None,) * 21
+        work = (None,) * 22
         begin_first_call = threading.Event()
         first_start_entered = threading.Event()
         release_first_start = threading.Event()

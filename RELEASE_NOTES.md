@@ -1,5 +1,32 @@
 # Release Notes
 
+## 1.1.2 - 2026-08-30
+
+This patch release reduces advisory early-RMS Preview latency while preserving
+the authoritative transcription retry and full-turn accuracy contract. See
+[the release-readiness checklist](docs/release-1.1.2-readiness.md) for the
+required build, deployment, attestation, and publication evidence.
+
+### Added
+
+- Production capabilities now advertise the exact `preview.earlyRms` contract:
+  request mode, 25 ms first-attempt decoder flush, one-attempt limit, and no
+  advisory empty-result retry.
+
+### Changed
+
+- The exact advisory `previewMode = "early_rms"` appends 25 ms of zero PCM to
+  its first and only decode and publishes an empty result immediately.
+- Authoritative, missing, unknown, and malformed Preview modes retain the
+  existing conditional 500 ms empty-result retry unchanged.
+
+### Release boundaries
+
+- Miep decides when an early browser RMS pause is advisory; RealtimeSTT does
+  not change endpoint detection, transcript authority, or response text.
+- LLM admission-proxy cancellation is a separate deployment component and is
+  not part of this Python distribution.
+
 ## 1.1.1 - 2026-08-28
 
 This patch release fixes stale Preview ASR work delaying newer full-turn

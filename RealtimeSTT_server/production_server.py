@@ -48,7 +48,7 @@ LOGGER = logging.getLogger("realtimestt.production_server")
 API_VERSION = "v1"
 PROTOCOL_VERSION = "realtimestt.remote.v1"
 SERVER_NAME = "RealtimeSTT production server"
-_PACKAGE_VERSION_FALLBACK = "1.1.1"
+_PACKAGE_VERSION_FALLBACK = "1.1.2"
 
 
 def _package_version() -> str:
@@ -66,6 +66,7 @@ SERVER_SAMPLE_RATE = 16000
 PCM_FORMAT = "pcm_s16le"
 PREVIEW_TAIL_SECONDS = 5.0
 PREVIEW_EMPTY_RETRY_SILENCE_SECONDS = 0.5
+PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS = 0.025
 LATE_FINAL_OPERATION = "late_full_turn_correction"
 RESUME_ACK_TYPE = "resume_ack"
 _LIVE_CANCEL = object()
@@ -513,6 +514,18 @@ def capabilities_for(settings: ProductionServerSettings) -> Dict[str, Any]:
             "live": live_contract,
             # realtime is retained as a descriptive alias for live/partial.
             "realtime": dict(live_contract),
+        },
+        "preview": {
+            "inputCoverage": "full_turn",
+            "earlyRms": {
+                "supported": True,
+                "requestMode": "early_rms",
+                "firstAttemptSilenceMs": (
+                    PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS * 1000.0
+                ),
+                "maxAttempts": 1,
+                "emptyRetry": False,
+            },
         },
         "resume": {
             "command": "resume",
@@ -2913,6 +2926,7 @@ class ProductionSessionProtocol:
         candidate_base_text: str,
         resume_request_id: Optional[str],
         resume_epoch: int,
+        preview_mode: str,
         preview_epoch: int,
         cancelled: threading.Event,
     ) -> None:
@@ -2936,6 +2950,7 @@ class ProductionSessionProtocol:
             candidate_base_text,
             resume_request_id,
             resume_epoch,
+            preview_mode,
             preview_epoch,
             cancelled,
         )
@@ -3024,6 +3039,7 @@ class ProductionSessionProtocol:
         candidate_base_text: str,
         resume_request_id: Optional[str],
         resume_epoch: int,
+        preview_mode: str,
         preview_epoch: int,
         cancelled: threading.Event,
         _release_thread: bool = True,
@@ -3043,6 +3059,7 @@ class ProductionSessionProtocol:
             empty_retry_attempted = False
             empty_retry_recovered = False
             empty_retry_error = None
+            empty_retry_suppressed_reason = None
             matched = False
             used_fuzzy_match = False
             anchor_length = 0
@@ -3238,16 +3255,37 @@ class ProductionSessionProtocol:
                         cancelled,
                     ):
                         return
+                    first_attempt_audio = audio
+                    first_attempt_silence_ms = 0.0
+                    if preview_mode == "early_rms":
+                        first_attempt_silence_samples = int(
+                            round(
+                                PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS
+                                * SERVER_SAMPLE_RATE
+                            )
+                        )
+                        first_attempt_audio = np.concatenate(
+                            (
+                                audio,
+                                np.zeros(
+                                    first_attempt_silence_samples,
+                                    dtype=np.float32,
+                                ),
+                            )
+                        )
+                        first_attempt_silence_ms = (
+                            PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS * 1000.0
+                        )
                     tail_text, first_attempt, first_error = run_asr_attempt(
-                        audio,
+                        first_attempt_audio,
                         attempt_index=1,
-                        added_silence_ms=0.0,
+                        added_silence_ms=first_attempt_silence_ms,
                     )
                     asr_attempts.append(first_attempt)
                     if first_error:
                         raise RuntimeError(str(first_error))
 
-                    if not tail_text:
+                    if not tail_text and preview_mode != "early_rms":
                         # The native transducer can occasionally return zero
                         # tokens when a snapshot ends directly on its final
                         # acoustic frame. Give every empty result exactly one
@@ -3300,6 +3338,13 @@ class ProductionSessionProtocol:
                             else:
                                 tail_text = retry_text
                                 empty_retry_recovered = bool(tail_text)
+                    elif not tail_text:
+                        # An eager browser RMS probe is advisory and can be
+                        # superseded within milliseconds. Do not spend a
+                        # second native decode plus 500 ms suffix on an empty
+                        # result; authoritative and legacy Preview requests
+                        # retain the quality-preserving retry above.
+                        empty_retry_suppressed_reason = "early_rms"
 
                     queue_values = [
                         float(attempt["queueMs"])
@@ -3403,6 +3448,7 @@ class ProductionSessionProtocol:
                 "type": "preview",
                 "turnId": turn_id,
                 "previewRequestId": request_id,
+                "previewMode": preview_mode,
                 "text": cumulative_text,
                 "cumulativeText": cumulative_text,
                 "liveText": cumulative_live_text,
@@ -3483,6 +3529,12 @@ class ProductionSessionProtocol:
                         else 0.0
                     ),
                     "emptyRetryError": empty_retry_error,
+                    "emptyRetrySuppressedReason": empty_retry_suppressed_reason,
+                    "firstAttemptSilenceMs": (
+                        PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS * 1000.0
+                        if preview_mode == "early_rms"
+                        else 0.0
+                    ),
                     "requestToPublishMs": round(
                         max(0.0, publish_ready_at - requested_at) * 1000.0,
                         3,
@@ -3685,6 +3737,11 @@ class ProductionSessionProtocol:
                         "invalid_preview_request",
                         "previewRequestId must be a non-empty string of at most 128 characters",
                     )
+            preview_mode = (
+                "early_rms"
+                if payload.get("previewMode") == "early_rms"
+                else "authoritative"
+            )
             audio_revision = turn.audio_revision
             audio_frames = turn.audio_frames
             turn.preview_requested = True
@@ -3737,6 +3794,7 @@ class ProductionSessionProtocol:
                 candidate_base_text,
                 resume_request_id,
                 resume_epoch,
+                preview_mode,
                 preview_epoch,
                 cancelled,
             )
@@ -3747,6 +3805,7 @@ class ProductionSessionProtocol:
             "sessionId": self.session_id,
             "turnId": turn_id,
             "previewRequestId": request_id,
+            "previewMode": preview_mode,
             "audioPackets": packet_count,
             "audioDurationSeconds": round(audio_seconds, 6),
         }
@@ -3825,6 +3884,7 @@ class ProductionSessionProtocol:
                     candidate_base_text,
                     resume_request_id,
                     resume_epoch,
+                    "authoritative",
                     preview_epoch,
                     preview_cancelled,
                 )
