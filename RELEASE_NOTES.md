@@ -15,6 +15,9 @@ required build, deployment, attestation, and publication evidence.
 
 ### Changed
 
+- Signed source/wheel/sdist parity now canonicalizes CRLF/LF line endings for
+  shipped HTML and command files; the release privacy scan inspects those text
+  assets too.
 - The exact advisory `previewMode = "early_rms"` appends 25 ms of zero PCM to
   its first and only decode and publishes an empty result immediately.
 - Authoritative, missing, unknown, and malformed Preview modes retain the

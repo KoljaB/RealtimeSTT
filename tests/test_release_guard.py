@@ -25,6 +25,16 @@ SPEC.loader.exec_module(release_guard)
 
 
 class ReleaseGuardTests(unittest.TestCase):
+    def test_canonical_text_normalizes_shipped_html_and_command_files(self) -> None:
+        lf = b"first\nsecond\n"
+        crlf = b"first\r\nsecond\r\n"
+        for suffix in (".html", ".cmd"):
+            relative = release_guard.PurePosixPath("asset" + suffix)
+            self.assertEqual(
+                release_guard._content_hash(lf, relative, canonical_text=True),
+                release_guard._content_hash(crlf, relative, canonical_text=True),
+            )
+
     @staticmethod
     def _git(repo: Path, *args: str) -> None:
         result = subprocess.run(

@@ -106,8 +106,9 @@ jobs:
           )
           forbidden_source_suffixes = (".log", ".jsonl", ".pem", ".key")
           text_suffixes = {
-              ".bat", ".cfg", ".csv", ".in", ".ini", ".json", ".md", ".py",
-              ".rst", ".sh", ".toml", ".txt", ".yaml", ".yml",
+              ".bat", ".cfg", ".cmd", ".csv", ".html", ".in", ".ini",
+              ".json", ".md", ".py", ".rst", ".sh", ".toml", ".txt",
+              ".yaml", ".yml",
           }
           private_markers = (
               "d:\\projekte\\",

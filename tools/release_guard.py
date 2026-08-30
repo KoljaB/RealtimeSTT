@@ -28,6 +28,8 @@ SIGNATURE_NAMESPACE = "codex-release-guard"
 IGNORED_SUFFIXES = {".pyc", ".pyo"}
 TEXT_SUFFIXES = {
     ".cfg",
+    ".cmd",
+    ".html",
     ".ini",
     ".json",
     ".md",
