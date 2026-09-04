@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RealtimeSTT Test Application</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 1.3rem;
+        }
+
+        .controls {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .mic-container {
+            margin: 20px 0;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin: 15px 0;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-primary { background: linear-gradient(45deg, #007bff, #0056b3); color: white; }
+        .btn-secondary { background: linear-gradient(45deg, #6c757d, #495057); color: white; }
+        .btn-success { background: linear-gradient(45deg, #28a745, #1e7e34); color: white; }
+        .btn-danger { background: linear-gradient(45deg, #dc3545, #c82333); color: white; }
+        .btn-warning { background: linear-gradient(45deg, #ffc107, #e0a800); color: black; }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .status-connected { background: #28a745; }
+        .status-disconnected { background: #dc3545; }
+        .status-listening { background: #007bff; }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+
+        .config-section {
+            margin: 20px 0;
+        }
+
+        .config-row {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            gap: 10px;
+        }
+
+        .config-row label {
+            min-width: 120px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        .config-row input, .config-row select {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .transcript-area {
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 150px;
+            background: #f8f9fa;
+            margin: 15px 0;
+        }
+
+        .realtime-text {
+            color: #666;
+            font-style: italic;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: rgba(0, 123, 255, 0.1);
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+            min-height: 20px;
+        }
+
+        .final-text {
+            color: #333;
+        }
+
+        .final-text p {
+            margin: 8px 0;
+            padding: 10px;
+            background: rgba(40, 167, 69, 0.1);
+            border-radius: 5px;
+            border-left: 4px solid #28a745;
+        }
+
+        .log-area {
+            background: #1e1e1e;
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 15px 0;
+        }
+
+        .info-item {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+
+        .info-item strong {
+            display: block;
+            color: #495057;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-family: monospace;
+            color: #007bff;
+            word-break: break-all;
+        }
+
+        .full-width {
+            grid-column: 1 / -1;
+        }
+
+        .clear-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 11px;
+            margin-bottom: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .config-row {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .config-row label {
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 RealtimeSTT Test Suite</h1>
+            <p>Comprehensive testing interface for the RealtimeSTT JavaScript library</p>
+        </div>
+
+        <div class="grid">
+            <!-- Connection & Control Panel -->
+            <div class="card">
+                <h2>🔌 Connection Control</h2>
+                
+                <div class="controls">
+                    <div class="mic-container" id="mic-container"></div>
+                    
+                    <div class="button-group">
+                        <button class="btn btn-primary" id="connect-btn">Connect</button>
+                        <button class="btn btn-secondary" id="disconnect-btn">Disconnect</button>
+                    </div>
+                    
+                    <div class="button-group">
+                        <button class="btn btn-success" id="start-btn">Start Listening</button>
+                        <button class="btn btn-danger" id="stop-btn">Stop Listening</button>
+                        <button class="btn btn-warning" id="toggle-btn">Toggle</button>
+                    </div>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-item">
+                        <strong>Connection Status:</strong>
+                        <div class="info-value">
+                            <span class="status-indicator status-disconnected" id="status-indicator"></span>
+                            <span id="connection-status">Disconnected</span>
+                        </div>
+                    </div>
+                    <div class="info-item">
+                        <strong>Session ID:</strong>
+                        <div class="info-value" id="session-id">None</div>
+                    </div>
+                    <div class="info-item">
+                        <strong>Listening State:</strong>
+                        <div class="info-value" id="listening-state">Stopped</div>
+                    </div>
+                    <div class="info-item">
+                        <strong>Recording State:</strong>
+                        <div class="info-value" id="recording-state">Stopped</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration Panel -->
+            <div class="card">
+                <h2>⚙️ Configuration</h2>
+                
+                <div class="config-section">
+                    <div class="config-row">
+                        <label>Control URL:</label>
+                        <input type="text" id="control-url" value="ws://localhost:8011">
+                    </div>
+                    <div class="config-row">
+                        <label>Data URL:</label>
+                        <input type="text" id="data-url" value="ws://localhost:8012">
+                    </div>
+                    <div class="config-row">
+                        <label>Language:</label>
+                        <select id="language">
+                            <option value="en">English</option>
+                            <option value="es">Spanish</option>
+                            <option value="fr">French</option>
+                            <option value="de">German</option>
+                            <option value="it">Italian</option>
+                            <option value="ja">Japanese</option>
+                            <option value="ko">Korean</option>
+                            <option value="zh">Chinese</option>
+                        </select>
+                    </div>
+                    <div class="config-row">
+                        <label>Debug Mode:</label>
+                        <input type="checkbox" id="debug-mode" checked>
+                    </div>
+                    <div class="config-row">
+                        <label>Auto Connect:</label>
+                        <input type="checkbox" id="auto-connect">
+                    </div>
+                    <div class="config-row">
+                        <label>Icon Size:</label>
+                        <input type="range" id="icon-size" min="16" max="64" value="32">
+                        <span id="icon-size-value">32px</span>
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary" id="apply-config" style="width: 100%;">Apply Configuration</button>
+            </div>
+        </div>
+
+        <!-- Transcript Panel -->
+        <div class="card full-width">
+            <h2>📝 Speech Transcript</h2>
+            <button class="clear-btn" id="clear-transcript">Clear Transcript</button>
+            
+            <div class="transcript-area">
+                <div class="realtime-text" id="realtime-text">Real-time text will appear here as you speak...</div>
+                <div class="final-text" id="final-text"></div>
+            </div>
+        </div>
+
+        <!-- Advanced Features Panel -->
+        <div class="card full-width">
+            <h2>🔧 Advanced Features</h2>
+            
+            <div class="button-group">
+                <button class="btn btn-primary" id="get-state-btn">Get State</button>
+                <button class="btn btn-secondary" id="send-command-btn">Send Test Command</button>
+                <button class="btn btn-warning" id="test-events-btn">Test All Events</button>
+                <button class="btn btn-success" id="browser-support-btn">Check Browser Support</button>
+            </div>
+
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>Library Version:</strong>
+                    <div class="info-value">1.1.0</div>
+                </div>
+                <div class="info-item">
+                    <strong>Browser Support:</strong>
+                    <div class="info-value" id="browser-support">Checking...</div>
+                </div>
+                <div class="info-item">
+                    <strong>WebSocket State:</strong>
+                    <div class="info-value" id="websocket-state">Not connected</div>
+                </div>
+                <div class="info-item">
+                    <strong>Audio Context:</strong>
+                    <div class="info-value" id="audio-context-state">Not initialized</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Log Panel -->
+        <div class="card full-width">
+            <h2>📊 Event Log</h2>
+            <button class="clear-btn" id="clear-log">Clear Log</button>
+            
+            <div class="log-area" id="event-log"></div>
+        </div>
+    </div>
+
+    <!-- Include the RealtimeSTT library -->
+    <script src="realtime-stt.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // DOM elements
+            const elements = {
+                // Buttons
+                connectBtn: document.getElementById('connect-btn'),
+                disconnectBtn: document.getElementById('disconnect-btn'),
+                startBtn: document.getElementById('start-btn'),
+                stopBtn: document.getElementById('stop-btn'),
+                toggleBtn: document.getElementById('toggle-btn'),
+                applyConfigBtn: document.getElementById('apply-config'),
+                clearTranscriptBtn: document.getElementById('clear-transcript'),
+                clearLogBtn: document.getElementById('clear-log'),
+                getStateBtn: document.getElementById('get-state-btn'),
+                sendCommandBtn: document.getElementById('send-command-btn'),
+                testEventsBtn: document.getElementById('test-events-btn'),
+                browserSupportBtn: document.getElementById('browser-support-btn'),
+
+                // Config inputs
+                controlUrl: document.getElementById('control-url'),
+                dataUrl: document.getElementById('data-url'),
+                language: document.getElementById('language'),
+                debugMode: document.getElementById('debug-mode'),
+                autoConnect: document.getElementById('auto-connect'),
+                iconSize: document.getElementById('icon-size'),
+                iconSizeValue: document.getElementById('icon-size-value'),
+
+                // Display elements
+                statusIndicator: document.getElementById('status-indicator'),
+                connectionStatus: document.getElementById('connection-status'),
+                sessionId: document.getElementById('session-id'),
+                listeningState: document.getElementById('listening-state'),
+                recordingState: document.getElementById('recording-state'),
+                realtimeText: document.getElementById('realtime-text'),
+                finalText: document.getElementById('final-text'),
+                eventLog: document.getElementById('event-log'),
+                browserSupport: document.getElementById('browser-support'),
+                websocketState: document.getElementById('websocket-state'),
+                audioContextState: document.getElementById('audio-context-state')
+            };
+
+            let stt = null;
+            const eventCounts = {};
+
+            // Utility functions
+            function log(level, message, data = null) {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+                const fullEntry = data ? `${logEntry}\nData: ${JSON.stringify(data, null, 2)}` : logEntry;
+                
+                elements.eventLog.textContent += fullEntry + '\n';
+                elements.eventLog.scrollTop = elements.eventLog.scrollHeight;
+                
+                // Count events
+                eventCounts[message] = (eventCounts[message] || 0) + 1;
+                
+                console.log(`[RealtimeSTT Test] ${logEntry}`, data);
+            }
+
+            function updateStatus(status, isConnected = false, isListening = false) {
+                elements.connectionStatus.textContent = status;
+                
+                // Update status indicator
+                elements.statusIndicator.className = 'status-indicator ' + 
+                    (isConnected ? (isListening ? 'status-listening' : 'status-connected') : 'status-disconnected');
+                
+                // Update button states
+                elements.connectBtn.disabled = isConnected;
+                elements.disconnectBtn.disabled = !isConnected;
+                elements.startBtn.disabled = !isConnected || isListening;
+                elements.stopBtn.disabled = !isConnected || !isListening;
+                elements.toggleBtn.disabled = !isConnected;
+            }
+
+            function updateState(key, value) {
+                const stateMap = {
+                    sessionId: elements.sessionId,
+                    listening: elements.listeningState,
+                    recording: elements.recordingState,
+                    websocket: elements.websocketState,
+                    audioContext: elements.audioContextState
+                };
+                
+                if (stateMap[key]) {
+                    stateMap[key].textContent = value;
+                }
+            }
+
+            function checkBrowserSupport() {
+                const support = RealtimeSTT.isSupported();
+                elements.browserSupport.textContent = support ? 'Fully Supported' : 'Not Supported';
+                elements.browserSupport.style.color = support ? '#28a745' : '#dc3545';
+                return support;
+            }
+
+            function initializeSTT() {
+                // Clean up existing instance
+                if (stt) {
+                    log('info', 'Cleaning up existing STT instance');
+                    try {
+                        stt.disconnect();
+                        stt = null;
+                    } catch (error) {
+                        log('error', 'Error during cleanup', { error: error.message });
+                    }
+                }
+
+                // Create new instance
+                const config = {
+                    controlUrl: elements.controlUrl.value,
+                    dataUrl: elements.dataUrl.value,
+                    language: elements.language.value,
+                    debug: elements.debugMode.checked,
+                    autoConnect: elements.autoConnect.checked,
+                    micIconSize: parseInt(elements.iconSize.value),
+                    reconnectAttempts: 3,
+                    reconnectDelay: 1000
+                };
+
+                log('info', 'Initializing RealtimeSTT', config);
+                stt = new RealtimeSTT(config);
+
+                // Create microphone icon
+                const micContainer = document.getElementById('mic-container');
+                micContainer.innerHTML = '';
+                stt.createMicIcon('mic-container');
+
+                setupEventListeners();
+                log('success', 'RealtimeSTT initialized successfully');
+            }
+
+            function setupEventListeners() {
+                // Connection events
+                stt.on('connected', () => {
+                    updateStatus('Connected - Ready to listen', true, false);
+                    updateState('websocket', 'Connected');
+                    log('success', 'Connected to STT server');
+                });
+
+                stt.on('disconnected', () => {
+                    updateStatus('Disconnected', false, false);
+                    updateState('sessionId', 'None');
+                    updateState('listening', 'Stopped');
+                    updateState('recording', 'Stopped');
+                    updateState('websocket', 'Disconnected');
+                    updateState('audioContext', 'Not initialized');
+                    log('warning', 'Disconnected from STT server');
+                });
+
+                stt.on('session-initialized', (sessionId) => {
+                    updateState('sessionId', sessionId);
+                    log('info', 'Session initialized', { sessionId });
+                });
+
+                stt.on('connection-failed', () => {
+                    updateStatus('Connection Failed', false, false);
+                    log('error', 'Connection failed after retry attempts');
+                });
+
+                // Audio events
+                stt.on('listening-started', () => {
+                    updateStatus('Listening...', true, true);
+                    updateState('listening', 'Active');
+                    updateState('audioContext', 'Initialized');
+                    log('success', 'Started listening for audio');
+                });
+
+                stt.on('listening-stopped', () => {
+                    updateStatus('Connected - Ready to listen', true, false);
+                    updateState('listening', 'Stopped');
+                    log('info', 'Stopped listening for audio');
+                });
+
+                stt.on('recording-started', () => {
+                    updateState('recording', 'Recording');
+                    log('info', 'Recording started on server');
+                });
+
+                stt.on('recording-stopped', () => {
+                    updateState('recording', 'Stopped');
+                    log('info', 'Recording stopped on server');
+                });
+
+                // Voice activity detection
+                stt.on('voice-detected', () => {
+                    log('info', 'Voice activity detected');
+                });
+
+                stt.on('voice-stopped', () => {
+                    log('info', 'Voice activity stopped');
+                });
+
+                // Speech recognition
+                stt.on('realtime-text', (text) => {
+                    elements.realtimeText.textContent = text;
+                    log('info', 'Realtime text received', { text });
+                });
+
+                stt.on('sentence-end', (text) => {
+                    const p = document.createElement('p');
+                    p.textContent = text;
+                    elements.finalText.appendChild(p);
+                    elements.realtimeText.textContent = 'Real-time text will appear here as you speak...';
+                    log('success', 'Final sentence received', { text });
+                });
+
+                // Advanced events
+                stt.on('transcription-started', (audioBase64) => {
+                    log('info', 'Transcription started', { audioDataLength: audioBase64 ? audioBase64.length : 0 });
+                });
+
+                stt.on('turn-detection-started', () => {
+                    log('info', 'Turn detection started');
+                });
+
+                stt.on('turn-detection-stopped', () => {
+                    log('info', 'Turn detection stopped');
+                });
+
+                stt.on('wakeword-detected', () => {
+                    log('success', 'Wake word detected!');
+                });
+
+                stt.on('wakeword-detection-started', () => {
+                    log('info', 'Wake word detection started');
+                });
+
+                stt.on('wakeword-detection-ended', () => {
+                    log('info', 'Wake word detection ended');
+                });
+
+                // System events
+                stt.on('error', (error) => {
+                    updateStatus(`Error: ${error.message}`, false, false);
+                    log('error', 'STT error occurred', error);
+                });
+
+                stt.on('control-message', (message) => {
+                    log('info', 'Control message received', message);
+                });
+
+                stt.on('config-updated', (config) => {
+                    log('info', 'Configuration updated', config);
+                });
+            }
+
+            // Event listeners for controls
+            elements.connectBtn.addEventListener('click', () => {
+                if (stt) {
+                    stt.connect();
+                    log('info', 'Manual connection initiated');
+                }
+            });
+
+            elements.disconnectBtn.addEventListener('click', () => {
+                if (stt) {
+                    stt.disconnect();
+                    log('info', 'Manual disconnection initiated');
+                }
+            });
+
+            elements.startBtn.addEventListener('click', () => {
+                if (stt) {
+                    stt.startListening().catch(error => {
+                        log('error', 'Failed to start listening', { error: error.message });
+                    });
+                }
+            });
+
+            elements.stopBtn.addEventListener('click', () => {
+                if (stt) {
+                    stt.stopListening();
+                    log('info', 'Manual stop listening');
+                }
+            });
+
+            elements.toggleBtn.addEventListener('click', () => {
+                if (stt) {
+                    stt.toggleListening();
+                    log('info', 'Toggle listening state');
+                }
+            });
+
+            elements.applyConfigBtn.addEventListener('click', () => {
+                log('info', 'Configuration change requested');
+                elements.applyConfigBtn.disabled = true;
+                elements.applyConfigBtn.textContent = 'Applying...';
+                
+                initializeSTT();
+                
+                setTimeout(() => {
+                    elements.applyConfigBtn.disabled = false;
+                    elements.applyConfigBtn.textContent = 'Apply Configuration';
+                }, 1000);
+            });
+
+            elements.clearTranscriptBtn.addEventListener('click', () => {
+                elements.finalText.innerHTML = '';
+                elements.realtimeText.textContent = 'Real-time text will appear here as you speak...';
+                log('info', 'Transcript cleared');
+            });
+
+            elements.clearLogBtn.addEventListener('click', () => {
+                elements.eventLog.textContent = '';
+                Object.keys(eventCounts).forEach(key => delete eventCounts[key]);
+                log('info', 'Event log cleared');
+            });
+
+            elements.getStateBtn.addEventListener('click', () => {
+                if (stt) {
+                    const state = stt.getState();
+                    log('info', 'Current STT state retrieved', state);
+                } else {
+                    log('warning', 'No STT instance available');
+                }
+            });
+
+            elements.sendCommandBtn.addEventListener('click', () => {
+                if (stt) {
+                    const testCommand = {
+                        command: 'get_parameter',
+                        parameter: 'language',
+                        request_id: 'test_' + Date.now()
+                    };
+                    stt.sendControlCommand(testCommand)
+                        .then(() => log('success', 'Test command sent', testCommand))
+                        .catch(error => log('error', 'Failed to send command', { error: error.message }));
+                } else {
+                    log('warning', 'No STT instance available');
+                }
+            });
+
+            elements.testEventsBtn.addEventListener('click', () => {
+                log('info', 'Event count summary', eventCounts);
+            });
+
+            elements.browserSupportBtn.addEventListener('click', () => {
+                const support = checkBrowserSupport();
+                log('info', 'Browser support check', { supported: support });
+            });
+
+            // Icon size slider
+            elements.iconSize.addEventListener('input', () => {
+                elements.iconSizeValue.textContent = elements.iconSize.value + 'px';
+            });
+
+            // Initialize the application
+            log('info', 'RealtimeSTT Test Application starting');
+            
+            // Check browser support first
+            if (!checkBrowserSupport()) {
+                log('error', 'Browser not supported for RealtimeSTT');
+                return;
+            }
+
+            // Initialize STT
+            initializeSTT();
+            
+            // Set initial button states
+            updateStatus('Initialized', false, false);
+            
+            log('success', 'Test application ready');
+        });
+    </script>
+</body>
+</html>
