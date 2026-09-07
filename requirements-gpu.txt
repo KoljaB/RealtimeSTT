@@ -6,7 +6,7 @@ halo==0.0.31
 scipy==1.15.2
 websockets==14.1
 websocket-client==1.8.0
-openwakeword>=0.4.0
+openwakeword>=0.6.0
 numpy<2.0.0
 soundfile==0.13.1
 # RealtimeSTT's default Silero VAD path is CPU ONNX Runtime even when ASR runs on GPU.
