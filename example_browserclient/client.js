@@ -42,14 +42,18 @@ socket.onmessage = function(event) {
 };
 
 function displayRealtimeText(realtimeText, displayDiv) {
-    let displayedText = fullSentences.map((sentence, index) => {
+    displayDiv.textContent = '';
+
+    fullSentences.forEach((sentence, index) => {
         let span = document.createElement('span');
         span.textContent = sentence + " ";
         span.className = index % 2 === 0 ? 'yellow' : 'cyan';
-        return span.outerHTML;
-    }).join('') + realtimeText;
+        displayDiv.appendChild(span);
+    });
 
-    displayDiv.innerHTML = displayedText;
+    if (realtimeText) {
+        displayDiv.appendChild(document.createTextNode(realtimeText));
+    }
 }
 
 function start_msg() {
