@@ -302,15 +302,22 @@ def _verify_release_manifest(manifest: ModelManifest, *, timeout: int, opener) -
     url = manifest.archive_url.rsplit("/", 1)[0] + "/" + record.filename
     with _call_urlopen(opener, Request(url), timeout) as response:
         payload = response.read(record.size_bytes + 1)
-    if len(payload) != record.size_bytes or hashlib.sha256(payload).hexdigest() != record.sha256:
-        raise ModelInstallError("Release manifest verification failed for %s" % manifest.model_id)
+    if (
+        len(payload) != record.size_bytes
+        or hashlib.sha256(payload).hexdigest() != record.sha256
+    ):
+        raise ModelInstallError(
+            "Release manifest verification failed for %s" % manifest.model_id
+        )
     published = json.loads(payload)
     if (
         published["archive"] != manifest.archive_filename
         or published["archive_bytes"] != manifest.archive_size_bytes
         or published["archive_sha256"] != manifest.archive_sha256
     ):
-        raise ModelInstallError("Release manifest disagrees with pinned archive for %s" % manifest.model_id)
+        raise ModelInstallError(
+            "Release manifest disagrees with pinned archive for %s" % manifest.model_id
+        )
 
 
 def _download_archive(

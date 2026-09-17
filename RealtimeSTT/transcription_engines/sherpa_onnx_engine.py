@@ -43,6 +43,18 @@ KNOWN_MODEL_DIRS = {
 }
 
 
+_PARAKEET_MODEL_CONFIGS = {
+    SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST.model_id: (
+        SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST,
+        80,
+    ),
+    SHERPA_ONNX_ORUKEET_INT8_MANIFEST.model_id: (
+        SHERPA_ONNX_ORUKEET_INT8_MANIFEST,
+        128,
+    ),
+}
+
+
 @dataclass
 class SherpaOnnxDecodedOutput:
     """
@@ -316,18 +328,37 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
     default_model_dir = DEFAULT_SHERPA_ONNX_PARAKEET_MODEL
     download_url = PARAKEET_DOWNLOAD_URL
     model_manifest = PARAKEET_MODEL_MANIFEST
+    default_feature_dim = 80
 
     def __init__(self, config, recognizer_cls=None):
+        """Select consistent model metadata before loading or verifying files."""
+
         options = config.engine_options or {}
-        references = (config.model, options.get("model_dir"))
-        if any(
-            str(value) == "oruk/orukeet"
-            or Path(str(value)).name == SHERPA_ONNX_ORUKEET_INT8_MANIFEST.model_id
-            for value in references if value
+        model_config = self._known_model_config(config.model)
+        directory_config = self._known_model_config(options.get("model_dir"))
+        if (
+            model_config
+            and directory_config
+            and model_config[0].model_id != directory_config[0].model_id
         ):
-            self.model_manifest = SHERPA_ONNX_ORUKEET_INT8_MANIFEST
+            raise TranscriptionEngineError(
+                "Conflicting sherpa-onnx model identities in model=%r and "
+                "engine_options['model_dir']=%r."
+                % (config.model, options.get("model_dir"))
+            )
+        # An unrecognized directory name can hold a relocated known model.
+        selected = directory_config or model_config
+        if selected:
+            self.model_manifest, self.default_feature_dim = selected
             self.download_url = self.model_manifest.archive_url
         super().__init__(config, recognizer_cls=recognizer_cls)
+
+    @staticmethod
+    def _known_model_config(value):
+        """Recognize a model alias or the final component of its bundle path."""
+
+        reference = KNOWN_MODEL_DIRS.get(str(value), str(value))
+        return _PARAKEET_MODEL_CONFIGS.get(Path(reference).name)
 
     def _configure_stream(self, stream, params):
         """Apply Parakeet's stream-local fixed/automatic language choice."""
@@ -348,8 +379,7 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
                 "tokens": self._file("tokens", "tokens.txt"),
                 "sample_rate": _int_option(self.engine_options, "sample_rate", 16000),
                 "feature_dim": _int_option(
-                    self.engine_options, "feature_dim",
-                    128 if self.model_manifest is SHERPA_ONNX_ORUKEET_INT8_MANIFEST else 80,
+                    self.engine_options, "feature_dim", self.default_feature_dim
                 ),
                 "dither": _float_option(self.engine_options, "dither", 0.0),
                 "max_active_paths": _int_option(

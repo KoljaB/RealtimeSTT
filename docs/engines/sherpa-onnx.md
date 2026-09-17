@@ -242,8 +242,10 @@ recorder = AudioToTextRecorder(
 
 An absolute model directory works too. If you rename the extracted directory,
 keep `model="oruk/orukeet"` and set `transcription_engine_options["model_dir"]`
-to its new path. Orukeet uses 128 input features and the existing NeMo transducer
-loader. It is an offline recognizer; keep your existing live recognizer and VAD
-for partial transcripts. Language coverage is listed on the model card; this
+to its new path. If both values identify known bundles, they must identify the
+same model; conflicting Orukeet/Parakeet identities raise an error before file
+verification or recognizer loading. Orukeet uses 128 input features and the
+existing NeMo transducer loader. It is an offline recognizer; keep your
+existing live recognizer and VAD for partial transcripts. Language coverage is listed on the model card; this
 option does not change the default model or extend support to every Whisper
 language.
