@@ -9,7 +9,7 @@ extracting it.
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class ModelManifest:
     runtime_license_name: str = "Apache-2.0"
     license_id: str = ""
     file_metadata: Tuple[ModelFileManifest, ...] = ()
+    release_manifest: Optional[ModelFileManifest] = None
 
     @property
     def url(self):
@@ -204,6 +205,71 @@ SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST = ModelManifest(
 )
 
 
+SHERPA_ONNX_ORUKEET_INT8_MANIFEST = ModelManifest(
+    model_id="sherpa-onnx-orukeet-v0.1.0-int8",
+    archive_url=(
+        "https://huggingface.co/oruk/orukeet/resolve/"
+        "55a984d46f68323301837194ce647c702f55facc/onnx/"
+        "sherpa-onnx-orukeet-v0.1.0-int8.tar.bz2"
+    ),
+    archive_filename="sherpa-onnx-orukeet-v0.1.0-int8.tar.bz2",
+    release_manifest=ModelFileManifest(
+        "manifest.json", 1867,
+        "7e80f93f0e9b923c392424b0f85d28a717feee0a4d2a6aa9bfa723693868e727",
+    ),
+    archive_size_bytes=486807585,
+    archive_sha256="f9191f30178cc9122ce2f023bf9fefafc822028307b0efa4caff645ba3fe8d0a",
+    expected_files=(
+        "encoder.int8.onnx",
+        "decoder.int8.onnx",
+        "joiner.int8.onnx",
+        "tokens.txt",
+        "LICENSE-WEIGHTS",
+        "NOTICE.md",
+    ),
+    license_name="CC-BY-SA-4.0",
+    license_url="https://creativecommons.org/licenses/by-sa/4.0/",
+    license_id="CC-BY-SA-4.0",
+    file_metadata=(
+        ModelFileManifest(
+            "encoder.int8.onnx",
+            653182378,
+            "7b55f2a504a20a8e462899f5befd45f4a1784948d76ed0127902d9cf39405487",
+        ),
+        ModelFileManifest(
+            "decoder.int8.onnx",
+            11845332,
+            "c185c2afb4c77c94bb1314807ecb3dc1623057a3dc540b83e10301af9bf4cfca",
+        ),
+        ModelFileManifest(
+            "joiner.int8.onnx",
+            6355335,
+            "1a7e90abf7172d926dd7e2edac2a5d5035c24dfb641a15e131d57b6a5f63cdd3",
+        ),
+        ModelFileManifest(
+            "tokens.txt",
+            93939,
+            "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+        ),
+        ModelFileManifest(
+            "bpe.vocab",
+            117408,
+            "41d5e71b3591642eff088151efd7acd4e750124cc0054c8ba9fa3245187a4804",
+        ),
+        ModelFileManifest(
+            "LICENSE-WEIGHTS",
+            20137,
+            "23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2",
+        ),
+        ModelFileManifest(
+            "NOTICE.md",
+            5271,
+            "440361d963edd9621e744f251332b47f2c4de2e2594ecfe42b215e3f6223fa44",
+        ),
+    ),
+)
+
+
 SHERPA_ONNX_NEMOTRON_560MS_INT8_MANIFEST = ModelManifest(
     model_id=(
         "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11"
@@ -267,6 +333,7 @@ __all__ = [
     "ModelFileManifest",
     "ModelManifest",
     "SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST",
+    "SHERPA_ONNX_ORUKEET_INT8_MANIFEST",
     "SHERPA_ONNX_NEMOTRON_560MS_INT8_MANIFEST",
     "PARAKEET_V3_INT8_MANIFEST",
     "NEMOTRON_560MS_INT8_MANIFEST",

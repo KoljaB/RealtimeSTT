@@ -307,10 +307,10 @@ jobs:
           import os
           from pathlib import Path
 
-          from RealtimeSTT.install_sherpa_models import MODEL_MANIFESTS
+          from RealtimeSTT.install_sherpa_models import manifests_for_selection
 
           root = Path(os.environ["MODEL_ROOT"])
-          for name, manifest in MODEL_MANIFESTS.items():
+          for name, manifest in manifests_for_selection("all"):
               model_dir = root / manifest.model_id
               missing = manifest.missing_files(model_dir)
               invalid = manifest.invalid_files(model_dir)
