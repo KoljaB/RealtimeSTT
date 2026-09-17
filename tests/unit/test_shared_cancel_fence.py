@@ -1,9 +1,10 @@
 import threading
+import unittest
 from types import SimpleNamespace
 from example_fastapi_server.server import SharedEngineWorker
 
 
-def test_cancel_cannot_cross_into_successor_native_job():
+def check_cancel_cannot_cross_into_successor_native_job():
     worker = SharedEngineWorker.__new__(SharedEngineWorker)
     worker.name = "test"
     worker._active_job_lock = threading.Lock()
@@ -33,9 +34,19 @@ def test_cancel_cannot_cross_into_successor_native_job():
     finally:
         release.set()
         cancel_thread.join(1)
-        next_thread.join(1)
+        if next_thread.ident is not None:
+            next_thread.join(1)
     assert observed == ["old"]
     assert successor.is_set()
     assert worker._active_request_id == "next"
     assert worker.cancel_request("old") is False
     assert not worker._active_cancel_event.is_set()
+
+
+class SharedCancelFenceTests(unittest.TestCase):
+    def test_cancel_cannot_cross_into_successor_native_job(self):
+        check_cancel_cannot_cross_into_successor_native_job()
+
+
+if __name__ == "__main__":
+    unittest.main()
