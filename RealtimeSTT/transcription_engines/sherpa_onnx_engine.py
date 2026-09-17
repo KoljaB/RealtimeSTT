@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
-from ..model_manifests import SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST
+from ..model_manifests import (
+    SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST,
+    SHERPA_ONNX_ORUKEET_INT8_MANIFEST,
+)
 from ._model_utils import text_from_output
 from .base import (
     BaseTranscriptionEngine,
@@ -30,6 +33,8 @@ MOONSHINE_DOWNLOAD_URL = (
 )
 
 KNOWN_MODEL_DIRS = {
+    "oruk/orukeet": SHERPA_ONNX_ORUKEET_INT8_MANIFEST.model_id,
+    SHERPA_ONNX_ORUKEET_INT8_MANIFEST.model_id: SHERPA_ONNX_ORUKEET_INT8_MANIFEST.model_id,
     "nvidia/parakeet-tdt-0.6b-v3": DEFAULT_SHERPA_ONNX_PARAKEET_MODEL,
     DEFAULT_SHERPA_ONNX_PARAKEET_MODEL: DEFAULT_SHERPA_ONNX_PARAKEET_MODEL,
     "UsefulSensors/moonshine-streaming-medium": DEFAULT_SHERPA_ONNX_MOONSHINE_MODEL,
@@ -312,6 +317,18 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
     download_url = PARAKEET_DOWNLOAD_URL
     model_manifest = PARAKEET_MODEL_MANIFEST
 
+    def __init__(self, config, recognizer_cls=None):
+        options = config.engine_options or {}
+        references = (config.model, options.get("model_dir"))
+        if any(
+            str(value) == "oruk/orukeet"
+            or Path(str(value)).name == SHERPA_ONNX_ORUKEET_INT8_MANIFEST.model_id
+            for value in references if value
+        ):
+            self.model_manifest = SHERPA_ONNX_ORUKEET_INT8_MANIFEST
+            self.download_url = self.model_manifest.archive_url
+        super().__init__(config, recognizer_cls=recognizer_cls)
+
     def _configure_stream(self, stream, params):
         """Apply Parakeet's stream-local fixed/automatic language choice."""
 
@@ -330,7 +347,10 @@ class SherpaOnnxParakeetBackend(SherpaOnnxOfflineBackend):
                 "joiner": self._file("joiner", "joiner.int8.onnx"),
                 "tokens": self._file("tokens", "tokens.txt"),
                 "sample_rate": _int_option(self.engine_options, "sample_rate", 16000),
-                "feature_dim": _int_option(self.engine_options, "feature_dim", 80),
+                "feature_dim": _int_option(
+                    self.engine_options, "feature_dim",
+                    128 if self.model_manifest is SHERPA_ONNX_ORUKEET_INT8_MANIFEST else 80,
+                ),
                 "dither": _float_option(self.engine_options, "dither", 0.0),
                 "max_active_paths": _int_option(
                     self.engine_options,

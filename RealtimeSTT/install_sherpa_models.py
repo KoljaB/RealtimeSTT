@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import json
 import os
 import re
 import shutil
@@ -37,6 +38,7 @@ from .model_manifests import (
     ModelManifest,
     SHERPA_ONNX_NEMOTRON_560MS_INT8_MANIFEST,
     SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST,
+    SHERPA_ONNX_ORUKEET_INT8_MANIFEST,
 )
 
 
@@ -47,8 +49,9 @@ class ModelInstallError(RuntimeError):
 MODEL_MANIFESTS: Mapping[str, ModelManifest] = {
     "nemotron": SHERPA_ONNX_NEMOTRON_560MS_INT8_MANIFEST,
     "parakeet": SHERPA_ONNX_PARAKEET_V3_INT8_MANIFEST,
+    "orukeet": SHERPA_ONNX_ORUKEET_INT8_MANIFEST,
 }
-MODEL_SELECTIONS = ("nemotron", "parakeet", "all")
+MODEL_SELECTIONS = ("nemotron", "parakeet", "orukeet", "all")
 
 # These names are part of the on-disk contract.  Do not use a temporary
 # directory for either cache: a model install should survive process exits.
@@ -70,7 +73,7 @@ def manifests_for_selection(selection: str) -> Tuple[Tuple[str, ModelManifest], 
     if value in MODEL_MANIFESTS:
         return ((value, MODEL_MANIFESTS[value]),)
     raise ModelInstallError(
-        "Unknown sherpa model selection %r; choose nemotron, parakeet, or all."
+        "Unknown sherpa model selection %r; choose nemotron, parakeet, orukeet, or all."
         % selection
     )
 
@@ -82,7 +85,7 @@ def _manifest_for_selection(selection: Union[str, ModelManifest]) -> ModelManife
     if value in MODEL_MANIFESTS:
         return MODEL_MANIFESTS[value]
     raise ModelInstallError(
-        "Unknown sherpa model selection %r; choose nemotron or parakeet."
+        "Unknown sherpa model selection %r; choose nemotron, parakeet, or orukeet."
         % selection
     )
 
@@ -286,6 +289,30 @@ def _open_download(
         return _call_urlopen(opener, request, timeout), 0
 
 
+def _verify_release_manifest(manifest: ModelManifest, *, timeout: int, opener) -> None:
+    """Verify a publisher's pinned manifest before a new archive download.
+
+    This is model installation traffic only. In particular, Hugging Face can
+    account for the release manifest request without inference-time telemetry.
+    Verified archive/model caches never call this function.
+    """
+    record = manifest.release_manifest
+    if record is None:
+        return
+    url = manifest.archive_url.rsplit("/", 1)[0] + "/" + record.filename
+    with _call_urlopen(opener, Request(url), timeout) as response:
+        payload = response.read(record.size_bytes + 1)
+    if len(payload) != record.size_bytes or hashlib.sha256(payload).hexdigest() != record.sha256:
+        raise ModelInstallError("Release manifest verification failed for %s" % manifest.model_id)
+    published = json.loads(payload)
+    if (
+        published["archive"] != manifest.archive_filename
+        or published["archive_bytes"] != manifest.archive_size_bytes
+        or published["archive_sha256"] != manifest.archive_sha256
+    ):
+        raise ModelInstallError("Release manifest disagrees with pinned archive for %s" % manifest.model_id)
+
+
 def _download_archive(
     manifest: ModelManifest,
     root: Path,
@@ -332,6 +359,7 @@ def _download_archive(
         )
 
     try:
+        _verify_release_manifest(manifest, timeout=timeout, opener=opener)
         response, requested_offset = _open_download(
             manifest,
             partial,
@@ -611,7 +639,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--model",
         choices=MODEL_SELECTIONS,
         default="all",
-        help="Model to install (default: all).",
+        help="Model to install (default: all, the Nemotron/Parakeet pair).",
     )
     parser.add_argument(
         "--offline",
