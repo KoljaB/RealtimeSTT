@@ -210,3 +210,40 @@ Nemotron for live hypotheses.
 - If latency is high, lower model size where possible, reduce realtime cadence,
   and tune `num_threads`.
 - The Moonshine sherpa-onnx adapter is English-only.
+
+## Orukeet as the final recognizer
+
+Orukeet is an optional Parakeet TDT derivative for completed utterances in 25
+European languages. Install its pinned export explicitly (`all` retains the
+Nemotron/Parakeet pair):
+
+```sh
+stt-install-sherpa-models --root ./models/sherpa-onnx --model orukeet
+```
+
+The installer downloads the real release manifest and 487 MB archive from
+[Hugging Face](https://huggingface.co/oruk/orukeet), checks their SHA-256 hashes,
+and preserves the weights' CC BY-SA 4.0 license and NVIDIA attribution. Fetching
+the release manifest participates in Hugging Face's normal download accounting.
+Verified cached installs and recognition make no model-download requests. Audio
+is processed locally. The extracted files occupy about 672 MB.
+
+Use the existing final-pass engine, with the Orukeet model identity so optional
+file verification selects the correct checksums:
+
+```python
+recorder = AudioToTextRecorder(
+    transcription_engine="sherpa_onnx_parakeet",
+    model="oruk/orukeet",
+    download_root="./models/sherpa-onnx",
+    transcription_engine_options={"verify_model_files": True},
+)
+```
+
+An absolute model directory works too. If you rename the extracted directory,
+keep `model="oruk/orukeet"` and set `transcription_engine_options["model_dir"]`
+to its new path. Orukeet uses 128 input features and the existing NeMo transducer
+loader. It is an offline recognizer; keep your existing live recognizer and VAD
+for partial transcripts. Language coverage is listed on the model card; this
+option does not change the default model or extend support to every Whisper
+language.
