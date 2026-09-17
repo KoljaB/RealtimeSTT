@@ -239,6 +239,7 @@ all_optional_requirements = unique_requirements(
 )
 
 extras_require = {
+    "parakeet-onnx": ["onnx-asr==0.12.0", "onnxruntime==1.30.0"],
     "minimal": [],
     "faster-whisper": faster_whisper_requirements,
     "whisper-cpp": whisper_cpp_requirements,

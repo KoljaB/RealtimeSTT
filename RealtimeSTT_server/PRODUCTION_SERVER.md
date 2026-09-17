@@ -278,3 +278,37 @@ backpressure is a protocol outcome, not permission to buffer without limit.
 Run the streaming benchmark with production packet cadence, long-run
 repetitions, and parallel concurrency on the target host before raising any
 session or queue limits.
+
+
+## CPU-only Parakeet ONNX with retained live lanes
+
+Install `realtimestt[server,parakeet-onnx,sherpa-onnx]`. Supply a local dynamic
+INT8 Parakeet v3 bundle containing `config.json`, `vocab.txt`,
+`encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, and the matching
+reference `nemo128.onnx`. No model download or GPU fallback occurs.
+
+Keep your existing authentication, TLS, Nemotron live-lane and Preview options,
+and replace the main backend options with:
+
+```sh
+--engine parakeet_onnx --model /path/to/parakeet-v3-dynamic-int8 --device cpu \
+--engine-options '{"num_threads":7,"decoder_threads":1,"preprocessor_threads":1,"allow_spinning":false}' \
+--main-cpu-affinity 1,3,7,9,11,13,15 --defer-live-during-final
+```
+
+The CPU IDs are an example for the tested i9-13900KF, not portable defaults.
+Choose one logical CPU per physical P-core and coordinate TTS placement.
+The main worker handles both Preview and Final/Late-Final, so switching it
+preserves the live websocket protocol. Decoding is greedy; beam size does not
+apply. Word timestamps are not exposed by this adapter.
+
+`--defer-live-during-final` gives main inference priority. Live audio remains
+in its existing bounded FIFO queues and resumes in order, without dropping or
+coalescing chunks. Main starts without waiting for already active live
+operations, which may finish concurrently on their independent engines.
+New live operations wait until pending/active main work is complete.
+The normal explicit overload and cancellation policies still apply; this is
+not an unlimited audio buffer. Both live lanes may decode concurrently while
+main is idle. Health scheduler `liveInferenceDeferral` reports wait counts and
+time. ONNX cancellation terminates the active run and leaves the next request
+usable.

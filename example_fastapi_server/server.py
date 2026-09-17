@@ -1,4 +1,5 @@
 import argparse
+from contextlib import nullcontext
 import asyncio
 import collections
 import datetime
@@ -23,6 +24,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - numpy is a core depende
     ) from exc
 
 try:
+    from .inference_priority import InferencePriorityGate
     from .protocol import (
         AudioPacketError,
         decode_audio_packet,
@@ -31,6 +33,7 @@ try:
         require_positive_int,
     )
 except ImportError:
+    from inference_priority import InferencePriorityGate
     from protocol import (
         AudioPacketError,
         decode_audio_packet,
@@ -369,6 +372,7 @@ class ServerSettings:
     gpu_device_index: int = 0
     # Optional Linux CPU masks for the worker that owns each native ASR pool.
     # ``main`` also owns Preview/Final queue work.
+    defer_live_during_final: bool = False
     main_cpu_affinity: Optional[Tuple[int, ...]] = None
     realtime_cpu_affinity: Optional[Tuple[int, ...]] = None
     ultrafast_realtime_cpu_affinity: Optional[Tuple[int, ...]] = None
@@ -1142,6 +1146,7 @@ class SharedEngineWorker:
         # safe to run concurrently, so every ordinary and streaming operation
         # goes through this one lock.
         self.engine_lock = threading.RLock()
+        self.inference_gate = None
         self._active_job_lock = threading.Lock()
         self._active_request_id = None
         self._active_cancel_event = None
@@ -1274,17 +1279,18 @@ class SharedEngineWorker:
                 self._active_cancel_event.set()
             if self._native_request_id == request_id:
                 cancel = getattr(self.engine, "cancel_active", None)
-        if not callable(cancel):
-            return True
-        try:
-            cancel()
-        except Exception:
-            LOGGER.debug(
-                "Could not cancel active %s inference request %s",
-                self.name,
-                request_id,
-                exc_info=True,
-            )
+            # Keep identity valid through the native cancellation call. Releasing
+            # this lock first lets an old callback terminate the successor job.
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception:
+                    LOGGER.debug(
+                        "Could not cancel active %s inference request %s",
+                        self.name,
+                        request_id,
+                        exc_info=True,
+                    )
         return True
 
     def _claim_job(self, request_id):
@@ -1365,7 +1371,7 @@ class SharedEngineWorker:
                 if claimed:
                     if self.engine is None:
                         raise RuntimeError(f"{self.name} inference engine is unavailable")
-                    with self.engine_lock:
+                    with (self.inference_gate.enter(self.name) if self.inference_gate else nullcontext()), self.engine_lock:
                         if self.engine is None or self._engine_closed:
                             raise RuntimeError(
                                 f"{self.name} inference engine is unavailable"
@@ -1484,7 +1490,9 @@ class LockedStreamingSession:
             raise RuntimeError(
                 f"streaming session does not expose {method_name}()"
             )
-        with self.worker.engine_lock:
+        gate = self.worker.inference_gate
+        slot = gate.enter(self.worker.name) if gate and method_name in {"accept_audio", "decode", "finish", "input_finished"} else nullcontext()
+        with slot, self.worker.engine_lock:
             if self.closed:
                 raise RuntimeError("streaming session is closed")
             if self.worker.engine is None or self.worker._engine_closed:
@@ -1603,6 +1611,11 @@ class InferenceScheduler:
                 error_callback,
             )
 
+        self.inference_gate = InferencePriorityGate() if getattr(settings, "defer_live_during_final", False) else None
+        for worker in (self.main_worker, self.realtime_worker, self.ultrafast_worker):
+            if worker is not None:
+                worker.inference_gate = self.inference_gate
+
     def start(self):
         self.main_worker.start()
         if self.realtime_worker is not None:
@@ -1710,6 +1723,7 @@ class InferenceScheduler:
             data["queues"]["ultrafast"] = self.ultrafast_queue.snapshot()
         if self.ultrafast_worker is not None:
             data["workers"]["ultrafast"] = self.ultrafast_worker.snapshot()
+        data["liveInferenceDeferral"] = self.inference_gate.snapshot() if self.inference_gate else {"enabled": False}
         return data
 
     def _create_main_engine(self):
@@ -4058,6 +4072,7 @@ def parse_args(argv=None):
         "--ultrafast-realtime-transcription-engine",
         dest="ultrafast_realtime_transcription_engine",
     )
+    parser.add_argument("--defer-live-during-final", action="store_true", help="Retain live audio and delay native live operations while main inference runs")
     parser.add_argument("--engine-options", dest="transcription_engine_options")
     parser.add_argument("--realtime-engine-options", dest="realtime_transcription_engine_options")
     parser.add_argument(
@@ -4185,6 +4200,7 @@ def settings_from_args(args):
         compute_type=args.compute_type,
         device=args.device,
         gpu_device_index=args.gpu_device_index,
+        defer_live_during_final=getattr(args, "defer_live_during_final", False),
         main_cpu_affinity=args.main_cpu_affinity,
         realtime_cpu_affinity=args.realtime_cpu_affinity,
         ultrafast_realtime_cpu_affinity=args.ultrafast_realtime_cpu_affinity,

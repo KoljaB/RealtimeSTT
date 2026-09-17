@@ -1,0 +1,228 @@
+--- a/src/main.cc
++++ b/src/main.cc
+@@ -2,6 +2,11 @@
+ #include "audio.h"
+ #include "kernels.h"
+ #include <charconv>
++#include <atomic>
++#include <condition_variable>
++#include <memory>
++#include <mutex>
++#include <thread>
+ #ifdef _WIN32
+ #include <fcntl.h>
+ #include <io.h>
+@@ -117,7 +122,7 @@
+       throw std::runtime_error("Expected a complete 1000-token vocabulary");
+   }
+ 
+-  Decoded operator()(const float* y, int count) {
++  Decoded operator()(const float* y, int count, const Ort::RunOptions& run_options = Ort::RunOptions{nullptr}) {
+     Decoded r;
+     std::array<int64_t, 2> context{-1, 0}, cs{1, 2}, ds{1, 512};
+     auto ct = Ort::Value::CreateTensor<int64_t>(memory, context.data(), 2, cs.data(), 2);
+@@ -128,7 +133,7 @@
+       if (dirty) {
+         const char* in[] = {"context"};
+         const char* out[] = {"decoder"};
+-        predictor.Run({}, in, &ct, 1, out, &dt, 1);
++        predictor.Run(run_options, in, &ct, 1, out, &dt, 1);
+         dirty = false;
+         ++r.predictor_calls;
+       }
+@@ -140,7 +145,7 @@
+       auto output = Ort::Value::CreateTensor<float>(memory, logits.data(), w*1000, ls.data(), 2);
+       const char* in[] = {"encoder", "decoder"};
+       const char* out[] = {"logits"};
+-      joiner.Run({}, in, inputs.data(), 2, out, &output, 1);
++      joiner.Run(run_options, in, inputs.data(), 2, out, &output, 1);
+       ++r.joiner_calls;
+       // Consume the blank prefix and first emission only. Once context changes,
+       // recompute the remaining window. This preserves framewise greedy decoding.
+@@ -203,11 +208,16 @@
+ 
+ Inference transcribe_audio(Audio& audio, int expected_frames, Ort::Session& encoder,
+                            Decoder& decoder, CpuFrontend& frontend,
+-                           Ort::MemoryInfo& memory, std::vector<float>& features) {
++                           Ort::MemoryInfo& memory, std::vector<float>& features,
++                           const Ort::RunOptions& run_options = Ort::RunOptions{nullptr},
++                           const std::atomic<bool>* cancelled = nullptr) {
++  auto check_cancelled = [&] { if (cancelled && cancelled->load()) throw std::runtime_error("request cancelled"); };
++  check_cancelled();
+   Inference run;
+   auto t0 = Clock::now();
+   int64_t frames = frontend(audio.pcm, features);
+   auto t1 = Clock::now();
++  check_cancelled();
+   if (frames != expected_frames) throw std::runtime_error("Unexpected feature count");
+   std::array<int64_t, 3> shape{1, frames, 80};
+   int64_t length_shape = 1;
+@@ -216,7 +226,7 @@
+     Ort::Value::CreateTensor<int64_t>(memory, &frames, 1, &length_shape, 1)};
+   const char* names[] = {"x", "x_lens"};
+   const char* outputs[] = {"encoder_out"};
+-  auto values = encoder.Run({}, names, inputs.data(), 2, outputs, 1);
++  auto values = encoder.Run(run_options, names, inputs.data(), 2, outputs, 1);
+   auto info = values[0].GetTensorTypeAndShapeInfo();
+   auto out_shape = info.GetShape();
+   if (out_shape.size() != 3 || out_shape[0] != 1 || out_shape[2] != 512 ||
+@@ -227,7 +237,8 @@
+   for (size_t i = 0; i < info.GetElementCount(); ++i)
+     if (!std::isfinite(y[i])) throw std::runtime_error("Non-finite encoder output");
+   auto t2 = Clock::now();
+-  run.decoded = decoder(y, run.encoder_frames);
++  check_cancelled();
++  run.decoded = decoder(y, run.encoder_frames, run_options);
+   auto t3 = Clock::now();
+   run.feature_frames = int(frames);
+   run.total_ms = milliseconds(t0, t3);
+@@ -251,45 +262,52 @@
+     << ",\"compute_precision\":\"FP32\",\"encoder_weight_storage\":\"FP16\""
+     << ",\"encoder_threads\":" << o.encoder_threads
+     << ",\"decoder_threads\":1,\"feature_workers\":" << o.feature_workers
++    << ",\"cancellation\":\"request_id_run_options\""
+     << ",\"model_and_frontend_load_ms\":" << load_ms << "}\n" << std::flush;
+ 
+-  std::string line;
+-  while (std::getline(std::cin, line)) {
+-    if (line == "shutdown") return 0;
+-    std::istringstream command(line);
+-    std::string verb, trailing;
+-    uint64_t request_id = 0, sample_count = 0;
+-    if (!(command >> verb >> request_id >> sample_count) || verb != "transcribe" ||
+-        (command >> trailing) || sample_count == 0 || sample_count > max_samples) {
+-      std::cout << "{\"type\":\"error\",\"id\":" << request_id
+-                << ",\"error\":\"invalid request header or sample count\"}\n" << std::flush;
+-      continue;
+-    }
+-
++
++  struct Job {
++    uint64_t id = 0, samples = 0;
+     Audio audio;
+-    audio.source_rate = 16000;
+-    audio.source_channels = 1;
+-    audio.original_samples = size_t(sample_count);
+-    audio.pcm.resize(size_t(sample_count));
+-    const auto byte_count = std::streamsize(sample_count * sizeof(float));
+-    std::cin.read(reinterpret_cast<char*>(audio.pcm.data()), byte_count);
+-    if (std::cin.gcount() != byte_count) {
+-      std::cout << "{\"type\":\"error\",\"id\":" << request_id
+-                << ",\"error\":\"truncated float32 audio payload\"}\n" << std::flush;
+-      return 2;
+-    }
+-
+-    try {
+-      for (float sample : audio.pcm)
+-        if (!std::isfinite(sample)) throw std::runtime_error("Audio contains a non-finite sample");
+-      int expected_frames = pad_audio(audio, o.strict_length);
+-      auto run = transcribe_audio(audio, expected_frames, encoder, decoder, frontend, memory, features);
++    Ort::RunOptions options;
++    std::atomic<bool> cancelled{false};
++  };
++  std::mutex state_mutex;
++  std::condition_variable changed;
++  std::shared_ptr<Job> current;
++  bool pending = false, stopping = false;
++  std::thread worker([&] {
++    for (;;) {
++      std::shared_ptr<Job> job;
++      {
++        std::unique_lock lock(state_mutex);
++        changed.wait(lock, [&] { return stopping || pending; });
++        if (stopping && !pending) return;
++        job = current; pending = false;
++      }
++      Inference run;
++      std::string error;
++      try {
++        if (job->cancelled.load()) throw std::runtime_error("request cancelled");
++        for (float sample : job->audio.pcm)
++          if (!std::isfinite(sample)) throw std::runtime_error("Audio contains a non-finite sample");
++        int expected_frames = pad_audio(job->audio, o.strict_length);
++        run = transcribe_audio(job->audio, expected_frames, encoder, decoder,
++                               frontend, memory, features, job->options, &job->cancelled);
++      } catch (const std::exception& e) { error = e.what(); }
++      std::lock_guard lock(state_mutex);
++      if (job->cancelled.load()) {
++        std::cout << "{\"type\":\"cancelled\",\"id\":" << job->id << "}\n" << std::flush;
++      } else if (!error.empty()) {
++        std::cout << "{\"type\":\"error\",\"id\":" << job->id
++                  << ",\"error\":" << json_string(error) << "}\n" << std::flush;
++      } else {
+       std::cout << std::setprecision(10)
+-        << "{\"type\":\"result\",\"id\":" << request_id
++        << "{\"type\":\"result\",\"id\":" << job->id
+         << ",\"transcript\":" << json_string(run.decoded.text)
+-        << ",\"audio_seconds\":" << sample_count / 16000.0
+-        << ",\"model_input_seconds\":" << audio.padded_seconds()
+-        << ",\"tail_padding_ms\":" << (audio.pcm.size() - audio.original_samples) / 16.0
++        << ",\"audio_seconds\":" << job->samples / 16000.0
++        << ",\"model_input_seconds\":" << job->audio.padded_seconds()
++        << ",\"tail_padding_ms\":" << (job->audio.pcm.size() - job->audio.original_samples) / 16.0
+         << ",\"feature_frames\":" << run.feature_frames
+         << ",\"encoder_frames\":" << run.encoder_frames
+         << ",\"inference_ms\":" << run.total_ms
+@@ -301,12 +319,57 @@
+         << ",\"tokens\":"; array_json(run.decoded.tokens);
+       std::cout << ",\"token_encoder_frames\":"; array_json(run.decoded.frames);
+       std::cout << "}\n" << std::flush;
+-    } catch (const std::exception& e) {
++      }
++      current.reset();
++    }
++  });
++  int status = 0;
++  std::string line;
++  while (std::getline(std::cin, line)) {
++    if (line == "shutdown") break;
++    std::istringstream command(line);
++    std::string verb, trailing;
++    uint64_t request_id = 0, sample_count = 0;
++    command >> verb >> request_id;
++    if (verb == "cancel" && request_id && !(command >> trailing)) {
++      std::lock_guard lock(state_mutex);
++      if (current && current->id == request_id) {
++        current->cancelled.store(true);
++        current->options.SetTerminate();
++      }
++      continue;
++    }
++    if (!command || verb != "transcribe" || !(command >> sample_count) ||
++        (command >> trailing) || !request_id || !sample_count || sample_count > max_samples) {
++      std::lock_guard lock(state_mutex);
+       std::cout << "{\"type\":\"error\",\"id\":" << request_id
+-                << ",\"error\":" << json_string(e.what()) << "}\n" << std::flush;
+-    }
+-  }
+-  return 0;
++                << ",\"error\":\"invalid request header or sample count\"}\n" << std::flush;
++      continue;
++    }
++    auto job = std::make_shared<Job>();
++    job->id = request_id; job->samples = sample_count;
++    job->audio.source_rate = 16000; job->audio.source_channels = 1;
++    job->audio.original_samples = size_t(sample_count);
++    job->audio.pcm.resize(size_t(sample_count));
++    auto byte_count = std::streamsize(sample_count * sizeof(float));
++    std::cin.read(reinterpret_cast<char*>(job->audio.pcm.data()), byte_count);
++    if (std::cin.gcount() != byte_count) { status = 2; break; }
++    {
++      std::lock_guard lock(state_mutex);
++      if (current) {
++        std::cout << "{\"type\":\"error\",\"id\":" << request_id
++                  << ",\"error\":\"native request already active\"}\n" << std::flush;
++      } else { current = job; pending = true; changed.notify_one(); }
++    }
++  }
++  {
++    std::lock_guard lock(state_mutex);
++    stopping = true;
++    if (current) { current->cancelled.store(true); current->options.SetTerminate(); }
++    changed.notify_one();
++  }
++  worker.join();
++  return status;
+ }
+ 
+ int main(int argc, char** argv) try {

@@ -18,6 +18,7 @@ The compatibility default is `faster_whisper`.
 | English CPU server with manually downloaded ONNX models | `sherpa_onnx_moonshine` | Offline CPU INT8 path with predictable local model files. |
 | CPU Parakeet without NeMo runtime | `sherpa_onnx_parakeet` | Offline CPU INT8 Parakeet through sherpa-onnx. |
 | Kroko/Banafo `.data` streaming models | `kroko_onnx` | Optional Kroko-ONNX runtime with Community or licensed Pro models and realtime streaming previews. |
+| Optimized English Kroko FP32 CPU bundle | `kroko_fp32` | Resident native offline adapter for the encoder/predictor/joiner ONNX bundle. |
 | Experimental multilingual SenseVoice/FunASR transcription | `funasr` | Uses FunASR `AutoModel`; promising throughput on CUDA with SenseVoice-style models. |
 | NVIDIA Parakeet on Linux/WSL2 | `parakeet` | Uses NVIDIA NeMo ASR for the Parakeet checkpoint. |
 | Meta Omnilingual ASR on Linux/WSL2 Python 3.11.x | `omnilingual_asr` | Uses Meta's Omnilingual ASR package; native Windows and Python 3.12.x are not practical install targets for the current upstream dependency stack. |
@@ -38,6 +39,7 @@ CLI-style names work where listed.
 | `sherpa_onnx_moonshine`, `sherpa_moonshine`, `moonshine_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
 | `sherpa_onnx_nemotron`, `sherpa_nemotron`, `nemotron_sherpa_onnx`, `nemotron` | CPU INT8 multilingual Nemotron streaming backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
 | `kroko_onnx`, `kroko`, `banafo_kroko` | Optional Kroko-ONNX backend | [engines/kroko-onnx.md](engines/kroko-onnx.md) |
+| `kroko_fp32`, `kroko_native` | English-only resident native CPU backend | [engines/kroko-fp32.md](engines/kroko-fp32.md) |
 | `parakeet`, `nvidia_parakeet` | Experimental NVIDIA NeMo backend | [engines/parakeet-nemo.md](engines/parakeet-nemo.md) |
 | `sherpa_onnx_parakeet`, `sherpa_parakeet`, `parakeet_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
 | `omnilingual_asr`, `omnilingual`, `meta_omnilingual_asr`, `omni_asr` | Experimental Meta Omnilingual ASR backend for Linux/WSL2 Python 3.11.x | [engines/omnilingual-asr.md](engines/omnilingual-asr.md) |
