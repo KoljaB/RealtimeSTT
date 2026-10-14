@@ -3,6 +3,7 @@ Internal text formatting helpers for recorder output.
 """
 
 import re
+import unicodedata
 
 
 def format_number(num):
@@ -13,6 +14,23 @@ def format_number(num):
     integer_part, decimal_part = num_str.split('.')
     result = f"{integer_part[-2:]}.{decimal_part[:2]}"
     return result
+
+
+def _ends_in_alnum(text):
+    """
+    Checks whether text ends in a letter or digit, looking past trailing
+    combining vowel signs and accents (Mn/Mc): Hindi "है" ends in a vowel sign,
+    which isalnum() rejects. Variation selectors stay excluded, so an emoji
+    such as "❤️" still counts as non-alphanumeric.
+    """
+    i = len(text) - 1
+    while (
+        i > 0
+        and unicodedata.category(text[i]) in ("Mn", "Mc")
+        and not "︀" <= text[i] <= "️"
+    ):
+        i -= 1
+    return text[i].isalnum()
 
 
 def preprocess_output(
@@ -38,7 +56,7 @@ def preprocess_output(
 
     if not preview:
         if ensure_sentence_ends_with_period:
-            if text and text[-1].isalnum():
+            if text and _ends_in_alnum(text):
                 text += '.'
 
     return text

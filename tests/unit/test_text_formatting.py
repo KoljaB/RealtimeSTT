@@ -46,6 +46,25 @@ class TextFormattingTests(unittest.TestCase):
     def test_preprocess_output_preview_does_not_add_period(self):
         self.assertEqual(preprocess_output("hello world", preview=True), "Hello world")
 
+    def test_preprocess_output_adds_period_after_a_vowel_sign(self):
+        # These words end in a combining vowel sign (category Mc/Mn), which
+        # str.isalnum() does not count as alphanumeric.
+        cases = {
+            "मेरा नाम हसन है": "मेरा नाम हसन है.",
+            "आप कैसे हो": "आप कैसे हो.",
+            "আমি ভালো আছি": "আমি ভালো আছি.",
+            "வணக்கம் நண்பா": "வணக்கம் நண்பா.",
+            "café": "Café.",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(preprocess_output(text), expected)
+
+    def test_preprocess_output_no_period_after_punctuation_or_emoji(self):
+        for text in ("नमस्ते।", "I love it ❤️", "Press 1️⃣"):
+            with self.subTest(text=text):
+                self.assertEqual(preprocess_output(text), text)
+
     def test_find_tail_match_returns_legacy_match_end_position(self):
         self.assertEqual(
             find_tail_match_in_text("alpha world", "one world two", 5),
