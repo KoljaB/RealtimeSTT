@@ -127,6 +127,25 @@ class ManualAudioInputTests(unittest.TestCase):
             [-32767, 0, 32767],
         )
 
+    def test_feed_audio_accepts_chunks_too_short_to_resample(self):
+        recorder = RecorderStub(buffer_size=4)
+
+        for chunk in (
+            np.zeros(0, dtype=np.float32),
+            np.zeros((0, 2), dtype=np.float32),
+            np.zeros(0, dtype=np.int16),
+        ):
+            feed_audio(recorder, chunk, original_sample_rate=48000)
+
+        self.assertEqual(recorder.audio_queue.items, [])
+        self.assertEqual(len(recorder.buffer), 0)
+
+        # shorter than one 16 kHz sample: must not raise
+        feed_audio(recorder, np.full(2, 0.5, dtype=np.float32), original_sample_rate=48000)
+
+        feed_audio(recorder, np.full(12, 0.5, dtype=np.float32), original_sample_rate=48000)
+        self.assertEqual(len(recorder.audio_queue.items), 1)
+
     def test_feed_audio_file_feeds_minimal_chunks_and_pads_tail(self):
         recorder = RecorderStub(buffer_size=4)
         samples = np.arange(10, dtype=np.int16)

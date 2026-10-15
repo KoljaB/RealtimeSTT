@@ -28,6 +28,11 @@ def _numpy_audio_to_pcm16_bytes(chunk, original_sample_rate):
 
     if original_sample_rate != TARGET_SAMPLE_RATE:
         num_samples = int(len(chunk) * TARGET_SAMPLE_RATE / original_sample_rate)
+        if num_samples == 0:
+            # Empty, or shorter than one 16 kHz sample: scipy cannot resample to
+            # zero samples (ZeroDivisionError). Like the fraction int() already
+            # drops from every chunk, a sub-sample chunk yields no output.
+            return b""
         chunk = resample(chunk, num_samples)
 
     if original_is_float:
