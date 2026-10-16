@@ -515,7 +515,7 @@ class AudioToTextRecorderClient:
         if self.debug_mode:
             args.append('--debug')  # flag, no need for True/False
             
-        if self.language:
+        if self.language is not None:
             args += ['--language', self.language]
         if self.silero_sensitivity is not None:
             args += ['--silero_sensitivity', str(self.silero_sensitivity)]
