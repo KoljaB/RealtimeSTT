@@ -32,6 +32,8 @@ class ParentPipe:
         self.name = "ParentPipe"
         self._pipe = parent_synthesize_pipe
         self._closed = False
+        self._failure = None
+        self._state_lock = threading.Lock()
 
         self._request_queue = queue.Queue()
         self._stop_event = threading.Event()
@@ -42,6 +44,41 @@ class ParentPipe:
             daemon=True
         )
         self._worker_thread.start()
+
+    def _enqueue_request(self, request):
+        """Atomically admit work or report the worker's terminal failure."""
+        with self._state_lock:
+            if self._failure is not None:
+                raise BrokenPipeError(self._failure)
+            if self._closed:
+                return False
+            self._request_queue.put(request)
+        return True
+
+    def _finish_requests(self, error, current=None):
+        """Wake every admitted caller before the worker exits."""
+        with self._state_lock:
+            if self._failure is None:
+                try:
+                    detail = str(error)
+                except Exception:
+                    detail = "<unprintable exception>"
+                self._failure = f"Pipe worker stopped after {type(error).__name__}: {detail}"
+            if current is not None:
+                current["result_queue"].put((False, error))
+            while True:
+                try:
+                    request = self._request_queue.get_nowait()
+                except queue.Empty:
+                    break
+                request["result_queue"].put((False, BrokenPipeError(self._failure)))
+
+    @staticmethod
+    def _receive_result(result_queue, timeout=None):
+        succeeded, value = result_queue.get(timeout=timeout)
+        if not succeeded:
+            raise value
+        return value
 
     def _pipe_worker(self):
         """
@@ -61,30 +98,31 @@ class ParentPipe:
                     data = request["data"]
                     logger.debug("[%s] Worker: sending => %s", self.name, data)
                     self._pipe.send(data)
-                    request["result_queue"].put(None)
+                    request["result_queue"].put((True, None))
 
                 elif request["type"] == "RECV":
                     logger.debug("[%s] Worker: receiving...", self.name)
                     data = self._pipe.recv()
-                    request["result_queue"].put(data)
+                    request["result_queue"].put((True, data))
 
                 elif request["type"] == "POLL":
                     timeout = request.get("timeout", 0.0)
                     logger.debug("[%s] Worker: poll() with timeout: %s", self.name, timeout)
                     result = self._pipe.poll(timeout)
-                    request["result_queue"].put(result)
+                    request["result_queue"].put((True, result))
 
             except (EOFError, BrokenPipeError, OSError) as e:
                 # Notify the waiting caller when the child end closes first.
                 logger.debug("[%s] Worker: pipe closed or error occurred (%s). Shutting down.", self.name, e)
-                request["result_queue"].put(None)
+                self._finish_requests(e, request)
                 break
 
             except Exception as e:
                 logger.exception("[%s] Worker: unexpected error.", self.name)
-                request["result_queue"].put(e)
+                self._finish_requests(e, request)
                 break
 
+        self._finish_requests(EOFError("Pipe worker has stopped"))
         logger.debug("[%s] Worker: stopping.", self.name)
         try:
             self._pipe.close()
@@ -105,8 +143,9 @@ class ParentPipe:
             "data": data,
             "result_queue": result_queue
         }
-        self._request_queue.put(request)
-        result_queue.get()  # Wait until sending completes.
+        if not self._enqueue_request(request):
+            return
+        self._receive_result(result_queue)  # Wait until sending completes.
         logger.debug("[%s] send() completed", self.name)
 
     def recv(self):
@@ -122,8 +161,9 @@ class ParentPipe:
             "type": "RECV",
             "result_queue": result_queue
         }
-        self._request_queue.put(request)
-        data = result_queue.get()
+        if not self._enqueue_request(request):
+            return None
+        data = self._receive_result(result_queue)
 
         # Log a preview for huge byte blobs.
         if isinstance(data, tuple) and len(data) == 2 and isinstance(data[1], bytes):
@@ -146,10 +186,11 @@ class ParentPipe:
             "timeout": timeout,
             "result_queue": result_queue
         }
-        self._request_queue.put(request)
+        if not self._enqueue_request(request):
+            return False
         try:
             # Use a slightly longer timeout to give the worker a chance.
-            result = result_queue.get(timeout=timeout + 0.1)
+            result = self._receive_result(result_queue, timeout=timeout + 0.1)
         except queue.Empty:
             result = False
         logger.debug("[%s] poll() returning => %s", self.name, result)
@@ -159,13 +200,14 @@ class ParentPipe:
         """
         Closes the pipe and stops the worker thread.
         """
-        if self._closed:
-            return
-        logger.debug("[%s] close() called", self.name)
-        self._closed = True
-        stop_request = {"type": "CLOSE", "result_queue": queue.Queue()}
-        self._request_queue.put(stop_request)
-        self._stop_event.set()
+        with self._state_lock:
+            if self._closed:
+                return
+            logger.debug("[%s] close() called", self.name)
+            self._closed = True
+            stop_request = {"type": "CLOSE", "result_queue": queue.Queue()}
+            self._request_queue.put(stop_request)
+            self._stop_event.set()
         self._worker_thread.join()
         logger.debug("[%s] closed", self.name)
 

@@ -20,20 +20,30 @@ class InferencePriorityGate:
         self.live_delay_seconds = 0.0
 
     @contextmanager
-    def enter(self, lane):
+    def enter(self, lane, stop_event=None):
+        def stopping():
+            return stop_event is not None and stop_event.is_set()
+
         final = lane == 'main'
         started = time.monotonic()
         with self._condition:
             if final:
                 self._waiting_final += 1
                 try:
-                    self._condition.wait_for(lambda: not self._final)
+                    self._condition.wait_for(lambda: stopping() or not self._final)
+                    if stopping():
+                        raise RuntimeError("inference worker is stopping")
                     self._final = True
                 finally:
                     self._waiting_final -= 1
+                    self._condition.notify_all()
             else:
                 delayed = self._final or self._waiting_final > 0
-                self._condition.wait_for(lambda: not self._final and self._waiting_final == 0)
+                self._condition.wait_for(
+                    lambda: stopping() or (not self._final and self._waiting_final == 0)
+                )
+                if stopping():
+                    raise RuntimeError("inference worker is stopping")
                 self._live += 1
                 if delayed:
                     self.live_delays += 1
@@ -47,6 +57,10 @@ class InferencePriorityGate:
                 else:
                     self._live -= 1
                 self._condition.notify_all()
+
+    def wake_waiters(self):
+        with self._condition:
+            self._condition.notify_all()
 
     def snapshot(self):
         with self._condition:

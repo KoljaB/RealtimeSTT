@@ -345,14 +345,24 @@ class KrokoFp32Engine(BaseTranscriptionEngine):
                 continue
             if raw is None:
                 code = process.poll()
+                self._discard_process(process)
                 raise TranscriptionEngineError(
                     f"kroko_fp32 process exited unexpectedly (code {code}){self._stderr_detail()}"
                 )
-            response = self._decode_response(raw)
-            if response.get("id") != request_id:
-                raise TranscriptionEngineError(
-                    f"kroko_fp32 response id mismatch: expected {request_id}, got {response.get('id')}"
-                )
+            try:
+                response = self._decode_response(raw)
+                if response.get("id") != request_id:
+                    raise TranscriptionEngineError(
+                        f"kroko_fp32 response id mismatch: expected {request_id}, got {response.get('id')}"
+                    )
+                if response.get("type") not in ("result", "error", "cancelled"):
+                    raise TranscriptionEngineError(
+                        f"Unexpected kroko_fp32 response: {response!r}"
+                    )
+            except TranscriptionEngineError:
+                # A broken protocol cannot safely associate later replies with requests.
+                self._discard_process(process)
+                raise
             if cancel_event.is_set() or response.get("type") == "cancelled":
                 raise TranscriptionEngineError("Kroko FP32 transcription cancelled")
             return response
@@ -409,6 +419,7 @@ class KrokoFp32Engine(BaseTranscriptionEngine):
                     responses, process, request_id, cancel_event
                 )
             except (BrokenPipeError, OSError) as exc:
+                self._discard_process(process)
                 raise TranscriptionEngineError(
                     f"Could not communicate with kroko_fp32 process: {exc}{self._stderr_detail()}"
                 ) from exc
@@ -421,10 +432,6 @@ class KrokoFp32Engine(BaseTranscriptionEngine):
         if response.get("type") == "error":
             raise TranscriptionEngineError(
                 f"Kroko FP32 inference failed: {response.get('error', 'unknown native error')}"
-            )
-        if response.get("type") != "result":
-            raise TranscriptionEngineError(
-                f"Unexpected kroko_fp32 response: {response!r}"
             )
         metadata = {
             **self.runtime_metadata,

@@ -290,6 +290,66 @@ class KrokoFp32EngineTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_protocol_failure_discards_process_and_successor_restarts(self):
+        invalid_responses = (
+            b"not json\n", b"\xff\n", b"[]\n",
+            b'{"type":"result","id":999}\n',
+            b'{"type":"unexpected","id":1}\n',
+            b'{"type":[],"id":1}\n', b"",
+        )
+        for response in invalid_responses:
+            with self.subTest(response=response):
+                factory = FakePopenFactory()
+                engine = KrokoFp32Engine(self.config(), popen_factory=factory)
+                failed_process = factory.processes[0]
+                try:
+                    failed_process.stdout.push(response)
+                    with self.assertRaises(TranscriptionEngineError):
+                        engine.transcribe(np.zeros(160), language="en")
+                    self.assertIsNotNone(failed_process.returncode)
+                    self.assertEqual(
+                        engine.transcribe(np.zeros(160), language="en").text,
+                        "Please schedule the meeting.",
+                    )
+                    self.assertEqual(len(factory.processes), 2)
+                finally:
+                    engine.close()
+
+    def test_write_failure_discards_process_and_successor_restarts(self):
+        factory = FakePopenFactory()
+        engine = KrokoFp32Engine(self.config(), popen_factory=factory)
+        failed_process = factory.processes[0]
+        try:
+            failed_process.stdin.closed = True
+            with self.assertRaisesRegex(TranscriptionEngineError, "Could not communicate"):
+                engine.transcribe(np.zeros(160), language="en")
+            self.assertIsNotNone(failed_process.returncode)
+            self.assertEqual(
+                engine.transcribe(np.zeros(160), language="en").text,
+                "Please schedule the meeting.",
+            )
+            self.assertEqual(len(factory.processes), 2)
+        finally:
+            engine.close()
+
+    def test_native_inference_error_keeps_resident_process(self):
+        factory = FakePopenFactory(responses=[False])
+        engine = KrokoFp32Engine(self.config(), popen_factory=factory)
+        process = factory.processes[0]
+        try:
+            process.stdout.push(b'{"type":"error","id":1,"error":"test failure"}\n')
+            with self.assertRaisesRegex(TranscriptionEngineError, "inference failed: test failure"):
+                engine.transcribe(np.zeros(160), language="en")
+            self.assertIsNone(process.returncode)
+            process.respond = True
+            self.assertEqual(
+                engine.transcribe(np.zeros(160), language="en").text,
+                "Please schedule the meeting.",
+            )
+            self.assertEqual(len(factory.processes), 1)
+        finally:
+            engine.close()
+
     def test_requires_cpu_model_files_and_executable(self):
         config = self.config()
         config.device = "cuda"

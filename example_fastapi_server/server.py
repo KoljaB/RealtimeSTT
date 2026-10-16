@@ -1163,9 +1163,14 @@ class SharedEngineWorker:
         )
         self.thread.start()
 
-    def stop(self):
+    def request_stop(self):
         self.stop_event.set()
+        if self.inference_gate is not None:
+            self.inference_gate.wake_waiters()
         self.queue.close()
+
+    def stop(self):
+        self.request_stop()
         if self.thread is not None:
             self.thread.join(timeout=10)
         self.close_engine()
@@ -1202,10 +1207,11 @@ class SharedEngineWorker:
                     f"{self.name} inference engine does not expose create_streaming_session"
                 )
             try:
-                try:
-                    session = creator(language=language, use_prompt=use_prompt)
-                except TypeError:
-                    session = creator()
+                from RealtimeSTT.transcription_engines.base import _call_streaming_factory
+
+                session = _call_streaming_factory(
+                    creator, language=language, use_prompt=use_prompt,
+                )
             except Exception as exc:
                 raise RuntimeError(
                     f"Could not create {self.name} realtime streaming session: {exc}"
@@ -1371,8 +1377,15 @@ class SharedEngineWorker:
                 if claimed:
                     if self.engine is None:
                         raise RuntimeError(f"{self.name} inference engine is unavailable")
-                    with (self.inference_gate.enter(self.name) if self.inference_gate else nullcontext()), self.engine_lock:
-                        if self.engine is None or self._engine_closed:
+                    slot = (
+                        self.inference_gate.enter(
+                            "main" if job.kind == "final" else job.kind,
+                            stop_event=self.stop_event,
+                        )
+                        if self.inference_gate else nullcontext()
+                    )
+                    with slot, self.engine_lock:
+                        if self.stop_event.is_set() or self.engine is None or self._engine_closed:
                             raise RuntimeError(
                                 f"{self.name} inference engine is unavailable"
                             )
@@ -1431,26 +1444,32 @@ class SharedEngineWorker:
             self.queue_delay.record(queue_delay)
             self.inference_duration.record(inference_duration)
             self.total_latency.record(total_latency)
-            self.result_callback(
-                InferenceResult(
-                    request_id=job.request_id,
-                    session_id=job.session_id,
-                    kind=job.kind,
-                    segment_id=job.segment_id,
-                    sequence=job.sequence,
-                    generation=job.generation,
-                    text=text,
-                    error=error,
-                    created_at=job.created_at,
-                    started_at=started_at,
-                    completed_at=completed_at,
-                    queue_delay=queue_delay,
-                    inference_duration=inference_duration,
-                    total_latency=total_latency,
-                    info=info,
-                    metadata=metadata,
+            try:
+                self.result_callback(
+                    InferenceResult(
+                        request_id=job.request_id,
+                        session_id=job.session_id,
+                        kind=job.kind,
+                        segment_id=job.segment_id,
+                        sequence=job.sequence,
+                        generation=job.generation,
+                        text=text,
+                        error=error,
+                        created_at=job.created_at,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        queue_delay=queue_delay,
+                        inference_duration=inference_duration,
+                        total_latency=total_latency,
+                        info=info,
+                        metadata=metadata,
+                    )
                 )
-            )
+            except Exception:
+                LOGGER.exception(
+                    "Could not deliver inference result for request %s",
+                    job.request_id,
+                )
 
     def _warmup(self):
         if not self.settings.model_warmup or self.engine is None:
@@ -1491,11 +1510,19 @@ class LockedStreamingSession:
                 f"streaming session does not expose {method_name}()"
             )
         gate = self.worker.inference_gate
-        slot = gate.enter(self.worker.name) if gate and method_name in {"accept_audio", "decode", "finish", "input_finished"} else nullcontext()
+        slot = (
+            gate.enter("realtime", stop_event=self.worker.stop_event)
+            if gate and method_name in {"accept_audio", "decode", "finish", "input_finished"}
+            else nullcontext()
+        )
         with slot, self.worker.engine_lock:
             if self.closed:
                 raise RuntimeError("streaming session is closed")
-            if self.worker.engine is None or self.worker._engine_closed:
+            if (
+                self.worker.stop_event.is_set()
+                or self.worker.engine is None
+                or self.worker._engine_closed
+            ):
                 raise RuntimeError("streaming engine is closed")
             return method(*args, **kwargs)
 
@@ -1624,11 +1651,15 @@ class InferenceScheduler:
             self.ultrafast_worker.start()
 
     def stop(self):
-        self.main_worker.stop()
-        if self.realtime_worker is not None:
-            self.realtime_worker.stop()
-        if self.ultrafast_worker is not None:
-            self.ultrafast_worker.stop()
+        workers = [worker for worker in (
+            self.main_worker, self.realtime_worker, self.ultrafast_worker,
+        ) if worker is not None]
+        # Signal every lane before joining: a deferred live call must not wait
+        # for a slow final to finish before it can observe shutdown.
+        for worker in workers:
+            worker.request_stop()
+        for worker in workers:
+            worker.stop()
 
     def wait_ready(self, timeout=None):
         deadline = None if timeout is None else time.monotonic() + timeout

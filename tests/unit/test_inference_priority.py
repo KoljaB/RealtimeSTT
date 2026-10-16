@@ -81,6 +81,46 @@ class Tests(unittest.TestCase):
         self.assertTrue(entered.is_set())
         self.assertFalse(g.snapshot()['finalActive'])
 
+    def test_stopping_wakes_deferred_live_and_final_operations(self):
+        for lane in ("main", "realtime"):
+            with self.subTest(lane=lane):
+                gate = InferencePriorityGate()
+                stop = threading.Event()
+                attempted = threading.Event()
+                done = threading.Event()
+                errors = []
+                admitted = []
+
+                def waiting():
+                    attempted.set()
+                    try:
+                        with gate.enter(lane, stop_event=stop):
+                            admitted.append(True)
+                    except RuntimeError as exc:
+                        errors.append(str(exc))
+                    finally:
+                        done.set()
+
+                with gate.enter("main"):
+                    thread = threading.Thread(target=waiting, daemon=True)
+                    thread.start()
+                    try:
+                        self.assertTrue(attempted.wait(1))
+                        self.assertFalse(done.wait(.03))
+                        stop.set()
+                        gate.wake_waiters()
+                        self.assertTrue(done.wait(1))
+                        self.assertEqual(admitted, [])
+                        self.assertEqual(errors, ["inference worker is stopping"])
+                        self.assertTrue(gate.snapshot()["finalActive"])
+                        self.assertEqual(gate.snapshot()["waitingFinal"], 0)
+                    finally:
+                        stop.set()
+                thread.join(1)
+                self.assertFalse(thread.is_alive())
+                with gate.enter("realtime"):
+                    pass
+
     def test_two_live_lanes_can_overlap(self):
         g=InferencePriorityGate();done=threading.Event()
         def other():

@@ -20,14 +20,16 @@ def _ends_in_alnum(text):
     """
     Checks whether text ends in a letter or digit, looking past trailing
     combining vowel signs and accents (Mn/Mc): Hindi "है" ends in a vowel sign,
-    which isalnum() rejects. Variation selectors stay excluded, so an emoji
-    such as "❤️" still counts as non-alphanumeric.
+    which isalnum() rejects. Selectors U+FE00-U+FE0F, including text/emoji
+    presentation selectors VS15/VS16, are not skipped, so emoji endings
+    such as "❤️" remain non-alphanumeric. Other Mn/Mc selectors, including
+    supplementary ideographic selectors, are traversed like other marks.
     """
     i = len(text) - 1
     while (
         i > 0
         and unicodedata.category(text[i]) in ("Mn", "Mc")
-        and not "︀" <= text[i] <= "️"
+        and not "\ufe00" <= text[i] <= "\ufe0f"
     ):
         i -= 1
     return text[i].isalnum()

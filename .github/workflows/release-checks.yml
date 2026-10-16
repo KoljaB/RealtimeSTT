@@ -37,6 +37,8 @@ jobs:
           python -m pip install -e ".[server]" "httpx>=0.27,<1"
       - name: Run unit tests
         run: python -m unittest discover -s tests/unit -p "test_*.py"
+      - name: Run Preview and tail regression tests
+        run: python -m unittest tests.test_preview_transcription tests.test_tail_transcription
 
   package:
     name: build and clean distribution smoke

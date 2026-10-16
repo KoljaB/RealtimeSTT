@@ -4600,6 +4600,14 @@ def _service_raw_transcription(service: Any, audio: Any, language: str, timeout:
         service._pop_pending_recorder_result(request_id)
         raise RuntimeError(result.reason or "final transcription queue rejected the request")
     if not holder["event"].wait(timeout=timeout):
+        try:
+            service.scheduler.cancel_request(request_id)
+        except Exception:
+            LOGGER.warning(
+                "Could not cancel timed-out HTTP transcription %s",
+                request_id,
+                exc_info=True,
+            )
         service._pop_pending_recorder_result(request_id)
         raise TimeoutError("final transcription timed out")
     service._pop_pending_recorder_result(request_id)

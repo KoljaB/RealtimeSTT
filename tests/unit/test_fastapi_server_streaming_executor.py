@@ -109,6 +109,80 @@ class FastAPIServerStreamingExecutorTests(unittest.TestCase):
         worker.ready.set()
         return worker, engine
 
+    def test_result_callback_failure_does_not_kill_worker(self):
+        worker, engine = self.make_worker()
+        received = []
+        successor_ready = threading.Event()
+
+        def capture(result):
+            if result.request_id == "first":
+                raise RuntimeError("test callback failed")
+            received.append(result)
+            successor_ready.set()
+
+        worker.result_callback = capture
+        with self.assertLogs("realtimestt.fastapi", level="ERROR") as logs:
+            worker.start()
+            try:
+                for request_id in ("first", "second"):
+                    self.assertTrue(worker.queue.submit(InferenceJob(
+                        request_id=request_id, session_id=request_id,
+                        kind="realtime", audio=[1], language="en", use_prompt=False,
+                        segment_id=1, sequence=1, generation=1,
+                        created_at=time.monotonic(),
+                    )).accepted)
+                self.assertTrue(successor_ready.wait(1))
+                self.assertTrue(worker.thread.is_alive())
+                self.assertEqual(received[0].text, "ordinary")
+                self.assertIsNone(received[0].error)
+                self.assertEqual(len(engine.transcribe_calls), 2)
+            finally:
+                worker.stop()
+        self.assertIn("first", "\n".join(logs.output))
+        self.assertIn("test callback failed", "\n".join(logs.output))
+
+    def test_factory_type_error_is_not_retried_without_language(self):
+        engine = FakeStreamingEngine()
+        calls = []
+
+        def create(language=None, use_prompt=True):
+            calls.append((language, use_prompt))
+            if language == "de":
+                raise TypeError("backend factory failed")
+            return FakeStreamingSession(engine)
+
+        engine.create_streaming_session = create
+        worker, _ = self.make_worker(engine)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "backend factory failed") as error:
+                worker.create_streaming_session(language="de", use_prompt=False)
+            self.assertIsInstance(error.exception.__cause__, TypeError)
+            self.assertEqual(calls, [("de", False)])
+        finally:
+            worker.close_engine()
+
+    def test_legacy_no_argument_factories_remain_supported(self):
+        for opaque in (False, True):
+            with self.subTest(opaque=opaque):
+                engine = FakeStreamingEngine()
+                session = FakeStreamingSession(engine)
+                calls = []
+
+                def create():
+                    calls.append(True)
+                    return session
+
+                if opaque:
+                    create.__signature__ = object()
+                engine.create_streaming_session = create
+                worker, _ = self.make_worker(engine)
+                try:
+                    proxy = worker.create_streaming_session(language="de", use_prompt=False)
+                    self.assertIs(proxy.session, session)
+                    self.assertEqual(calls, [True])
+                finally:
+                    worker.close_engine()
+
     def test_worker_preserves_provider_language_metadata(self):
         results = []
         result_ready = threading.Event()

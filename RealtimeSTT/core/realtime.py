@@ -10,6 +10,7 @@ import time
 
 import numpy as np
 
+from ..transcription_engines.base import _call_streaming_factory
 from .realtime_boundary_detector import RealtimeSpeechBoundaryDetector
 from .realtime_text_stabilizer import (
     RealtimeTextObservation,
@@ -701,13 +702,11 @@ def run_realtime_worker(recorder):
         Creates a realtime streaming session for a target model.
         """
 
-        try:
-            return target.create_streaming_session(
-                language=self.language if self.language else None,
-                use_prompt=True,
-            )
-        except TypeError:
-            return target.create_streaming_session()
+        return _call_streaming_factory(
+            target.create_streaming_session,
+            language=self.language if self.language else None,
+            use_prompt=True,
+        )
 
     def _ensure_streaming_session(recording_id):
         """
