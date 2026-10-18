@@ -182,6 +182,7 @@ allowed_methods = [
 allowed_parameters = [
     'language',
     'silero_sensitivity',
+    'silero_deactivity_detection',
     'wake_word_activation_delay',
     'post_speech_silence_duration',
     'deactivity_silence_confirmation_duration',
@@ -466,8 +467,8 @@ def parse_arguments():
     parser.add_argument('--realtime_processing_pause', type=float, default=0.02,
                         help='Time interval (in seconds) between processing audio chunks for real-time transcription. Lower values increase responsiveness but may put more load on the CPU. Default is 0.02 seconds.')
 
-    parser.add_argument('--silero_deactivity_detection', action='store_true', default=True,
-                        help='Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources. Default is True.')
+    parser.add_argument('--silero_deactivity_detection', action=argparse.BooleanOptionalAction, default=True,
+                        help='Use the Silero model for end-of-speech detection. This option can provide more robust silence detection in noisy environments, though it consumes more GPU resources. Default is True. Pass --no-silero_deactivity_detection to turn it off.')
 
     parser.add_argument('--deactivity_silence_confirmation_duration', type=float, default=DEACTIVITY_SILENCE_CONFIRMATION_DURATION,
                         help='Seconds of continuous VAD silence required before end-of-speech silence is confirmed. Default is 0.16 seconds.')
