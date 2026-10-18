@@ -26,6 +26,20 @@ class StartServerArgsTests(unittest.TestCase):
 
         self.assertEqual(args[args.index("--language") + 1], "de")
 
+    def test_default_silero_deactivity_detection_is_sent_as_false(self):
+        # The client defaults to False (like AudioToTextRecorder), but the server's own
+        # default is True, so the client must send the flag explicitly to turn it off.
+        args = self._server_args()
+
+        self.assertIn("--no-silero_deactivity_detection", args)
+        self.assertNotIn("--silero_deactivity_detection", args)
+
+    def test_silero_deactivity_detection_true_is_sent_explicitly(self):
+        args = self._server_args(silero_deactivity_detection=True)
+
+        self.assertIn("--silero_deactivity_detection", args)
+        self.assertNotIn("--no-silero_deactivity_detection", args)
+
 
 if __name__ == "__main__":
     unittest.main()
