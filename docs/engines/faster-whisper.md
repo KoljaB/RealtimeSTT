@@ -90,6 +90,32 @@ CPU runs are usually more practical with small models and `compute_type="int8"`.
 | `faster_whisper_vad_filter` | Passed as `vad_filter`. |
 | `normalize_audio` | Normalizes audio before transcription when enabled. |
 
+## Engine Options
+
+Use `transcription_engine_options` (and `realtime_transcription_engine_options`
+for the realtime model) to pass backend-specific options this adapter does not
+map directly:
+
+| Option bucket | Meaning |
+| --- | --- |
+| `transcription_engine_options["model"]` | Merged into `WhisperModel(...)` construction. |
+| `transcription_engine_options["transcribe"]` | Merged into `model.transcribe(...)`, overriding the mapped defaults above. |
+
+For example, Whisper's built-in speech translation task (any supported source
+language to English) can be enabled with:
+
+```python
+recorder = AudioToTextRecorder(
+    model="small",
+    language="es",
+    transcription_engine_options={"transcribe": {"task": "translate"}},
+)
+```
+
+Other useful `transcribe` options include `temperature`,
+`condition_on_previous_text`, and `word_timestamps`; `model` options include
+`cpu_threads` and `num_workers`.
+
 ## Realtime Suggestions
 
 Use a smaller realtime model than the final model:
