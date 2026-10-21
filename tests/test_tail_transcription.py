@@ -243,6 +243,17 @@ class TailTranscriptionHelperTests(unittest.TestCase):
         self.assertFalse(result.matched)
         self.assertEqual(result.text, "The original live transcript")
 
+    def test_devanagari_vowel_marks_prevent_false_exact_anchor(self):
+        result = merge_live_and_tail_transcription(
+            "आज शाम को मेरा घर है",
+            "शोर को मेरा घर हो गया",
+        )
+
+        self.assertTrue(result.matched)
+        self.assertFalse(result.used_fuzzy_match)
+        self.assertEqual(result.anchor_length, 3)
+        self.assertEqual(result.text, "आज शाम को मेरा घर हो गया")
+
     def test_short_live_transcript_does_not_use_weak_anchor(self):
         result = merge_live_and_tail_transcription(
             "hello world",
