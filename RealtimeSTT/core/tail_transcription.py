@@ -3,8 +3,8 @@ Helpers for low-latency finalization from the most recent speech tail.
 """
 
 from dataclasses import dataclass
-import re
 from typing import List, Optional, Sequence, Tuple
+import unicodedata
 
 import numpy as np
 
@@ -19,8 +19,6 @@ MAX_FUZZY_ANCHOR_DISTANCE = 1
 MIN_PARTIAL_WORD_PREFIX_LENGTH = 2
 MIN_CLOSE_WORD_LENGTH = 4
 INT16_MAX_ABS_VALUE = 32768.0
-
-_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -41,13 +39,28 @@ class TailMergeResult:
 def _tokenize_words(text: str) -> List[Tuple[str, str]]:
     """
     Returns raw whitespace-delimited words and normalized comparison forms.
+    Preserves combining marks for Brahmic scripts to handle vowel signs correctly.
     """
 
     tokens = []
     for raw_word in str(text or "").split():
-        normalized = "".join(_WORD_RE.findall(raw_word.casefold()))
+        # Build normalized form character by character
+        normalized_chars = []
+        for char in raw_word:
+            # Keep alphanumeric characters
+            if char.isalnum():
+                normalized_chars.append(char)
+            # Keep combining marks for Brahmic scripts (Devanagari, Bengali, Tamil, Telugu, etc.)
+            elif unicodedata.category(char) in ('Mn', 'Mc'):
+                # Check if the character is in Brahmic range
+                code_point = ord(char)
+                if 0x0900 <= code_point <= 0x0DFF:  # Brahmic blocks
+                    normalized_chars.append(char)
+                # For other scripts, we discard combining marks to avoid breaking
+                # existing behavior for Arabic harakat, etc.
+        normalized = "".join(normalized_chars)
         if normalized:
-            tokens.append((raw_word, normalized))
+            tokens.append((raw_word, normalized.casefold()))
     return tokens
 
 
