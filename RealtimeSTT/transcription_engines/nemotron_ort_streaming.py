@@ -124,29 +124,65 @@ class NemotronOrtStream:
     def text(self) -> str:
         return self.model.detokenize(self.state.tokens)
 
-    def flush_snapshot(self, pad_seconds: Optional[float] = None) -> dict:
-        """Decode the open chunk on a fork padded with silence; the stream is unchanged."""
+    def flush_snapshot(
+        self,
+        pad_seconds: Optional[float] = None,
+        *,
+        refine_pad_seconds: Optional[float] = None,
+        on_first=None,
+    ) -> dict:
+        """Decode the open chunk on a fork padded with silence; the stream is unchanged.
+
+        With ``refine_pad_seconds`` the same fork continues over a longer
+        silence pad after the first result has been handed to ``on_first``.
+        The first stage equals a plain flush with ``pad_seconds``; the refined
+        text equals a plain flush with ``refine_pad_seconds``.  A word that the
+        model only emits after more right context (``awe`` -> ``awesome``)
+        usually completes in the refined text.
+        """
 
         started = time.perf_counter()
         pad = self.model.chunk_seconds if pad_seconds is None else float(pad_seconds)
+        refine = None if refine_pad_seconds is None else max(pad, float(refine_pad_seconds))
+        pad_samples = int(round(pad * SAMPLE_RATE))
+        total_pad = int(round((refine if refine is not None else pad) * SAMPLE_RATE))
         state = self.state.fork()
         fbank = self.model._new_fbank()
-        audio = np.concatenate((self._tail, np.zeros(int(round(pad * SAMPLE_RATE)), dtype=np.float32)))
+        audio = np.concatenate((self._tail, np.zeros(total_pad, dtype=np.float32)))
         fbank.accept_waveform(SAMPLE_RATE, audio.tolist())
         fbank.input_finished()
         base = self._tail_start // FRAME_SHIFT_SAMPLES
+        # Frames a finished extractor holds for the shorter pad (rounded like
+        # kaldi-native-fbank with snip_edges=False).
+        first_ready = (self._tail.size + pad_samples + FRAME_SHIFT_SAMPLES // 2) // FRAME_SHIFT_SAMPLES
         steps = 0
-        while base + fbank.num_frames_ready > state.processed_frames + self.model.window_size:
+        while base + min(first_ready, fbank.num_frames_ready) > state.processed_frames + self.model.window_size:
             frames = self.model._frames(fbank, state.processed_frames - base)
             state = self.model._step(state, frames, self.prompt_id)
             steps += 1
-        return {
+        first = {
             "text": self.model.detokenize(state.tokens),
             "live_text": self.text(),
             "steps": steps,
             "flush_ms": (time.perf_counter() - started) * 1000.0,
             "audio_end_sample": self.samples_seen,
             "pad_seconds": pad,
+        }
+        if refine is None:
+            return first
+        if on_first is not None:
+            on_first(first)
+        refine_steps = 0
+        while base + fbank.num_frames_ready > state.processed_frames + self.model.window_size:
+            frames = self.model._frames(fbank, state.processed_frames - base)
+            state = self.model._step(state, frames, self.prompt_id)
+            refine_steps += 1
+        return {
+            **first,
+            "refined_text": self.model.detokenize(state.tokens),
+            "refine_steps": refine_steps,
+            "refined_ms": (time.perf_counter() - started) * 1000.0,
+            "refine_pad_seconds": refine,
         }
 
     def finish(self, pad_seconds: Optional[float] = None) -> str:
@@ -416,14 +452,19 @@ class NemotronOrtStreamingSession(StreamingTranscriptionSession):
             return self._result(self._final_text)
         return self._result(self.stream.text() if self.stream is not None else "")
 
-    def flush_snapshot(self, pad_seconds=None) -> dict:
+    def flush_snapshot(self, pad_seconds=None, *, refine_chunks=None, on_first=None) -> dict:
+        """Snapshot flush; ``refine_chunks`` (e.g. 2) adds a refined stage."""
+
         if self.closed or self.stream is None:
             raise TranscriptionEngineError("Cannot flush a closed nemotron_ort session.")
         if self._final_text is not None:
             return {"text": self._final_text, "live_text": self._final_text, "steps": 0,
                     "flush_ms": 0.0, "audio_end_sample": self.stream.samples_seen, "pad_seconds": 0.0}
         pad = self.engine.flush_pad_seconds if pad_seconds is None else pad_seconds
-        return self.stream.flush_snapshot(pad)
+        refine_pad = None
+        if refine_chunks:
+            refine_pad = float(refine_chunks) * self.engine.model.chunk_seconds
+        return self.stream.flush_snapshot(pad, refine_pad_seconds=refine_pad, on_first=on_first)
 
     def finish(self):
         if self.closed:

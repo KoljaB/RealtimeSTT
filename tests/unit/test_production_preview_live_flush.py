@@ -47,11 +47,16 @@ class _Service:
 
 
 class _FlushSession:
-    def __init__(self, text):
+    def __init__(self, text, refined=None):
         self.text = text
+        self.refined = refined
 
-    def flush_snapshot(self):
-        return {"text": self.text, "live_text": "live", "steps": 1, "flush_ms": 50.0}
+    def flush_snapshot(self, refine_chunks=None, on_first=None):
+        first = {"text": self.text, "live_text": "live", "steps": 1, "flush_ms": 50.0}
+        if not refine_chunks:
+            return first
+        on_first(first)
+        return {**first, "refined_text": self.refined, "refine_steps": 1, "refined_ms": 95.0}
 
 
 class LiveFlushPreviewTests(unittest.TestCase):
@@ -75,11 +80,43 @@ class LiveFlushPreviewTests(unittest.TestCase):
         return protocol, service, manager
 
     @staticmethod
-    def _request(protocol, source="live_flush"):
+    def _request(protocol, source="live_flush", refine=False):
         payload = {"type": "preview", "turnId": "turn", "previewRequestId": "r1"}
         if source:
             payload["pauseTextSource"] = source
+        if refine:
+            payload["pauseTextRefine"] = True
         return asyncio.run(protocol.preview(payload))
+
+    def test_refined_flush_follows_the_preview(self):
+        protocol, _service, manager = self._protocol(flush_text="that sounds awe")
+        protocol.turn.live_stream = _FlushSession("that sounds awe", refined="that sounds awesome")
+        self._request(protocol, refine=True)
+        item = protocol.turn.live_queue.get_nowait()
+        self.assertTrue(item.refine)
+        protocol._run_live_flush("turn", 1, protocol.turn.live_stream, item, SR * 2)
+        manager.wait_for(3)
+        preview, refined, record = manager.events
+        self.assertEqual(preview["type"], "preview")
+        self.assertEqual(preview["text"], "that sounds awe")
+        self.assertTrue(preview["refinePending"])
+        self.assertEqual(refined["type"], "previewRefined")
+        self.assertEqual(refined["previewRequestId"], "r1")
+        self.assertEqual(refined["text"], "that sounds awesome")
+        self.assertTrue(refined["changed"])
+        self.assertEqual(record["type"], "previewRecord")
+        # The refined event does not consume or replace the Preview result.
+        self.assertEqual(protocol.turn.preview_status, "flush")
+
+    def test_unrequested_refine_sends_one_preview_without_pending_flag(self):
+        protocol, _service, manager = self._protocol(flush_text="hello there")
+        self._request(protocol)
+        item = protocol.turn.live_queue.get_nowait()
+        self.assertFalse(item.refine)
+        protocol._run_live_flush("turn", 1, protocol.turn.live_stream, item, SR * 2)
+        manager.wait_for(2)
+        self.assertFalse(manager.events[0]["refinePending"])
+        self.assertEqual([e["type"] for e in manager.events], ["preview", "previewRecord"])
 
     def test_flush_answers_preview_and_record_follows(self):
         protocol, service, manager = self._protocol(flush_text="hello there")

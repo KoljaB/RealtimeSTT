@@ -125,6 +125,9 @@ class _LiveFlushRequest:
     candidate_base_text: str
     resume_request_id: Optional[str]
     resume_epoch: int
+    # Continue the same fork over a second padded chunk and publish the
+    # longer text as a previewRefined event after the Preview.
+    refine: bool = False
     done: threading.Event = field(default_factory=threading.Event)
     published: bool = False
 
@@ -3913,11 +3916,13 @@ class ProductionSessionProtocol:
         *,
         preview_epoch: int,
         cancelled: threading.Event,
+        event_type: str = "previewRecord",
     ) -> None:
-        """Publish the full-model text of a flush-answered Preview.
+        """Publish a side event of a flush-answered Preview.
 
-        It does not consume the Preview token or change completion state; the
-        flush already answered the request.
+        ``previewRecord`` carries the full-model text, ``previewRefined`` the
+        longer flush.  Neither consumes the Preview token or changes
+        completion state; the flush already answered the request.
         """
 
         with self._lock:
@@ -3932,7 +3937,7 @@ class ProductionSessionProtocol:
             ):
                 return
             event = dict(payload)
-            event["type"] = "previewRecord"
+            event["type"] = event_type
             if turn.connection_epoch is not None:
                 event["_connectionEpoch"] = turn.connection_epoch
             publish = getattr(self.manager, "publish_session")
@@ -3954,95 +3959,147 @@ class ProductionSessionProtocol:
         try:
             if request.cancelled.is_set():
                 return
-            result = stream.flush_snapshot()
-            text = " ".join(str(result.get("text") or "").split())
-            if not text:
-                # An empty flush (e.g. a cold stream that dropped the onset)
-                # must not claim the Preview; the record decode answers it.
-                return
-            publish_ready_at = time.monotonic()
-            candidate_active = request.candidate_id is not None
-            payload = {
-                "type": "preview",
-                "turnId": turn_id,
-                "previewRequestId": request.request_id,
-                "previewMode": request.preview_mode,
-                "pauseTextSource": "live_flush",
-                "text": text,
-                "cumulativeText": text,
-                "liveText": " ".join(str(result.get("live_text") or "").split()),
-                "tailText": text,
-                "previewModelText": text,
-                "previewText": text,
-                "status": "flush",
-                "matched": False,
-                "usedFuzzyMatch": False,
-                "anchorLength": 0,
-                "distance": 0,
-                "audioRevision": request.audio_revision,
-                "audioPackets": request.audio_packets,
-                "audioFrames": request.audio_frames,
-                "inputScope": request.input_scope,
-                "previewInputCoverage": "full_turn",
-                "inputSeconds": (request.input_sample_end - request.input_sample_start)
-                / float(SERVER_SAMPLE_RATE),
-                "inputSampleRange": {
-                    "start": int(request.input_sample_start),
-                    "end": int(request.input_sample_end),
-                },
-                "inputByteRange": {
-                    "start": int(request.input_sample_start * 2),
-                    "end": int(request.input_sample_end * 2),
-                },
-                "candidateId": request.candidate_id,
-                "candidateBaseText": request.candidate_base_text if candidate_active else None,
-                "candidateCumulativeText": text if candidate_active else None,
-                "resumeId": request.resume_request_id,
-                "resumeRequestId": request.resume_request_id,
-                "resumeEpoch": request.resume_epoch if candidate_active else None,
-                "candidateInputScope": "full_turn" if candidate_active else None,
-                "candidateStartSample": int(request.candidate_start_sample),
-                "candidateStartByte": int(request.candidate_start_byte),
-                "candidateSampleRange": (
-                    {"start": int(request.candidate_start_sample), "end": int(request.audio_frames)}
-                    if candidate_active
-                    else None
-                ),
-                "candidateByteRange": (
-                    {"start": int(request.candidate_start_byte), "end": int(request.audio_frames * 2)}
-                    if candidate_active
-                    else None
-                ),
-                "previewTiming": {
-                    "pauseTextSource": "live_flush",
-                    "flushMs": round(float(result.get("flush_ms") or 0.0), 3),
-                    "flushSteps": int(result.get("steps") or 0),
-                    "liveAudioEndSample": int(live_audio_end),
-                    "requestToPublishMs": round(
-                        max(0.0, publish_ready_at - request.requested_at) * 1000.0,
-                        3,
+            if request.refine:
+                result = stream.flush_snapshot(
+                    refine_chunks=2,
+                    on_first=lambda first: self._publish_live_flush(
+                        turn_id, generation, request, first, live_audio_end, refine_pending=True
                     ),
-                },
-            }
-            if candidate_active:
-                payload["candidateText"] = ""
-                payload["candidateOnlyText"] = ""
-            self._publish_preview_result(
-                turn_id,
-                generation,
-                request.request_id,
-                request.audio_revision,
-                payload,
-                "flush",
-                None,
-                preview_epoch=request.preview_epoch,
-                cancelled=request.cancelled,
-            )
-            request.published = True
+                )
+                refined = " ".join(str(result.get("refined_text") or "").split())
+                if request.published and refined:
+                    self._publish_preview_record(
+                        turn_id,
+                        generation,
+                        {
+                            "type": "previewRefined",
+                            "turnId": turn_id,
+                            "previewRequestId": request.request_id,
+                            "pauseTextSource": "live_flush",
+                            "text": refined,
+                            "firstText": " ".join(str(result.get("text") or "").split()),
+                            "changed": refined != " ".join(str(result.get("text") or "").split()),
+                            "candidateId": request.candidate_id,
+                            "resumeId": request.resume_request_id,
+                            "previewTiming": {
+                                "refinedMs": round(float(result.get("refined_ms") or 0.0), 3),
+                                "refineSteps": int(result.get("refine_steps") or 0),
+                                "requestToPublishMs": round(
+                                    max(0.0, time.monotonic() - request.requested_at) * 1000.0,
+                                    3,
+                                ),
+                            },
+                        },
+                        preview_epoch=request.preview_epoch,
+                        cancelled=request.cancelled,
+                        event_type="previewRefined",
+                    )
+            else:
+                self._publish_live_flush(
+                    turn_id, generation, request, stream.flush_snapshot(), live_audio_end, refine_pending=False
+                )
         except Exception:
             LOGGER.exception("Live-lane Preview flush failed; the record decode answers")
         finally:
             request.done.set()
+
+    def _publish_live_flush(
+        self,
+        turn_id: str,
+        generation: int,
+        request: _LiveFlushRequest,
+        result: Dict[str, Any],
+        live_audio_end: int,
+        *,
+        refine_pending: bool,
+    ) -> None:
+        """Publish one flush result as the Preview of ``request``."""
+
+        text = " ".join(str(result.get("text") or "").split())
+        if not text:
+            # An empty flush (e.g. a cold stream that dropped the onset)
+            # must not claim the Preview; the record decode answers it.
+            return
+        publish_ready_at = time.monotonic()
+        candidate_active = request.candidate_id is not None
+        payload = {
+            "type": "preview",
+            "turnId": turn_id,
+            "previewRequestId": request.request_id,
+            "previewMode": request.preview_mode,
+            "pauseTextSource": "live_flush",
+            "text": text,
+            "cumulativeText": text,
+            "liveText": " ".join(str(result.get("live_text") or "").split()),
+            "tailText": text,
+            "previewModelText": text,
+            "previewText": text,
+            "status": "flush",
+            "refinePending": bool(refine_pending),
+            "matched": False,
+            "usedFuzzyMatch": False,
+            "anchorLength": 0,
+            "distance": 0,
+            "audioRevision": request.audio_revision,
+            "audioPackets": request.audio_packets,
+            "audioFrames": request.audio_frames,
+            "inputScope": request.input_scope,
+            "previewInputCoverage": "full_turn",
+            "inputSeconds": (request.input_sample_end - request.input_sample_start)
+            / float(SERVER_SAMPLE_RATE),
+            "inputSampleRange": {
+                "start": int(request.input_sample_start),
+                "end": int(request.input_sample_end),
+            },
+            "inputByteRange": {
+                "start": int(request.input_sample_start * 2),
+                "end": int(request.input_sample_end * 2),
+            },
+            "candidateId": request.candidate_id,
+            "candidateBaseText": request.candidate_base_text if candidate_active else None,
+            "candidateCumulativeText": text if candidate_active else None,
+            "resumeId": request.resume_request_id,
+            "resumeRequestId": request.resume_request_id,
+            "resumeEpoch": request.resume_epoch if candidate_active else None,
+            "candidateInputScope": "full_turn" if candidate_active else None,
+            "candidateStartSample": int(request.candidate_start_sample),
+            "candidateStartByte": int(request.candidate_start_byte),
+            "candidateSampleRange": (
+                {"start": int(request.candidate_start_sample), "end": int(request.audio_frames)}
+                if candidate_active
+                else None
+            ),
+            "candidateByteRange": (
+                {"start": int(request.candidate_start_byte), "end": int(request.audio_frames * 2)}
+                if candidate_active
+                else None
+            ),
+            "previewTiming": {
+                "pauseTextSource": "live_flush",
+                "flushMs": round(float(result.get("flush_ms") or 0.0), 3),
+                "flushSteps": int(result.get("steps") or 0),
+                "liveAudioEndSample": int(live_audio_end),
+                "requestToPublishMs": round(
+                    max(0.0, publish_ready_at - request.requested_at) * 1000.0,
+                    3,
+                ),
+            },
+        }
+        if candidate_active:
+            payload["candidateText"] = ""
+            payload["candidateOnlyText"] = ""
+        self._publish_preview_result(
+            turn_id,
+            generation,
+            request.request_id,
+            request.audio_revision,
+            payload,
+            "flush",
+            None,
+            preview_epoch=request.preview_epoch,
+            cancelled=request.cancelled,
+        )
+        request.published = True
 
     async def preview(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Run one independent Preview snapshot without finalizing the turn."""
@@ -4170,6 +4227,7 @@ class ProductionSessionProtocol:
                     candidate_base_text=candidate_base_text,
                     resume_request_id=resume_request_id,
                     resume_epoch=resume_epoch,
+                    refine=payload.get("pauseTextRefine") is True,
                 )
                 try:
                     turn.live_queue.put_nowait(live_flush)
