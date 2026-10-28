@@ -73,6 +73,7 @@ class ProductionServerSettingsTests(unittest.TestCase):
             capabilities["preview"],
             {
                 "inputCoverage": "full_turn",
+                "decodeMode": "full",
                 "earlyRms": {
                     "supported": True,
                     "requestMode": "early_rms",

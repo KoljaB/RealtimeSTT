@@ -41,6 +41,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
 from RealtimeSTT.core.realtime_merge import StickyRealtimeTranscriptionMerger
+from RealtimeSTT_server.preview_tail import (
+    PREVIEW_INPUT_MODES,
+    PREVIEW_TAIL_HISTORY_LIMIT,
+    PREVIEW_TAIL_OVERLAP_SECONDS,
+    PreviewTailAnchor,
+    compose_tail_preview,
+    plan_preview_tail,
+)
 
 
 LOGGER = logging.getLogger("realtimestt.production_server")
@@ -273,6 +281,12 @@ class ProductionServerSettings(_ReferenceServerSettings):
     late_final_max_audio_seconds: float = 30.0
     preview_tail_seconds: float = PREVIEW_TAIL_SECONDS
     preview_min_live_words_for_fuzzy_repair: int = 3
+    # ``full`` re-decodes the whole retained turn at every Preview. ``tail``
+    # decodes only the audio after the previous Preview (or Live text) plus
+    # an overlap and splices the texts; it falls back to ``full`` whenever
+    # the splice cannot be proven.
+    preview_input_mode: str = "full"
+    preview_tail_overlap_seconds: float = PREVIEW_TAIL_OVERLAP_SECONDS
     allowed_sample_rates: Tuple[int, ...] = (8000, 16000, 24000, 32000, 44100, 48000)
     supported_languages: Tuple[str, ...] = REMOTE_LANGUAGE_CHOICES
     max_http_audio_bytes: int = 8 * 1024 * 1024
@@ -323,6 +337,18 @@ class ProductionServerSettings(_ReferenceServerSettings):
             )
         if isinstance(self.preview_min_live_words_for_fuzzy_repair, bool) or self.preview_min_live_words_for_fuzzy_repair < 1:
             raise ValueError("preview_min_live_words_for_fuzzy_repair must be a positive integer")
+        self.preview_input_mode = str(self.preview_input_mode or "full").strip().lower()
+        if self.preview_input_mode not in PREVIEW_INPUT_MODES:
+            raise ValueError(
+                "preview_input_mode must be one of " + ", ".join(PREVIEW_INPUT_MODES)
+            )
+        if (
+            not math.isfinite(self.preview_tail_overlap_seconds)
+            or not 0.5 <= self.preview_tail_overlap_seconds <= 10.0
+        ):
+            raise ValueError(
+                "preview_tail_overlap_seconds must be between 0.5 and 10 seconds"
+            )
         if self.max_http_audio_bytes <= 0:
             raise ValueError("max_http_audio_bytes must be greater than zero")
         if bool(self.ssl_certfile) != bool(self.ssl_keyfile):
@@ -517,6 +543,7 @@ def capabilities_for(settings: ProductionServerSettings) -> Dict[str, Any]:
         },
         "preview": {
             "inputCoverage": "full_turn",
+            "decodeMode": getattr(settings, "preview_input_mode", "full"),
             "earlyRms": {
                 "supported": True,
                 "requestMode": "early_rms",
@@ -1354,6 +1381,11 @@ class TurnState:
     # only snapshot work; it must not tear down the shared live stream.
     preview_epoch: int = 0
     preview_cancelled: threading.Event = field(default_factory=threading.Event)
+    # Tail-mode Preview anchors: recognized text covering ``[0, end_sample)``
+    # of ``pcm_buffer``.  Both die with the buffer.
+    preview_anchor: Optional[PreviewTailAnchor] = None
+    preview_anchor_history: list[PreviewTailAnchor] = field(default_factory=list)
+    live_anchor: Optional[PreviewTailAnchor] = None
     telemetry: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
@@ -2189,6 +2221,12 @@ class ProductionSessionProtocol:
             else:
                 accurate_changed = text != self._last_partial
                 self._last_partial = text
+                if "audio_end_sample_exclusive" in observation_kwargs:
+                    turn.live_anchor = PreviewTailAnchor(
+                        text=text,
+                        end_sample=observation_kwargs["audio_end_sample_exclusive"],
+                        source="live",
+                    )
                 merge = self._realtime_merger.observe_slow(
                     text,
                     **observation_kwargs,
@@ -3065,6 +3103,11 @@ class ProductionSessionProtocol:
             anchor_length = 0
             distance = 0
             failure = None
+            composed_text = ""
+            tail_plan = None
+            tail_reason = (
+                "mode_full" if self.settings.preview_input_mode == "full" else "no_audio"
+            )
             if not self._preview_worker_can_admit(
                 turn_id,
                 generation,
@@ -3255,35 +3298,104 @@ class ProductionSessionProtocol:
                         cancelled,
                     ):
                         return
-                    first_attempt_audio = audio
+                    if self.settings.preview_input_mode == "tail":
+                        # ``audio`` starts at turn sample 0, the coordinate
+                        # system of both anchors.
+                        with self._lock:
+                            current = self.turn
+                            anchors = (
+                                (
+                                    current.preview_anchor,
+                                    current.live_anchor,
+                                    tuple(current.preview_anchor_history),
+                                )
+                                if current is not None
+                                and current.turn_id == turn_id
+                                and current.generation == generation
+                                else (None, None, ())
+                            )
+                        tail_plan, tail_reason = plan_preview_tail(
+                            anchors[0],
+                            anchors[1],
+                            len(audio),
+                            sample_rate=SERVER_SAMPLE_RATE,
+                            overlap_seconds=self.settings.preview_tail_overlap_seconds,
+                            history=anchors[2],
+                        )
                     first_attempt_silence_ms = 0.0
                     if preview_mode == "early_rms":
+                        first_attempt_silence_ms = (
+                            PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS * 1000.0
+                        )
+
+                    def padded_attempt_audio(attempt_source):
+                        if preview_mode != "early_rms":
+                            return attempt_source
                         first_attempt_silence_samples = int(
                             round(
                                 PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS
                                 * SERVER_SAMPLE_RATE
                             )
                         )
-                        first_attempt_audio = np.concatenate(
+                        return np.concatenate(
                             (
-                                audio,
+                                attempt_source,
                                 np.zeros(
                                     first_attempt_silence_samples,
                                     dtype=np.float32,
                                 ),
                             )
                         )
-                        first_attempt_silence_ms = (
-                            PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS * 1000.0
-                        )
+
                     tail_text, first_attempt, first_error = run_asr_attempt(
-                        first_attempt_audio,
+                        padded_attempt_audio(
+                            audio
+                            if tail_plan is None
+                            else audio[tail_plan.start_sample:]
+                        ),
                         attempt_index=1,
                         added_silence_ms=first_attempt_silence_ms,
+                    )
+                    first_attempt["decodeScope"] = (
+                        "full_turn" if tail_plan is None else "tail"
                     )
                     asr_attempts.append(first_attempt)
                     if first_error:
                         raise RuntimeError(str(first_error))
+                    if tail_plan is not None:
+                        composition = compose_tail_preview(
+                            tail_plan.anchor.text,
+                            tail_text,
+                            drop_last_anchor_word=tail_plan.anchor.source == "live",
+                        )
+                        if composition.matched:
+                            composed_text = composition.text
+                            tail_reason = composition.reason
+                            matched = True
+                            used_fuzzy_match = composition.used_fuzzy_match
+                            anchor_length = composition.anchor_length
+                            distance = composition.distance
+                        else:
+                            # An unproven splice must never reach the client;
+                            # the full-turn decode is the correct answer.
+                            tail_reason = "fallback_" + composition.reason
+                            if not self._preview_worker_can_admit(
+                                turn_id,
+                                generation,
+                                request_id,
+                                preview_epoch,
+                                cancelled,
+                            ):
+                                return
+                            tail_text, full_attempt, full_error = run_asr_attempt(
+                                padded_attempt_audio(audio),
+                                attempt_index=2,
+                                added_silence_ms=first_attempt_silence_ms,
+                            )
+                            full_attempt["decodeScope"] = "full_turn"
+                            asr_attempts.append(full_attempt)
+                            if full_error:
+                                raise RuntimeError(str(full_error))
 
                     if not tail_text and preview_mode != "early_rms":
                         # The native transducer can occasionally return zero
@@ -3316,7 +3428,7 @@ class ProductionSessionProtocol:
                         try:
                             retry_text, retry_attempt, retry_error = run_asr_attempt(
                                 retry_audio,
-                                attempt_index=2,
+                                attempt_index=len(asr_attempts) + 1,
                                 added_silence_ms=(
                                     PREVIEW_EMPTY_RETRY_SILENCE_SECONDS * 1000.0
                                 ),
@@ -3415,7 +3527,10 @@ class ProductionSessionProtocol:
                             3,
                         )
 
-                if tail_text:
+                if composed_text:
+                    preview_text = composed_text
+                    status = "fuzzy" if used_fuzzy_match else "exact"
+                elif tail_text:
                     preview_text = tail_text
                     status = "full_buffer"
                 else:
@@ -3539,6 +3654,24 @@ class ProductionSessionProtocol:
                         max(0.0, publish_ready_at - requested_at) * 1000.0,
                         3,
                     ),
+                    "previewTail": {
+                        "mode": self.settings.preview_input_mode,
+                        "decodeScope": (
+                            "tail" if composed_text else "full_turn"
+                        ),
+                        "reason": tail_reason,
+                        "anchorSource": (
+                            tail_plan.anchor.source if tail_plan is not None else None
+                        ),
+                        "anchorEndSample": (
+                            tail_plan.anchor.end_sample
+                            if tail_plan is not None
+                            else None
+                        ),
+                        "decodeStartSample": (
+                            tail_plan.start_sample if tail_plan is not None else 0
+                        ),
+                    },
                 },
             }
             if candidate_active:
@@ -3554,6 +3687,35 @@ class ProductionSessionProtocol:
                         ),
                     }
                 )
+            if preview_text and status in {"full_buffer", "exact", "fuzzy"}:
+                # Even a superseded result is a valid transcript of its own
+                # audio prefix and can anchor the next tail decode.
+                with self._lock:
+                    current = self.turn
+                    if (
+                        current is not None
+                        and current.turn_id == turn_id
+                        and current.generation == generation
+                        and len(current.pcm_buffer) >= input_sample_end * 2
+                        and (
+                            current.preview_anchor is None
+                            or current.preview_anchor.end_sample <= input_sample_end
+                        )
+                    ):
+                        previous_anchor = current.preview_anchor
+                        if (
+                            previous_anchor is not None
+                            and previous_anchor.end_sample < input_sample_end
+                        ):
+                            current.preview_anchor_history.append(previous_anchor)
+                            del current.preview_anchor_history[
+                                :-PREVIEW_TAIL_HISTORY_LIMIT
+                            ]
+                        current.preview_anchor = PreviewTailAnchor(
+                            text=preview_text,
+                            end_sample=int(input_sample_end),
+                            source="preview",
+                        )
             self._publish_preview_result(
                 turn_id,
                 generation,
@@ -3894,6 +4056,9 @@ class ProductionSessionProtocol:
             ):
                 complete_now = True
             turn.pcm_buffer.clear()
+            turn.preview_anchor = None
+            turn.preview_anchor_history.clear()
+            turn.live_anchor = None
             packet_count = turn.packet_count
             audio_seconds = turn.audio_seconds
             current_turn = turn
@@ -3946,6 +4111,9 @@ class ProductionSessionProtocol:
             language = turn.language
             pcm = bytes(turn.pcm_buffer)
             turn.pcm_buffer.clear()
+            turn.preview_anchor = None
+            turn.preview_anchor_history.clear()
+            turn.live_anchor = None
         drain_failure = None
         try:
             live_queues = [
@@ -4491,6 +4659,22 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         ),
     )
     production.add_argument("--preview-min-live-words-for-fuzzy-repair", type=int, default=3)
+    production.add_argument(
+        "--preview-input-mode",
+        choices=PREVIEW_INPUT_MODES,
+        default="full",
+        help=(
+            "full: decode the complete retained turn at every Preview; tail: "
+            "decode only the audio after the previous Preview or Live text plus "
+            "an overlap, falling back to full when the texts cannot be aligned"
+        ),
+    )
+    production.add_argument(
+        "--preview-tail-overlap-seconds",
+        type=float,
+        default=PREVIEW_TAIL_OVERLAP_SECONDS,
+        help="Audio before the anchor end re-decoded in tail mode to align the texts",
+    )
     production.add_argument("--allowed-sample-rates", default="8000,16000,24000,32000,44100,48000")
     production.add_argument("--supported-languages", default=",".join(REMOTE_LANGUAGE_CHOICES))
     production.add_argument("--max-http-audio-bytes", type=int, default=8 * 1024 * 1024)
@@ -4524,6 +4708,8 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         late_final_max_audio_seconds=known.late_final_max_audio_seconds,
         preview_tail_seconds=known.preview_tail_seconds,
         preview_min_live_words_for_fuzzy_repair=known.preview_min_live_words_for_fuzzy_repair,
+        preview_input_mode=known.preview_input_mode,
+        preview_tail_overlap_seconds=known.preview_tail_overlap_seconds,
         allowed_sample_rates=tuple(
             int(part.strip()) for part in known.allowed_sample_rates.split(",") if part.strip()
         ),
@@ -4554,6 +4740,8 @@ def settings_from_args(args: Any) -> ProductionServerSettings:
             "late_final_max_audio_seconds": args.late_final_max_audio_seconds,
             "preview_tail_seconds": args.preview_tail_seconds,
             "preview_min_live_words_for_fuzzy_repair": args.preview_min_live_words_for_fuzzy_repair,
+            "preview_input_mode": args.preview_input_mode,
+            "preview_tail_overlap_seconds": args.preview_tail_overlap_seconds,
             "allowed_sample_rates": args.allowed_sample_rates,
             "supported_languages": args.supported_languages,
             "max_http_audio_bytes": args.max_http_audio_bytes,
