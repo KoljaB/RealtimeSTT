@@ -145,6 +145,46 @@ def _exact_anchor_occurrences(
     ]
 
 
+def _with_anchor_casing(anchor_raw: str, tail_raw: str) -> str:
+    """Keep the anchor's word-initial case on a word re-decoded in the tail.
+
+    A tail decode that starts at an anchor word treats it as a sentence
+    start ("That", "Pauses").  Punctuation still comes from the tail, which
+    saw the words that follow.
+    """
+
+    anchor_letter = next((char for char in anchor_raw if char.isalpha()), None)
+    for index, char in enumerate(tail_raw):
+        if char.isalpha():
+            if anchor_letter is None or anchor_letter.isupper() == char.isupper():
+                return tail_raw
+            replacement = char.upper() if anchor_letter.isupper() else char.lower()
+            return tail_raw[:index] + replacement + tail_raw[index + 1:]
+    return tail_raw
+
+
+def _splice(
+    anchor_words: Sequence[Tuple[str, str]],
+    tail_words: Sequence[Tuple[str, str]],
+    length: int,
+    start: int,
+    window_length: int,
+) -> str:
+    region = [raw for raw, _ in tail_words[start:start + window_length]]
+    if window_length == length:
+        region = [
+            _with_anchor_casing(anchor_raw, tail_raw)
+            for (anchor_raw, _), tail_raw in zip(anchor_words[-length:], region)
+        ]
+    elif region:
+        region[0] = _with_anchor_casing(anchor_words[-length][0], region[0])
+    return " ".join(
+        [raw for raw, _ in anchor_words[:-length]]
+        + region
+        + [raw for raw, _ in tail_words[start + window_length:]]
+    )
+
+
 def compose_tail_preview(
     anchor_text: str,
     tail_text: str,
@@ -156,9 +196,9 @@ def compose_tail_preview(
     The anchor's last 4 (else 3) words must occur exactly once in the tail;
     a repeated phrase is ambiguous and falls back.  Only when no exact
     occurrence exists is one constrained fuzzy edit accepted.  The anchor
-    words themselves are taken from the tail, which decoded them with right
+    words take their punctuation from the tail, which decoded them with right
     context: an earlier pause may have closed the sentence ("see if.") that
-    the speaker then continued.
+    the speaker then continued.  Their initial case stays the anchor's.
     """
 
     anchor_words = _tokenize_words(anchor_text)
@@ -188,10 +228,7 @@ def compose_tail_preview(
         if occurrences:
             start = occurrences[0]
             return PreviewTailComposition(
-                text=" ".join(
-                    [raw for raw, _ in anchor_words[:-length]]
-                    + [raw for raw, _ in tail_words[start:]]
-                ),
+                text=_splice(anchor_words, tail_words, length, start, length),
                 matched=True,
                 reason="exact",
                 anchor_length=length,
@@ -205,12 +242,9 @@ def compose_tail_preview(
     )
     if alignment is None:
         return PreviewTailComposition(text="", matched=False, reason="no_alignment")
-    start, _end, length, used_fuzzy_match, distance = alignment
+    start, end, length, used_fuzzy_match, distance = alignment
     return PreviewTailComposition(
-        text=" ".join(
-            [raw for raw, _ in anchor_words[:-length]]
-            + [raw for raw, _ in tail_words[start:]]
-        ),
+        text=_splice(anchor_words, tail_words, length, start, end - start),
         matched=True,
         reason="fuzzy" if used_fuzzy_match else "exact",
         used_fuzzy_match=used_fuzzy_match,

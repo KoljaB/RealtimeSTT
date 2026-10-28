@@ -35,6 +35,18 @@ class PreviewTailCompositionTests(unittest.TestCase):
         self.assertEqual(result.anchor_length, 4)
         self.assertEqual(result.text, "Hey there this is a little test where I pause")
 
+    def test_anchor_words_keep_their_case_when_the_tail_starts_on_them(self):
+        result = compose_tail_preview(
+            "It's more like that I make some",
+            "That I make some pauses in between.",
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(
+            result.text,
+            "It's more like that I make some pauses in between.",
+        )
+
     def test_repeated_anchor_phrase_is_ambiguous(self):
         result = compose_tail_preview(
             "we go on and on",
