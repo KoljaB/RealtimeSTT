@@ -74,6 +74,7 @@ class ProductionServerSettingsTests(unittest.TestCase):
             {
                 "inputCoverage": "full_turn",
                 "decodeMode": "full",
+                "liveFlush": False,
                 "earlyRms": {
                     "supported": True,
                     "requestMode": "early_rms",

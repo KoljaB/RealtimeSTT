@@ -1511,6 +1511,11 @@ class LockedStreamingSession:
     def finish(self):
         return self._call_locked("finish")
 
+    def flush_snapshot(self, *args, **kwargs):
+        """Flush a copy of the stream state; only engines that support it."""
+
+        return self._call_locked("flush_snapshot", *args, **kwargs)
+
     def input_finished(self):
         if hasattr(self.session, "input_finished"):
             return self._call_locked("input_finished")

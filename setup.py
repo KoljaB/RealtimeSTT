@@ -6,7 +6,7 @@ import setuptools
 from setuptools.command.build_py import build_py as _build_py
 
 
-current_version = "1.1.2+previewtail.20261028.2"
+current_version = "1.1.2+previewtail.20261028.3"
 
 
 INSTALL_GUIDE = """
@@ -240,6 +240,10 @@ all_optional_requirements = unique_requirements(
 
 extras_require = {
     "parakeet-onnx": ["onnx-asr==0.12.0", "onnxruntime==1.30.0"],
+    # Streaming NeMo lane with snapshot flush.  ORT 1.23.2 runs the int8
+    # Nemotron encoder about 15% faster than 1.27/1.30 on the production CPU;
+    # do not combine with the parakeet-onnx extra in one environment.
+    "nemotron-ort": ["onnxruntime==1.23.2", "kaldi-native-fbank==1.22.4"],
     "minimal": [],
     "faster-whisper": faster_whisper_requirements,
     "whisper-cpp": whisper_cpp_requirements,

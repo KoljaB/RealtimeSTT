@@ -39,6 +39,7 @@ ENGINE_CLASS_PATHS = {
     "sherpa_nemotron": (".nemotron_engine", "SherpaOnnxNemotronEngine"),
     "nemotron_sherpa_onnx": (".nemotron_engine", "SherpaOnnxNemotronEngine"),
     "nemotron": (".nemotron_engine", "SherpaOnnxNemotronEngine"),
+    "nemotron_ort": (".nemotron_ort_streaming", "NemotronOrtEngine"),
     "sherpa_onnx_moonshine": (".sherpa_onnx_engine", "SherpaOnnxMoonshineEngine"),
     "sherpa_moonshine": (".sherpa_onnx_engine", "SherpaOnnxMoonshineEngine"),
     "moonshine_sherpa_onnx": (".sherpa_onnx_engine", "SherpaOnnxMoonshineEngine"),
