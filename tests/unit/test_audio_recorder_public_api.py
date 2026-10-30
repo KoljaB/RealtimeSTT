@@ -7,6 +7,7 @@ import subprocess
 import sys
 from typing import Callable, Iterable, List, Optional, Union
 import unittest
+from unittest import mock
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -222,6 +223,21 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             self.assertEqual(parameter.kind, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             self.assertEqual(parameter.default, default, name)
             self.assertEqual(parameter.annotation, annotation, name)
+
+    def test_spinner_texts_reach_recorder_initialization(self):
+        audio_recorder = import_audio_recorder(self)
+        texts = {
+            "spinner_listening_text": "listening",
+            "spinner_wakeword_text": "wake",
+            "spinner_transcribing_text": "working",
+            "spinner_recording_text": "capturing",
+        }
+
+        with mock.patch.object(audio_recorder, "initialize_recorder") as init:
+            audio_recorder.AudioToTextRecorder(**texts)
+
+        init_args = init.call_args.args[2]
+        self.assertEqual({key: init_args[key] for key in texts}, texts)
 
     def test_public_default_constants_remain_importable(self):
         audio_recorder = import_audio_recorder(self)

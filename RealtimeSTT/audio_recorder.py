@@ -744,14 +744,10 @@ class AudioToTextRecorder:
             ultrafast_realtime_max_tail_words=(
                 ultrafast_realtime_max_tail_words
             ),
-        )
-        init_args.update(
-            {
-                "spinner_listening_text": spinner_listening_text,
-                "spinner_wakeword_text": spinner_wakeword_text,
-                "spinner_transcribing_text": spinner_transcribing_text,
-                "spinner_recording_text": spinner_recording_text,
-            }
+            spinner_listening_text=spinner_listening_text,
+            spinner_wakeword_text=spinner_wakeword_text,
+            spinner_transcribing_text=spinner_transcribing_text,
+            spinner_recording_text=spinner_recording_text,
         )
 
         initialize_recorder(

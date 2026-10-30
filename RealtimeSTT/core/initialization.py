@@ -287,22 +287,10 @@ def _assign_initial_attributes(recorder, init_args, normalize_wakeword_backend):
     recorder.warmup_vad = init_args["warmup_vad"]
     recorder.listen_start = 0
     recorder.spinner = init_args["spinner"]
-    recorder.spinner_listening_text = init_args.get(
-        "spinner_listening_text",
-        "speak now",
-    )
-    recorder.spinner_wakeword_text = init_args.get(
-        "spinner_wakeword_text",
-        "say {wake_words}",
-    )
-    recorder.spinner_transcribing_text = init_args.get(
-        "spinner_transcribing_text",
-        "transcribing",
-    )
-    recorder.spinner_recording_text = init_args.get(
-        "spinner_recording_text",
-        "recording",
-    )
+    recorder.spinner_listening_text = init_args["spinner_listening_text"]
+    recorder.spinner_wakeword_text = init_args["spinner_wakeword_text"]
+    recorder.spinner_transcribing_text = init_args["spinner_transcribing_text"]
+    recorder.spinner_recording_text = init_args["spinner_recording_text"]
     recorder.halo = None
     recorder.state = "inactive"
     recorder.wakeword_detected = False
