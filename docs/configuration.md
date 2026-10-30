@@ -55,6 +55,10 @@ recorder = AudioToTextRecorder(
 | `ensure_sentence_starting_uppercase` | `True` | Capitalizes detected sentence starts. |
 | `ensure_sentence_ends_with_period` | `True` | Adds a final period when final text does not end in punctuation. |
 | `spinner` | `True` | Shows the console state spinner. |
+| `spinner_listening_text` | `"speak now"` | Spinner text while listening for voice activity. Use `""` for no message. |
+| `spinner_wakeword_text` | `"say {wake_words}"` | Spinner text while waiting for wake words. `{wake_words}` inserts the configured wake words. Use `""` for no message. |
+| `spinner_transcribing_text` | `"transcribing"` | Spinner text while transcribing. Use `""` for no message. |
+| `spinner_recording_text` | `"recording"` | Spinner text while recording. Use `""` for no message. |
 | `level` | `logging.WARNING` | Logger level used by the recorder. |
 | `debug_mode` | `False` | Prints additional debug information. |
 | `print_transcription_time` | `False` | Logs main transcription processing time. |

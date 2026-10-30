@@ -516,6 +516,10 @@ class AudioRecorderRealtimeStabilizerIntegrationTests(unittest.TestCase):
         recorder.min_gap_between_recordings = 0
         recorder.state = "inactive"
         recorder.spinner = False
+        recorder.spinner_listening_text = ""
+        recorder.spinner_wakeword_text = ""
+        recorder.spinner_transcribing_text = ""
+        recorder.spinner_recording_text = ""
         recorder.halo = None
         recorder.on_recording_start = None
         recorder.start_recording_event = threading.Event()

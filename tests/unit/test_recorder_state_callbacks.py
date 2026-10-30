@@ -1,17 +1,7 @@
-import sys
-import types
 import unittest
 from unittest import mock
 
-try:
-    __import__("halo")
-except ModuleNotFoundError:
-    sys.modules["halo"] = types.SimpleNamespace(Halo=None)
-
 from RealtimeSTT.core import state as state_helpers
-
-
-UNSET = object()
 
 
 class FakeHalo:
@@ -33,10 +23,10 @@ class RecorderLike:
         self,
         state="inactive",
         halo=None,
-        spinner_listening_text=UNSET,
-        spinner_wakeword_text=UNSET,
-        spinner_transcribing_text=UNSET,
-        spinner_recording_text=UNSET,
+        spinner_listening_text="speak now",
+        spinner_wakeword_text="say {wake_words}",
+        spinner_transcribing_text="transcribing",
+        spinner_recording_text="recording",
     ):
         self.state = state
         self.start_callback_in_new_thread = False
@@ -48,14 +38,10 @@ class RecorderLike:
         self.on_vad_detect_stop = None
         self.on_wakeword_detection_start = None
         self.on_wakeword_detection_end = None
-        if spinner_listening_text is not UNSET:
-            self.spinner_listening_text = spinner_listening_text
-        if spinner_wakeword_text is not UNSET:
-            self.spinner_wakeword_text = spinner_wakeword_text
-        if spinner_transcribing_text is not UNSET:
-            self.spinner_transcribing_text = spinner_transcribing_text
-        if spinner_recording_text is not UNSET:
-            self.spinner_recording_text = spinner_recording_text
+        self.spinner_listening_text = spinner_listening_text
+        self.spinner_wakeword_text = spinner_wakeword_text
+        self.spinner_transcribing_text = spinner_transcribing_text
+        self.spinner_recording_text = spinner_recording_text
 
 
 class RecorderStateCallbackTests(unittest.TestCase):
@@ -156,7 +142,7 @@ class RecorderStateCallbackTests(unittest.TestCase):
         self.assertIs(recorder.halo, existing_halo)
         self.assertEqual(existing_halo.text, "speak now")
 
-    def test_missing_spinner_text_attributes_use_legacy_texts(self):
+    def test_default_spinner_texts(self):
         recorder = RecorderLike()
 
         with self.patch_spinner_events():
@@ -208,6 +194,15 @@ class RecorderStateCallbackTests(unittest.TestCase):
 
         self.assertEqual(recorder.events, ["spinner:waiting for jarvis"])
         self.assertEqual(recorder.halo.text, "waiting for jarvis")
+
+    def test_wakeword_spinner_text_keeps_other_braces_literal(self):
+        recorder = RecorderLike(spinner_wakeword_text="{name} {wake_words} {")
+
+        with self.patch_spinner_events():
+            with mock.patch.object(state_helpers.halo, "Halo", FakeHalo):
+                state_helpers.set_recorder_state(recorder, "wakeword")
+
+        self.assertEqual(recorder.events, ["spinner:{name} jarvis {"])
 
     def test_run_callback_inline_preserves_call_arguments(self):
         recorder = RecorderLike()

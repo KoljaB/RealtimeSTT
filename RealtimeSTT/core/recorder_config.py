@@ -107,6 +107,10 @@ def build_recorder_init_args(
     on_merged_realtime_transcription_update,
     on_realtime_transcription_merge_update,
     ultrafast_realtime_max_tail_words,
+    spinner_listening_text,
+    spinner_wakeword_text,
+    spinner_transcribing_text,
+    spinner_recording_text,
 ):
     """
     Returns the legacy constructor argument mapping in signature order.
@@ -242,4 +246,8 @@ def build_recorder_init_args(
         "ultrafast_realtime_max_tail_words": (
             ultrafast_realtime_max_tail_words
         ),
+        "spinner_listening_text": spinner_listening_text,
+        "spinner_wakeword_text": spinner_wakeword_text,
+        "spinner_transcribing_text": spinner_transcribing_text,
+        "spinner_recording_text": spinner_recording_text,
     }
