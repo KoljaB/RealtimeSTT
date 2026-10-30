@@ -4,6 +4,7 @@ Helpers for low-latency finalization from the most recent speech tail.
 
 from dataclasses import dataclass
 import re
+import unicodedata
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -21,6 +22,7 @@ MIN_CLOSE_WORD_LENGTH = 4
 INT16_MAX_ABS_VALUE = 32768.0
 
 _WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_BRAHMIC_RE = re.compile(r"[\u0900-\u0dff]+")
 
 
 @dataclass(frozen=True)
@@ -45,9 +47,26 @@ def _tokenize_words(text: str) -> List[Tuple[str, str]]:
 
     tokens = []
     for raw_word in str(text or "").split():
-        normalized = "".join(_WORD_RE.findall(raw_word.casefold()))
-        if normalized:
-            tokens.append((raw_word, normalized))
+        folded = raw_word.casefold()
+        # Keep mark-only tokens from becoming alignment evidence.
+        if not _WORD_RE.search(folded):
+            continue
+        # Marks in these Brahmic blocks distinguish words; other scripts
+        # retain their existing comparison rules.
+        normalized = "".join(
+            char for char in folded
+            if char.isalnum()
+            or (
+                "\u0900" <= char <= "\u0dff"
+                and unicodedata.category(char).startswith("M")
+            )
+        )
+        # Canonically equivalent vowel signs must still match. Restrict NFC
+        # to Brahmic runs so normalization elsewhere stays unchanged.
+        normalized = _BRAHMIC_RE.sub(
+            lambda match: unicodedata.normalize("NFC", match.group()), normalized
+        )
+        tokens.append((raw_word, normalized))
     return tokens
 
 
@@ -105,6 +124,25 @@ def _is_close_word_match(
     return _levenshtein_distance(left, right) <= MAX_FUZZY_ANCHOR_DISTANCE
 
 
+def _is_brahmic_mark_difference(left: str, right: str) -> bool:
+    """Identify a word correction that changes only Brahmic combining marks."""
+
+    if left == right or not (_BRAHMIC_RE.search(left) or _BRAHMIC_RE.search(right)):
+        return False
+
+    def without_brahmic_marks(word):
+        return _BRAHMIC_RE.sub(
+            lambda match: "".join(
+                char for char in unicodedata.normalize("NFD", match.group())
+                if not unicodedata.category(char).startswith("M")
+            ),
+            word,
+        )
+
+    left_base = without_brahmic_marks(left)
+    return bool(left_base) and left_base == without_brahmic_marks(right)
+
+
 def _fuzzy_window_distance(
     anchor_words: Sequence[str],
     window: Sequence[str],
@@ -114,8 +152,9 @@ def _fuzzy_window_distance(
     Classifies one constrained fuzzy anchor window.
 
     The only accepted one-edit cases are one inserted/deleted token, a
-    one-character spelling difference in a long word, or a Final word that
-    completes the last Live word. Arbitrary word substitutions are rejected.
+    one-character spelling difference in a long word, a Brahmic mark-only
+    correction backed by two exact words, or a Final word that completes the
+    last Live word. Arbitrary word substitutions are rejected.
     Returns ``(distance, exact_word_count)`` when safe.
     """
 
@@ -138,10 +177,18 @@ def _fuzzy_window_distance(
             difference_index == anchor_length - 1
             and _is_partial_word_match(anchor_word, final_word)
         )
-        if not is_last_word_completion and not _is_close_word_match(
-            anchor_word,
-            final_word,
-            min_close_word_length=min_close_word_length,
+        is_mark_correction = (
+            anchor_length >= MIN_TAIL_ANCHOR_WORDS
+            and _is_brahmic_mark_difference(anchor_word, final_word)
+        )
+        if not (
+            is_last_word_completion
+            or is_mark_correction
+            or _is_close_word_match(
+                anchor_word,
+                final_word,
+                min_close_word_length=min_close_word_length,
+            )
         ):
             return None
         return 1, anchor_length - 1
@@ -239,6 +286,7 @@ def _find_fuzzy_anchor(
 def _repair_partial_word_before_exact_suffix(
     live_words: Sequence[Tuple[str, str]],
     final_words: Sequence[Tuple[str, str]],
+    allow_mark_correction: bool = False,
 ) -> Optional[TailMergeResult]:
     """Repair one truncated Live word backed by a strong exact suffix.
 
@@ -246,7 +294,8 @@ def _repair_partial_word_before_exact_suffix(
     conservative, but it can leave the immediately preceding Live token
     truncated (``spee to text system``). Two exact following words plus a
     one-way prefix completion provide the same three-token evidence without
-    accepting an arbitrary substitution.
+    accepting an arbitrary substitution. When enabled, a Brahmic mark-only
+    correction can use the same exact suffix.
     """
 
     minimum_exact_suffix = max(2, MIN_TAIL_ANCHOR_WORDS - 1)
@@ -266,7 +315,10 @@ def _repair_partial_word_before_exact_suffix(
             continue
         live_partial = live_words[live_partial_index][1]
         final_completion = final_words[start - 1][1]
-        if not _is_partial_word_match(live_partial, final_completion):
+        if not _is_partial_word_match(live_partial, final_completion) and not (
+            allow_mark_correction
+            and _is_brahmic_mark_difference(live_partial, final_completion)
+        ):
             continue
         prefix = [raw_word for raw_word, _ in live_words[:live_partial_index]]
         suffix = [raw_word for raw_word, _ in final_words[start - 1 :]]
@@ -397,6 +449,7 @@ def merge_live_and_tail_transcription(
     partial_boundary_repair = _repair_partial_word_before_exact_suffix(
         live_words,
         final_words,
+        allow_mark_correction=len(live_words) >= min_live_words_for_fuzzy_repair,
     )
     if partial_boundary_repair is not None:
         return partial_boundary_repair
@@ -431,14 +484,32 @@ def merge_live_and_tail_transcription(
     if len(live_words) < min_live_words_for_fuzzy_repair:
         return TailMergeResult(text=live_text, matched=False)
 
+    alignment = find_tail_anchor(live_text, final_tail_text)
+    has_mark_correction = False
+    if alignment is not None:
+        start, end, anchor_length, used_fuzzy_match, _distance = alignment
+        has_mark_correction = (
+            used_fuzzy_match
+            and end - start == anchor_length
+            and any(
+                _is_brahmic_mark_difference(live_word[1], final_word[1])
+                for live_word, final_word in zip(
+                    live_words[-anchor_length:], final_words[start:end]
+                )
+            )
+        )
+
+    # Prefer a supported mark correction to a weaker stable-prefix match
+    # that could mistake an earlier Live word for an omission.
     # The newest Live token is inherently the least stable one. When there
     # are enough preceding words for a real anchor, align without that token
     # first and let Final ASR provide its replacement plus the suffix.
-    if len(live_words) >= MIN_TAIL_ANCHOR_WORDS + 1:
+    if len(live_words) >= MIN_TAIL_ANCHOR_WORDS + 1 and not has_mark_correction:
         stable_live_words = live_words[:-1]
         stable_partial_boundary_repair = _repair_partial_word_before_exact_suffix(
             stable_live_words,
             final_words,
+            allow_mark_correction=True,
         )
         if stable_partial_boundary_repair is not None:
             return stable_partial_boundary_repair
@@ -461,8 +532,6 @@ def merge_live_and_tail_transcription(
                     distance=distance,
                 )
 
-    alignment = find_tail_anchor(live_text, final_tail_text)
-
     if alignment is None:
         return TailMergeResult(text=live_text, matched=False)
 
@@ -482,6 +551,15 @@ def merge_live_and_tail_transcription(
             )
         ):
             live_words = live_words[:-1] + [final_match_words[-1]]
+
+        # A mark-only correction can occur anywhere in the aligned window.
+        live_start = len(live_words) - anchor_length
+        for offset, final_match in enumerate(final_match_words):
+            live_index = live_start + offset
+            if _is_brahmic_mark_difference(
+                live_words[live_index][1], final_match[1]
+            ):
+                live_words[live_index] = final_match
 
     suffix = [raw_word for raw_word, _ in final_words[end:]]
     merged_words = [raw_word for raw_word, _ in live_words] + suffix
