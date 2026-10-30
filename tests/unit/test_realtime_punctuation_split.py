@@ -195,6 +195,10 @@ class RealtimePunctuationSplitTests(unittest.TestCase):
         recorder.ensure_sentence_ends_with_period = False
         recorder.start_callback_in_new_thread = False
         recorder.spinner = False
+        recorder.spinner_listening_text = ""
+        recorder.spinner_wakeword_text = ""
+        recorder.spinner_transcribing_text = ""
+        recorder.spinner_recording_text = ""
         recorder.halo = None
         recorder.wake_words = ""
         recorder.on_recording_stop = None
