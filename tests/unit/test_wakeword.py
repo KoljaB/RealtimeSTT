@@ -34,6 +34,15 @@ class WakeWordTests(unittest.TestCase):
             "open_wakeword",
         )
 
+    def test_openwakeword_aliases_are_supported(self):
+        for backend in ("oww", "openwakeword", "openwakewords", "open_wakewords"):
+            with self.subTest(backend=backend):
+                self.assertIn(
+                    backend,
+                    wakeword.OPENWAKEWORD_BACKENDS,
+                )
+
+
     def test_porcupine_missing_dependency_mentions_extra(self):
         with patch(
             "RealtimeSTT.core.wakeword.import_module",

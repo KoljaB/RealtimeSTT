@@ -136,6 +136,31 @@ model files into `openwakeword_model_paths`.
 For OpenWakeWord custom models, a starting sensitivity around `0.35` can be a
 useful first test, then tune against real room audio.
 
+### Require a Wake Word for Each Recording
+
+Keep `wake_word_activation_delay=0` when every recording must start with a
+wake word. A positive value creates a listening window during which voice
+activity can start recording without one. It is not a delay after detecting
+the wake word.
+
+Reuse the same recorder across turns; rebuilding it is not necessary:
+
+```python
+from RealtimeSTT import AudioToTextRecorder
+
+if __name__ == "__main__":
+    with AudioToTextRecorder(
+        wakeword_backend="pvporcupine",
+        wake_words="jarvis",
+        wake_word_activation_delay=0,
+    ) as recorder:
+        while True:
+            print(recorder.text())
+```
+
+`wake_word_timeout` controls the wait for speech after a detected wake word;
+it does not require recreating the recorder between recordings.
+
 ## Callbacks
 
 ```python

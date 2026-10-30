@@ -43,6 +43,7 @@ class TailMergeResult:
 def _tokenize_words(text: str) -> List[Tuple[str, str]]:
     """
     Returns raw whitespace-delimited words and normalized comparison forms.
+    Preserves combining marks for Brahmic scripts to handle vowel signs correctly.
     """
 
     tokens = []
