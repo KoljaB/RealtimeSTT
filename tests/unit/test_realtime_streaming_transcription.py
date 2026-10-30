@@ -10,6 +10,7 @@ except ModuleNotFoundError:
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
     from RealtimeSTT.core.realtime import run_realtime_worker
+    from RealtimeSTT.core.realtime_merge import StickyRealtimeTranscriptionMerger
     from RealtimeSTT.core.realtime_text_stabilizer import RealtimeTextStabilizer
     from RealtimeSTT.transcription_engines import (
         TranscriptionInfo,
@@ -19,6 +20,7 @@ except Exception as exc:  # pragma: no cover - import guard for optional deps
     AudioToTextRecorder = None
     run_realtime_worker = None
     RealtimeTextStabilizer = None
+    StickyRealtimeTranscriptionMerger = None
     TranscriptionInfo = None
     TranscriptionResult = None
     IMPORT_ERROR = exc
@@ -83,6 +85,69 @@ class FakeStreamingModel:
         return TranscriptionResult(text="unexpected full-buffer call")
 
 
+class ScriptedStreamingSession(FakeStreamingSession):
+    def __init__(self, texts_by_sample_count):
+        super().__init__()
+        self.texts_by_sample_count = dict(texts_by_sample_count)
+
+    def get_result(self):
+        eligible = [
+            sample_count
+            for sample_count in self.texts_by_sample_count
+            if sample_count <= self.total_samples
+        ]
+        text = self.texts_by_sample_count[max(eligible)] if eligible else ""
+        return TranscriptionResult(
+            text=text,
+            info=TranscriptionInfo(language="en", language_probability=1.0),
+        )
+
+
+class ScriptedStreamingModel(FakeStreamingModel):
+    def __init__(self, texts_by_sample_count, engine_name):
+        super().__init__()
+        self.texts_by_sample_count = dict(texts_by_sample_count)
+        self.engine_name = engine_name
+
+    def create_streaming_session(self, language=None, use_prompt=True):
+        session = ScriptedStreamingSession(self.texts_by_sample_count)
+        self.sessions.append(session)
+        return session
+
+
+class BlockingStreamingSession(FakeStreamingSession):
+    def __init__(self, entered, release, text):
+        super().__init__()
+        self.entered = entered
+        self.release = release
+        self.text = text
+
+    def get_result(self):
+        self.entered.set()
+        self.release.wait(timeout=2.0)
+        return TranscriptionResult(
+            text=self.text,
+            info=TranscriptionInfo(language="en", language_probability=1.0),
+        )
+
+
+class BlockingStreamingModel(FakeStreamingModel):
+    def __init__(self, entered, release, text):
+        super().__init__()
+        self.entered = entered
+        self.release = release
+        self.text = text
+
+    def create_streaming_session(self, language=None, use_prompt=True):
+        session = BlockingStreamingSession(
+            self.entered,
+            self.release,
+            self.text,
+        )
+        self.sessions.append(session)
+        return session
+
+
 class FakeNonStreamingModel:
     engine_name = "fake_non_streaming"
     supports_streaming = False
@@ -116,6 +181,17 @@ class AudioRecorderRealtimeStreamingTests(unittest.TestCase):
         recorder.frames = []
         recorder.last_frames = []
         recorder.realtime_transcription_model = model
+        recorder.ultrafast_realtime_transcription_model = None
+        recorder.ultrafast_realtime_model_type = None
+        recorder.on_ultrafast_transcription_update = None
+        recorder.on_merged_realtime_transcription_update = None
+        recorder.on_realtime_transcription_merge_update = None
+        recorder.realtime_transcription_merger = (
+            StickyRealtimeTranscriptionMerger()
+        )
+        recorder.last_ultrafast_transcription = ""
+        recorder.last_merged_realtime_transcription = ""
+        recorder.last_realtime_transcription_merge_result = None
         recorder.use_main_model_for_realtime = False
         recorder._uses_external_realtime_transcription_executor = False
         recorder.realtime_transcription_executor = None
@@ -221,6 +297,247 @@ class AudioRecorderRealtimeStreamingTests(unittest.TestCase):
 
         self.assertEqual(model.transcribe_calls[0], 1600)
         self.assertIn(3200, model.transcribe_calls)
+
+    def test_dual_streaming_models_receive_identical_new_frames(self):
+        slow_model = ScriptedStreamingModel(
+            {1600: "the quick brown fox"},
+            "slow_streaming",
+        )
+        ultrafast_model = ScriptedStreamingModel(
+            {1600: "the quick brown fox jumps"},
+            "ultrafast_streaming",
+        )
+        recorder = self.make_recorder_stub(slow_model)
+        recorder.ultrafast_realtime_transcription_model = ultrafast_model
+        recorder.ultrafast_realtime_model_type = "ultrafast"
+        slow_updates = []
+        ultrafast_updates = []
+        merged_updates = []
+        merge_results = []
+        callback_order = []
+        recorder.on_realtime_transcription_update = lambda text: (
+            slow_updates.append(text),
+            callback_order.append("slow"),
+        )
+        recorder.on_ultrafast_transcription_update = lambda text: (
+            ultrafast_updates.append(text),
+            callback_order.append("ultrafast"),
+        )
+        recorder.on_merged_realtime_transcription_update = lambda text: (
+            merged_updates.append(text),
+            callback_order.append("merged"),
+        )
+        recorder.on_realtime_transcription_merge_update = merge_results.append
+        thread = self.run_worker(recorder)
+
+        try:
+            recorder.frames.append(self.make_frame())
+            self.assertTrue(wait_until(lambda: bool(merged_updates)))
+        finally:
+            self.stop_worker(recorder, thread)
+
+        self.assertEqual(
+            slow_model.sessions[0].accepted_sample_counts[:1],
+            [1600],
+        )
+        self.assertEqual(
+            ultrafast_model.sessions[0].accepted_sample_counts[:1],
+            [1600],
+        )
+        self.assertEqual(slow_updates[-1], "the quick brown fox")
+        self.assertEqual(
+            ultrafast_updates[-1],
+            "the quick brown fox jumps",
+        )
+        self.assertEqual(
+            merged_updates[-1],
+            "the quick brown fox jumps",
+        )
+        self.assertEqual(merge_results[-1].status, "exact")
+        self.assertEqual(merge_results[-1].ultrafast_suffix, "jumps")
+        self.assertLess(
+            callback_order.index("ultrafast"),
+            callback_order.index("slow"),
+        )
+        self.assertLess(
+            callback_order.index("slow"),
+            callback_order.index("merged"),
+        )
+        self.assertTrue(slow_model.sessions[0].finished)
+        self.assertTrue(slow_model.sessions[0].closed)
+        self.assertTrue(ultrafast_model.sessions[0].finished)
+        self.assertTrue(ultrafast_model.sessions[0].closed)
+
+    def test_shared_model_uses_two_independent_streaming_sessions(self):
+        shared_model = ScriptedStreamingModel(
+            {1600: "the quick brown fox"},
+            "shared_streaming",
+        )
+        recorder = self.make_recorder_stub(shared_model)
+        recorder.ultrafast_realtime_transcription_model = shared_model
+        recorder.ultrafast_realtime_model_type = "shared"
+        merged_updates = []
+        recorder.on_merged_realtime_transcription_update = (
+            merged_updates.append
+        )
+        thread = self.run_worker(recorder)
+
+        try:
+            recorder.frames.append(self.make_frame())
+            self.assertTrue(wait_until(lambda: bool(merged_updates)))
+        finally:
+            self.stop_worker(recorder, thread)
+
+        self.assertEqual(len(shared_model.sessions), 2)
+        self.assertIsNot(shared_model.sessions[0], shared_model.sessions[1])
+        self.assertEqual(
+            [
+                session.accepted_sample_counts[:1]
+                for session in shared_model.sessions
+            ],
+            [[1600], [1600]],
+        )
+        self.assertTrue(all(session.finished for session in shared_model.sessions))
+        self.assertTrue(all(session.closed for session in shared_model.sessions))
+
+    def test_ultrafast_callback_preserves_raw_model_text(self):
+        slow_model = ScriptedStreamingModel(
+            {1600: "raw ultrafast text"},
+            "slow_streaming",
+        )
+        ultrafast_model = ScriptedStreamingModel(
+            {1600: "raw ultrafast text"},
+            "ultrafast_streaming",
+        )
+        recorder = self.make_recorder_stub(slow_model)
+        recorder.ultrafast_realtime_transcription_model = ultrafast_model
+        recorder.ultrafast_realtime_model_type = "ultrafast"
+        recorder.ensure_sentence_starting_uppercase = True
+        recorder.ensure_sentence_ends_with_period = True
+        ultrafast_updates = []
+        recorder.on_ultrafast_transcription_update = ultrafast_updates.append
+        thread = self.run_worker(recorder)
+
+        try:
+            recorder.frames.append(self.make_frame())
+            self.assertTrue(wait_until(lambda: bool(ultrafast_updates)))
+        finally:
+            self.stop_worker(recorder, thread)
+
+        self.assertEqual(ultrafast_updates[0], "raw ultrafast text")
+
+    def test_stale_ultrafast_result_cannot_overwrite_new_recording_state(self):
+        entered = threading.Event()
+        release = threading.Event()
+        slow_model = ScriptedStreamingModel(
+            {1600: "the current central text"},
+            "slow_streaming",
+        )
+        ultrafast_model = BlockingStreamingModel(
+            entered,
+            release,
+            "stale ultrafast text",
+        )
+        recorder = self.make_recorder_stub(slow_model)
+        recorder.ultrafast_realtime_transcription_model = ultrafast_model
+        recorder.ultrafast_realtime_model_type = "ultrafast"
+        ultrafast_updates = []
+        merge_results = []
+        recorder.on_ultrafast_transcription_update = ultrafast_updates.append
+        recorder.on_realtime_transcription_merge_update = merge_results.append
+        thread = self.run_worker(recorder)
+
+        recorder.frames.append(self.make_frame())
+        self.assertTrue(entered.wait(timeout=2.0))
+        recorder.realtime_recording_id = 2
+        recorder.realtime_transcription_merger.reset(2)
+        recorder.ultrafast_realtime_observation_sequence = 0
+        recorder.ultrafast_realtime_transcription_text = "new recording fast"
+        recorder.last_ultrafast_transcription = "new recording fast"
+        recorder.is_running = False
+        release.set()
+        thread.join(timeout=2.0)
+        recorder.is_recording = False
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(ultrafast_updates, [])
+        self.assertEqual(merge_results, [])
+        self.assertEqual(
+            recorder.ultrafast_realtime_transcription_text,
+            "new recording fast",
+        )
+        self.assertEqual(
+            recorder.last_ultrafast_transcription,
+            "new recording fast",
+        )
+        self.assertEqual(recorder.ultrafast_realtime_observation_sequence, 0)
+
+    def test_failed_fast_alignment_holds_until_slow_text_advances(self):
+        slow_model = ScriptedStreamingModel(
+            {
+                1600: "the quick brown fox",
+                3200: "the quick brown fox",
+                4800: "the quick brown fox jumps today",
+            },
+            "slow_streaming",
+        )
+        ultrafast_model = ScriptedStreamingModel(
+            {
+                1600: "the quick brown fox jumps",
+                3200: "totally unrelated words now",
+                4800: "still unrelated output here",
+            },
+            "ultrafast_streaming",
+        )
+        recorder = self.make_recorder_stub(slow_model)
+        recorder.ultrafast_realtime_transcription_model = ultrafast_model
+        recorder.ultrafast_realtime_model_type = "ultrafast"
+        merged_updates = []
+        merge_results = []
+        recorder.on_merged_realtime_transcription_update = merged_updates.append
+        recorder.on_realtime_transcription_merge_update = merge_results.append
+        thread = self.run_worker(recorder)
+
+        try:
+            recorder.frames.append(self.make_frame())
+            self.assertTrue(wait_until(lambda: len(merged_updates) == 1))
+            self.assertEqual(
+                merged_updates[-1],
+                "the quick brown fox jumps",
+            )
+
+            recorder.frames.append(self.make_frame())
+            self.assertTrue(
+                wait_until(
+                    lambda: ultrafast_model.sessions
+                    and ultrafast_model.sessions[0].total_samples >= 3200
+                )
+            )
+            time.sleep(0.05)
+            self.assertEqual(
+                merged_updates,
+                ["the quick brown fox jumps"],
+            )
+            self.assertTrue(
+                any(result.status == "held_no_anchor" for result in merge_results)
+            )
+
+            recorder.frames.append(self.make_frame())
+            self.assertTrue(wait_until(lambda: len(merged_updates) == 2))
+        finally:
+            self.stop_worker(recorder, thread)
+
+        self.assertEqual(
+            merged_updates,
+            [
+                "the quick brown fox jumps",
+                "the quick brown fox jumps today",
+            ],
+        )
+        self.assertEqual(
+            merge_results[-1].status,
+            "slow_advanced_no_anchor",
+        )
 
 
 if __name__ == "__main__":

@@ -5,15 +5,72 @@ Internal recording buffer and queued-audio helpers.
 import copy
 import logging
 import queue
+import threading
 
 import numpy as np
 
+from .tail_transcription import (
+    FINAL_TRANSCRIPTION_TAIL_SECONDS,
+    append_pcm16_tail,
+    pcm16_bytes_to_float_audio,
+    snapshot_pcm16_tail,
+)
 from .voice_activity import clear_pre_recording_buffer
 
 
 logger = logging.getLogger("realtimestt")
 
 INT16_MAX_ABS_VALUE = 32768.0
+
+
+def get_frames_lock(recorder):
+    """
+    Returns the shared lock guarding active recording frame buffers.
+    """
+    lock = getattr(recorder, "frames_lock", None)
+    if lock is None:
+        lock = threading.RLock()
+        recorder.frames_lock = lock
+    return lock
+
+
+def snapshot_frames(recorder, attr_name="frames"):
+    """
+    Returns a stable tuple snapshot of one recorder frame list.
+    """
+    with get_frames_lock(recorder):
+        return tuple(getattr(recorder, attr_name, None) or ())
+
+
+def set_active_speech_tail_from_frames(recorder, frames):
+    """
+    Rebuilds the rolling tail from a frame sequence.
+    """
+    recorder.active_speech_tail_buffer = bytearray()
+    for frame in frames or ():
+        append_pcm16_tail(recorder, frame)
+
+
+def snapshot_active_speech_tail_audio(recorder):
+    """
+    Returns the rolling PCM16 tail as normalized float audio.
+    """
+    return pcm16_bytes_to_float_audio(snapshot_pcm16_tail(recorder))
+
+
+def tail_audio_from_frames(recorder, frames):
+    """
+    Returns a bounded float tail when a rolling buffer is unavailable.
+    """
+    recorder.active_speech_tail_buffer = bytearray()
+    tail_seconds = getattr(
+        recorder,
+        "preview_transcription_tail_seconds",
+        FINAL_TRANSCRIPTION_TAIL_SECONDS,
+    )
+    for frame in frames or ():
+        append_pcm16_tail(recorder, frame, tail_seconds)
+    return snapshot_active_speech_tail_audio(recorder)
 
 
 def set_audio_from_frames(
@@ -70,6 +127,9 @@ def queue_recorded_audio(
         frames,
         backdate_stop_seconds=0.0,
         backdate_resume_seconds=0.0,
+        force_lowercase_start=None,
+        tail_audio=None,
+        live_text="",
 ):
     """
     Queues a completed recording for final transcription.
@@ -77,10 +137,24 @@ def queue_recorded_audio(
     if not frames:
         return
 
+    if tail_audio is None:
+        tail_audio = tail_audio_from_frames(recorder, frames)
+    elif isinstance(tail_audio, (bytes, bytearray, memoryview)):
+        tail_audio = pcm16_bytes_to_float_audio(tail_audio)
+    else:
+        tail_audio = np.array(tail_audio, copy=True)
+
     recorder.recorded_audio_queue.put({
         "frames": copy.deepcopy(frames),
+        "tail_audio": copy.deepcopy(tail_audio),
+        "live_text": live_text or "",
         "backdate_stop_seconds": backdate_stop_seconds,
         "backdate_resume_seconds": backdate_resume_seconds,
+        "force_lowercase_start": (
+            getattr(recorder, "_force_current_recording_lowercase_start", False)
+            if force_lowercase_start is None
+            else force_lowercase_start
+        ),
     })
 
 

@@ -4,11 +4,15 @@ include RELEASE_NOTES.md
 include LICENSE
 prune docs/development
 prune dev-log
+prune dev-logs
 prune roadmap
 prune test-model-cache
 prune test-results
 prune docs_private
+prune docs/handoffs
 prune tests_private
 global-exclude *Kopie*.py
 global-exclude *.bak
 global-exclude *.tmp
+global-exclude *.log
+global-exclude *.jsonl

@@ -5,11 +5,13 @@ import datetime
 import json
 import logging
 import math
+import os
 import threading
 import time
 import uuid
 import wave
-from dataclasses import asdict, dataclass, replace
+import weakref
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
@@ -151,11 +153,18 @@ STARTUP_ONLY_SETTINGS = {
     "language",
     "model",
     "model_warmup",
+    "main_cpu_affinity",
     "normalize_audio",
     "port",
     "realtime_model",
+    "realtime_cpu_affinity",
     "realtime_transcription_engine",
     "realtime_transcription_engine_options",
+    "ultrafast_realtime_model_type",
+    "ultrafast_realtime_cpu_affinity",
+    "ultrafast_realtime_transcription_engine",
+    "ultrafast_realtime_transcription_engine_options",
+    "ultrafast_realtime_max_tail_words",
     "transcription_engine",
     "transcription_engine_options",
     "tuning_description",
@@ -178,6 +187,7 @@ INT_SETTINGS = {
     "port",
     "realtime_batch_size",
     "realtime_degradation_threshold_ms",
+    "ultrafast_realtime_max_tail_words",
     "webrtc_sensitivity",
 }
 
@@ -215,14 +225,125 @@ OPTIONAL_STRING_SETTINGS = {
     "initial_prompt_realtime",
     "openwakeword_model_paths",
     "realtime_transcription_engine",
+    "ultrafast_realtime_model_type",
+    "ultrafast_realtime_transcription_engine",
 }
 
 DICT_SETTINGS = {
     "realtime_transcription_engine_options",
     "transcription_engine_options",
+    "ultrafast_realtime_transcription_engine_options",
 }
 
 TUPLE_FLOAT_SETTINGS = {"realtime_boundary_followup_delays"}
+
+CPU_AFFINITY_SETTING_NAMES = (
+    "main_cpu_affinity",
+    "realtime_cpu_affinity",
+    "ultrafast_realtime_cpu_affinity",
+)
+
+
+def normalize_cpu_affinity(value, setting_name="cpu_affinity"):
+    """Normalize an optional comma-separated CPU mask.
+
+    The setting is intentionally a tuple so it can be supplied from Python
+    configuration as well as the CLI.  A small ``0-3`` range convenience is
+    accepted for production masks; duplicates are removed and the result is
+    sorted for stable public configuration and tests.
+    """
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{setting_name} must contain non-negative CPU indexes")
+    if isinstance(value, str):
+        items = [part.strip() for part in value.split(",")]
+    else:
+        try:
+            items = list(value) if not isinstance(value, int) else [value]
+        except TypeError as exc:
+            raise ValueError(
+                f"{setting_name} must be a comma-separated list of CPU indexes"
+            ) from exc
+
+    indexes = set()
+    for item in items:
+        if isinstance(item, bool):
+            raise ValueError(f"{setting_name} must contain non-negative CPU indexes")
+        if isinstance(item, int):
+            start = end = item
+        else:
+            token = str(item).strip()
+            if not token:
+                raise ValueError(
+                    f"{setting_name} must be a comma-separated list of CPU indexes"
+                )
+            if "-" in token:
+                bounds = [bound.strip() for bound in token.split("-")]
+                if len(bounds) != 2 or not all(bounds):
+                    raise ValueError(
+                        f"{setting_name} contains an invalid CPU range: {token}"
+                    )
+                try:
+                    start, end = (int(bound) for bound in bounds)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{setting_name} contains an invalid CPU range: {token}"
+                    ) from exc
+            else:
+                try:
+                    start = end = int(token)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{setting_name} must contain non-negative CPU indexes"
+                    ) from exc
+        if start < 0 or end < start:
+            raise ValueError(f"{setting_name} must contain non-negative CPU indexes")
+        if end - start > 4096:
+            raise ValueError(f"{setting_name} CPU range is too large")
+        indexes.update(range(start, end + 1))
+
+    if not indexes:
+        raise ValueError(
+            f"{setting_name} must be a non-empty list of CPU indexes or null"
+        )
+    return tuple(sorted(indexes))
+
+
+def _cpu_affinity_arg(value):
+    try:
+        return normalize_cpu_affinity(value, "CPU affinity")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def set_current_thread_cpu_affinity(worker_name, affinity):
+    """Pin one scheduler worker before it creates its native inference pool.
+
+    Linux accepts a native thread ID in ``sched_setaffinity``.  Other
+    platforms keep the historical behavior and ignore the optional setting.
+    A configured Linux mask that cannot be applied is allowed to fail worker
+    initialization, which makes the server's health/readiness state honest.
+    """
+
+    if not affinity:
+        return
+    setter = getattr(os, "sched_setaffinity", None)
+    if not callable(setter):
+        LOGGER.warning(
+            "CPU affinity for %s is configured but unsupported on this platform; ignoring it",
+            worker_name,
+        )
+        return
+    native_id = threading.get_native_id()
+    setter(native_id, set(affinity))
+    LOGGER.info(
+        "Pinned %s inference worker native thread %s to CPUs %s",
+        worker_name,
+        native_id,
+        ",".join(str(cpu) for cpu in affinity),
+    )
 
 
 @dataclass
@@ -236,12 +357,21 @@ class ServerSettings:
     language: str = "en"
     transcription_engine: str = "faster_whisper"
     realtime_transcription_engine: Optional[str] = None
+    ultrafast_realtime_model_type: Optional[str] = None
+    ultrafast_realtime_transcription_engine: Optional[str] = None
     transcription_engine_options: Optional[Dict[str, Any]] = None
     realtime_transcription_engine_options: Optional[Dict[str, Any]] = None
+    ultrafast_realtime_transcription_engine_options: Optional[Dict[str, Any]] = None
+    ultrafast_realtime_max_tail_words: int = 5
     download_root: Optional[str] = None
     compute_type: str = "default"
     device: str = "cuda"
     gpu_device_index: int = 0
+    # Optional Linux CPU masks for the worker that owns each native ASR pool.
+    # ``main`` also owns Preview/Final queue work.
+    main_cpu_affinity: Optional[Tuple[int, ...]] = None
+    realtime_cpu_affinity: Optional[Tuple[int, ...]] = None
+    ultrafast_realtime_cpu_affinity: Optional[Tuple[int, ...]] = None
     beam_size: int = 5
     beam_size_realtime: int = 3
     batch_size: int = 16
@@ -287,10 +417,19 @@ class ServerSettings:
     vad_energy_threshold: float = 250.0
     model_warmup: bool = True
 
+    def __post_init__(self):
+        for setting_name in CPU_AFFINITY_SETTING_NAMES:
+            setattr(
+                self,
+                setting_name,
+                normalize_cpu_affinity(getattr(self, setting_name), setting_name),
+            )
+
     def public_dict(self):
         data = asdict(self)
         data.pop("transcription_engine_options", None)
         data.pop("realtime_transcription_engine_options", None)
+        data.pop("ultrafast_realtime_transcription_engine_options", None)
         data["wake_word_enabled"] = self.wake_word_enabled()
         return data
 
@@ -648,6 +787,10 @@ class InferenceResult:
     queue_delay: float
     inference_duration: float
     total_latency: float
+    # Optional provider data is appended with defaults so existing scheduler
+    # integrations that construct InferenceResult positionally stay valid.
+    info: Any = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -733,6 +876,7 @@ class FairInferenceQueue:
         self._total_queued = 0
         self._closed = False
         self._coalesced_realtime = 0
+        self._stale_final_dropped = 0
         self._stale_realtime_dropped = 0
         self._rejected_jobs = 0
 
@@ -802,7 +946,20 @@ class FairInferenceQueue:
 
                         job = None
                         if state["final"]:
-                            job = state["final"].popleft()
+                            final_job = state["final"].popleft()
+                            if (
+                                final_job.deadline_at is not None
+                                and final_job.deadline_at < now
+                            ):
+                                self._total_queued -= 1
+                                self._stale_final_dropped += 1
+                                stale_jobs.append((final_job, "stale"))
+                                if self._session_has_work_locked(session_id):
+                                    self._ensure_session_locked(session_id)
+                                else:
+                                    self._cleanup_session_locked(session_id)
+                                continue
+                            job = final_job
                         elif state["realtime"] is not None:
                             realtime_job = state["realtime"]
                             state["realtime"] = None
@@ -859,9 +1016,52 @@ class FairInferenceQueue:
         self._notify_drops(dropped)
 
     def close(self):
+        dropped = []
         with self._condition:
+            if self._closed:
+                return
             self._closed = True
+            for state in self._sessions.values():
+                while state["final"]:
+                    dropped.append((state["final"].popleft(), "shutdown"))
+                if state["realtime"] is not None:
+                    dropped.append((state["realtime"], "shutdown"))
+                    state["realtime"] = None
+            self._sessions.clear()
+            self._ordered_sessions.clear()
+            self._queued_session_ids.clear()
+            self._total_queued = 0
             self._condition.notify_all()
+        self._notify_drops(dropped)
+
+    def cancel_request(self, request_id):
+        """Cancel one queued job without touching newer work for its session."""
+
+        dropped = []
+        with self._condition:
+            for session_id, state in list(self._sessions.items()):
+                retained_finals = collections.deque()
+                while state["final"]:
+                    job = state["final"].popleft()
+                    if job.request_id == request_id:
+                        dropped.append((job, "cancelled"))
+                        self._total_queued -= 1
+                    else:
+                        retained_finals.append(job)
+                state["final"] = retained_finals
+                realtime_job = state["realtime"]
+                if (
+                    realtime_job is not None
+                    and realtime_job.request_id == request_id
+                ):
+                    dropped.append((realtime_job, "cancelled"))
+                    state["realtime"] = None
+                    self._total_queued -= 1
+                self._cleanup_session_locked(session_id)
+            if dropped:
+                self._condition.notify_all()
+        self._notify_drops(dropped)
+        return bool(dropped)
 
     def snapshot(self):
         with self._condition:
@@ -878,6 +1078,7 @@ class FairInferenceQueue:
                 "sessions": len(self._sessions),
                 "perSession": per_session,
                 "coalescedRealtime": self._coalesced_realtime,
+                "staleFinalDropped": self._stale_final_dropped,
                 "staleRealtimeDropped": self._stale_realtime_dropped,
                 "rejectedJobs": self._rejected_jobs,
             }
@@ -932,9 +1133,22 @@ class SharedEngineWorker:
         self.started_at = time.monotonic()
         self.completed_jobs = 0
         self.failed_jobs = 0
+        self.cancelled_jobs = 0
         self.queue_delay = RunningStats()
         self.inference_duration = RunningStats()
         self.total_latency = RunningStats()
+        # Sherpa OnlineRecognizer instances are shared by all accepted
+        # sessions.  Native recognizer/stream operations are not generally
+        # safe to run concurrently, so every ordinary and streaming operation
+        # goes through this one lock.
+        self.engine_lock = threading.RLock()
+        self._active_job_lock = threading.Lock()
+        self._active_request_id = None
+        self._active_cancel_event = None
+        self._native_request_id = None
+        self._cancel_requested_ids = {}
+        self._streaming_sessions = set()
+        self._engine_closed = False
 
     def start(self):
         self.thread = threading.Thread(
@@ -949,6 +1163,83 @@ class SharedEngineWorker:
         self.queue.close()
         if self.thread is not None:
             self.thread.join(timeout=10)
+        self.close_engine()
+
+    def create_streaming_session(self, language=None, use_prompt=True):
+        """Create a lock-backed session on this already-loaded engine.
+
+        Session creation waits for model initialization so callers receive a
+        useful load/support error instead of an opaque ``None`` dereference.
+        The returned proxy serializes every native stream operation with final
+        and other realtime work on this worker.
+        """
+
+        if not self.ready.wait(timeout=30):
+            raise RuntimeError(
+                f"{self.name} inference engine did not become ready for streaming"
+            )
+        with self.engine_lock:
+            if self.load_error is not None:
+                raise RuntimeError(
+                    f"{self.name} inference engine failed to load: {self.load_error}"
+                ) from self.load_error
+            if self.engine is None or self._engine_closed:
+                raise RuntimeError(
+                    f"{self.name} inference engine is unavailable for streaming"
+                )
+            if not getattr(self.engine, "supports_streaming", False):
+                raise RuntimeError(
+                    f"{self.name} inference engine does not support chunk streaming"
+                )
+            creator = getattr(self.engine, "create_streaming_session", None)
+            if not callable(creator):
+                raise RuntimeError(
+                    f"{self.name} inference engine does not expose create_streaming_session"
+                )
+            try:
+                try:
+                    session = creator(language=language, use_prompt=use_prompt)
+                except TypeError:
+                    session = creator()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Could not create {self.name} realtime streaming session: {exc}"
+                ) from exc
+            proxy = LockedStreamingSession(self, session)
+            self._streaming_sessions.add(proxy)
+            return proxy
+
+    def _unregister_streaming_session(self, session):
+        with self.engine_lock:
+            self._streaming_sessions.discard(session)
+
+    def close_engine(self):
+        """Close active streams and the loaded engine under one lock."""
+
+        with self.engine_lock:
+            if self._engine_closed:
+                return
+            self._engine_closed = True
+            sessions = list(self._streaming_sessions)
+            self._streaming_sessions.clear()
+            for session in sessions:
+                session._close_locked(unregister=False)
+            engine = self.engine
+            self.engine = None
+            if engine is None:
+                return
+            for method_name in ("shutdown", "close", "release"):
+                method = getattr(engine, method_name, None)
+                if callable(method):
+                    try:
+                        method()
+                    except Exception:
+                        LOGGER.debug(
+                            "Could not close %s inference engine",
+                            self.name,
+                            exc_info=True,
+                        )
+                    break
 
     def snapshot(self):
         elapsed = max(0.001, time.monotonic() - self.started_at)
@@ -958,14 +1249,94 @@ class SharedEngineWorker:
             "healthy": self.load_error is None,
             "completedJobs": self.completed_jobs,
             "failedJobs": self.failed_jobs,
+            "cancelledJobs": self.cancelled_jobs,
             "busyRatio": min(1.0, self.busy_seconds / elapsed),
             "queueDelay": self.queue_delay.snapshot_ms(),
             "inferenceDuration": self.inference_duration.snapshot_ms(),
             "totalLatency": self.total_latency.snapshot_ms(),
         }
 
+    def cancel_request(self, request_id):
+        """Cancel exactly one claimed native job, including the dequeue race."""
+
+        cancel = None
+        with self._active_job_lock:
+            # Remember the request even when queue.get() has returned but the
+            # worker has not installed its active marker yet. Keep insertion
+            # order so defensive eviction can never discard the active id.
+            if self._active_request_id != request_id:
+                self._cancel_requested_ids[request_id] = True
+                while len(self._cancel_requested_ids) > 1024:
+                    oldest = next(iter(self._cancel_requested_ids))
+                    self._cancel_requested_ids.pop(oldest, None)
+                return False
+            if self._active_cancel_event is not None:
+                self._active_cancel_event.set()
+            if self._native_request_id == request_id:
+                cancel = getattr(self.engine, "cancel_active", None)
+        if not callable(cancel):
+            return True
+        try:
+            cancel()
+        except Exception:
+            LOGGER.debug(
+                "Could not cancel active %s inference request %s",
+                self.name,
+                request_id,
+                exc_info=True,
+            )
+        return True
+
+    def _claim_job(self, request_id):
+        with self._active_job_lock:
+            if self._cancel_requested_ids.pop(request_id, False):
+                return None
+            cancel_event = threading.Event()
+            self._active_request_id = request_id
+            self._active_cancel_event = cancel_event
+            return cancel_event
+
+    def _begin_native_job(self, request_id, cancel_event):
+        with self._active_job_lock:
+            if (
+                self._active_request_id != request_id
+                or self._active_cancel_event is not cancel_event
+                or cancel_event.is_set()
+            ):
+                return False
+            self._native_request_id = request_id
+            return True
+
+    def _end_native_job(self, request_id):
+        with self._active_job_lock:
+            if self._native_request_id == request_id:
+                self._native_request_id = None
+
+    def _release_job(self, request_id):
+        with self._active_job_lock:
+            cancel_event = self._active_cancel_event
+            cancelled = bool(
+                cancel_event is not None and cancel_event.is_set()
+            ) or self._cancel_requested_ids.pop(request_id, False)
+            if self._active_request_id == request_id:
+                self._active_request_id = None
+                self._active_cancel_event = None
+            if self._native_request_id == request_id:
+                self._native_request_id = None
+            return cancelled
+
     def _worker(self):
         try:
+            affinity_setting = {
+                "main": "main_cpu_affinity",
+                "realtime": "realtime_cpu_affinity",
+                "ultrafast": "ultrafast_realtime_cpu_affinity",
+            }.get(self.name)
+            if affinity_setting is not None:
+                set_current_thread_cpu_affinity(
+                    self.name,
+                    getattr(self.settings, affinity_setting, None),
+                )
             self.engine = self.engine_factory()
             self._warmup()
         except Exception as exc:
@@ -984,21 +1355,67 @@ class SharedEngineWorker:
             started_at = time.monotonic()
             text = ""
             error = None
+            info = None
+            metadata = {}
+            failure = None
+            cancel_event = self._claim_job(job.request_id)
+            claimed = cancel_event is not None
 
             try:
-                if self.engine is None:
-                    raise RuntimeError(f"{self.name} inference engine is unavailable")
-                result = self.engine.transcribe(
-                    job.audio,
-                    language=job.language if job.language else None,
-                    use_prompt=job.use_prompt,
-                )
-                text = (getattr(result, "text", "") or "").strip()
-                self.completed_jobs += 1
+                if claimed:
+                    if self.engine is None:
+                        raise RuntimeError(f"{self.name} inference engine is unavailable")
+                    with self.engine_lock:
+                        if self.engine is None or self._engine_closed:
+                            raise RuntimeError(
+                                f"{self.name} inference engine is unavailable"
+                            )
+                        if self._begin_native_job(job.request_id, cancel_event):
+                            try:
+                                cancellable = getattr(
+                                    self.engine, "transcribe_cancellable", None
+                                )
+                                if callable(cancellable):
+                                    result = cancellable(
+                                        job.audio,
+                                        language=job.language or None,
+                                        use_prompt=job.use_prompt,
+                                        cancel_event=cancel_event,
+                                    )
+                                else:
+                                    result = self.engine.transcribe(
+                                        job.audio,
+                                        language=job.language or None,
+                                        use_prompt=job.use_prompt,
+                                    )
+                            finally:
+                                self._end_native_job(job.request_id)
+                            text = (getattr(result, "text", "") or "").strip()
+                            info = getattr(result, "info", None)
+                            provider_metadata = getattr(result, "metadata", None)
+                            if isinstance(provider_metadata, dict):
+                                metadata = dict(provider_metadata)
             except Exception as exc:
-                self.failed_jobs += 1
                 error = str(exc)
-                LOGGER.exception("Inference job failed: %s", job.request_id)
+                failure = exc
+
+            cancel_requested = not claimed or self._release_job(job.request_id)
+            if cancel_requested:
+                text = ""
+                info = None
+                metadata = {"cancelled": True}
+                error = "cancelled"
+                self.cancelled_jobs += 1
+            elif error is not None:
+                self.failed_jobs += 1
+                LOGGER.error(
+                    "Inference job failed: %s: %s",
+                    job.request_id,
+                    error,
+                    exc_info=(type(failure), failure, failure.__traceback__),
+                )
+            else:
+                self.completed_jobs += 1
 
             completed_at = time.monotonic()
             queue_delay = max(0.0, started_at - job.created_at)
@@ -1024,18 +1441,114 @@ class SharedEngineWorker:
                     queue_delay=queue_delay,
                     inference_duration=inference_duration,
                     total_latency=total_latency,
+                    info=info,
+                    metadata=metadata,
                 )
             )
 
     def _warmup(self):
         if not self.settings.model_warmup or self.engine is None:
             return
-        warmup_path = Path(__file__).resolve().parents[1] / "RealtimeSTT" / "warmup_audio.wav"
+        # Keep the warmup asset in the installed package's data directory.  The
+        # old path happened to work only for source checkouts that had a
+        # top-level copy of the WAV file.
+        warmup_path = (
+            Path(__file__).resolve().parents[1]
+            / "RealtimeSTT"
+            / "assets"
+            / "warmup_audio.wav"
+        )
         try:
             audio = read_wav_float32(warmup_path).samples
-            self.engine.warmup(audio)
+            with self.engine_lock:
+                if self.engine is not None and not self._engine_closed:
+                    self.engine.warmup(audio)
         except Exception:
             LOGGER.debug("Warmup skipped for %s", self.name, exc_info=True)
+
+
+class LockedStreamingSession:
+    """Serialize a shared-engine streaming session and release it idempotently."""
+
+    def __init__(self, worker, session):
+        self.worker = worker
+        self.session = session
+        self.closed = False
+        self._lock = threading.RLock()
+
+    def _call_locked(self, method_name, *args, **kwargs):
+        if self.closed:
+            raise RuntimeError("streaming session is closed")
+        method = getattr(self.session, method_name, None)
+        if not callable(method):
+            raise RuntimeError(
+                f"streaming session does not expose {method_name}()"
+            )
+        with self.worker.engine_lock:
+            if self.closed:
+                raise RuntimeError("streaming session is closed")
+            if self.worker.engine is None or self.worker._engine_closed:
+                raise RuntimeError("streaming engine is closed")
+            return method(*args, **kwargs)
+
+    def accept_audio(self, audio, sample_rate=None):
+        return self._call_locked("accept_audio", audio, sample_rate=sample_rate)
+
+    def decode(self):
+        return self._call_locked("decode")
+
+    def get_result(self):
+        return self._call_locked("get_result")
+
+    def finish(self):
+        return self._call_locked("finish")
+
+    def input_finished(self):
+        if hasattr(self.session, "input_finished"):
+            return self._call_locked("input_finished")
+        return self.finish()
+
+    def reset(self):
+        return self._call_locked("reset")
+
+    def set_language(self, language):
+        """Update a backend stream's language and start a fresh utterance."""
+
+        with self.worker.engine_lock:
+            if self.closed:
+                raise RuntimeError("streaming session is closed")
+            if self.worker.engine is None or self.worker._engine_closed:
+                raise RuntimeError("streaming engine is closed")
+            if hasattr(self.session, "language"):
+                self.session.language = language
+            method = getattr(self.session, "reset", None)
+            if not callable(method):
+                raise RuntimeError(
+                    "streaming session does not expose reset() for language changes"
+                )
+            return method()
+
+    def cancel(self):
+        if hasattr(self.session, "cancel"):
+            return self._call_locked("cancel")
+        return self.close()
+
+    def _close_locked(self, unregister=True):
+        if self.closed:
+            return
+        method = getattr(self.session, "close", None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                LOGGER.debug("Could not close realtime streaming session", exc_info=True)
+        self.closed = True
+        if unregister:
+            self.worker._unregister_streaming_session(self)
+
+    def close(self):
+        with self.worker.engine_lock:
+            self._close_locked()
 
 
 class InferenceScheduler:
@@ -1056,6 +1569,11 @@ class InferenceScheduler:
             if settings.use_main_model_for_realtime
             else FairInferenceQueue("realtime", settings, drop_callback)
         )
+        self.ultrafast_queue = (
+            FairInferenceQueue("ultrafast", settings, drop_callback)
+            if settings.ultrafast_realtime_model_type
+            else None
+        )
         self.main_worker = SharedEngineWorker(
             "main",
             settings,
@@ -1074,22 +1592,38 @@ class InferenceScheduler:
                 result_callback,
                 error_callback,
             )
+        self.ultrafast_worker = None
+        if self.ultrafast_queue is not None:
+            self.ultrafast_worker = SharedEngineWorker(
+                "ultrafast",
+                settings,
+                self.ultrafast_queue,
+                self._create_ultrafast_realtime_engine,
+                result_callback,
+                error_callback,
+            )
 
     def start(self):
         self.main_worker.start()
         if self.realtime_worker is not None:
             self.realtime_worker.start()
+        if self.ultrafast_worker is not None:
+            self.ultrafast_worker.start()
 
     def stop(self):
         self.main_worker.stop()
         if self.realtime_worker is not None:
             self.realtime_worker.stop()
+        if self.ultrafast_worker is not None:
+            self.ultrafast_worker.stop()
 
     def wait_ready(self, timeout=None):
         deadline = None if timeout is None else time.monotonic() + timeout
         workers = [self.main_worker]
         if self.realtime_worker is not None:
             workers.append(self.realtime_worker)
+        if self.ultrafast_worker is not None:
+            workers.append(self.ultrafast_worker)
 
         for worker in workers:
             remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
@@ -1098,29 +1632,73 @@ class InferenceScheduler:
         return True
 
     def healthy(self):
-        if self.main_worker.load_error is not None:
-            return False
-        if self.realtime_worker is not None and self.realtime_worker.load_error is not None:
-            return False
-        return True
+        workers = [
+            self.main_worker,
+            self.realtime_worker,
+            self.ultrafast_worker,
+        ]
+        return all(worker is None or worker.load_error is None for worker in workers)
 
     def submit(self, job: InferenceJob):
+        if job.kind == "ultrafast":
+            if self.ultrafast_queue is None:
+                raise RuntimeError("The ultrafast realtime inference queue is unavailable")
+            return self.ultrafast_queue.submit(job)
         if job.kind == "realtime" and not self.settings.use_main_model_for_realtime:
             return self.realtime_queue.submit(job)
         return self.main_queue.submit(job)
+
+    def streaming_worker(self, kind="realtime"):
+        """Return the loaded worker that owns the requested model lane."""
+
+        if kind == "ultrafast":
+            if self.ultrafast_worker is None:
+                raise RuntimeError("The ultrafast realtime inference worker is unavailable")
+            return self.ultrafast_worker
+        if kind != "realtime":
+            raise RuntimeError(f"Unknown streaming model lane: {kind}")
+        worker = self.main_worker if self.settings.use_main_model_for_realtime else self.realtime_worker
+        if worker is None:
+            raise RuntimeError("The realtime inference worker is unavailable")
+        return worker
 
     def cancel_session(self, session_id):
         self.main_queue.cancel_session(session_id)
         if self.realtime_queue is not self.main_queue:
             self.realtime_queue.cancel_session(session_id)
+        if self.ultrafast_queue is not None:
+            self.ultrafast_queue.cancel_session(session_id)
+
+    def cancel_request(self, request_id):
+        main_queued = self.main_queue.cancel_request(request_id)
+        cancelled = main_queued
+        if not main_queued:
+            cancelled = self.main_worker.cancel_request(request_id) or cancelled
+        if self.realtime_queue is not self.main_queue:
+            realtime_queued = self.realtime_queue.cancel_request(request_id)
+            cancelled = realtime_queued or cancelled
+            if not realtime_queued and self.realtime_worker is not None:
+                cancelled = (
+                    self.realtime_worker.cancel_request(request_id) or cancelled
+                )
+        if self.ultrafast_queue is not None:
+            ultrafast_queued = self.ultrafast_queue.cancel_request(request_id)
+            cancelled = ultrafast_queued or cancelled
+            if not ultrafast_queued and self.ultrafast_worker is not None:
+                cancelled = (
+                    self.ultrafast_worker.cancel_request(request_id) or cancelled
+                )
+        return cancelled
 
     def snapshot(self):
+        if self.ultrafast_worker is not None:
+            mode = "balanced-main-plus-realtime-plus-ultrafast"
+        elif self.settings.use_main_model_for_realtime:
+            mode = "low-memory-one-model"
+        else:
+            mode = "balanced-main-plus-realtime"
         data = {
-            "mode": (
-                "low-memory-one-model"
-                if self.settings.use_main_model_for_realtime
-                else "balanced-main-plus-realtime"
-            ),
+            "mode": mode,
             "queues": {"main": self.main_queue.snapshot()},
             "workers": {"main": self.main_worker.snapshot()},
         }
@@ -1128,6 +1706,10 @@ class InferenceScheduler:
             data["queues"]["realtime"] = self.realtime_queue.snapshot()
         if self.realtime_worker is not None:
             data["workers"]["realtime"] = self.realtime_worker.snapshot()
+        if self.ultrafast_queue is not None:
+            data["queues"]["ultrafast"] = self.ultrafast_queue.snapshot()
+        if self.ultrafast_worker is not None:
+            data["workers"]["ultrafast"] = self.ultrafast_worker.snapshot()
         return data
 
     def _create_main_engine(self):
@@ -1181,12 +1763,68 @@ class InferenceScheduler:
             ),
         )
 
+    def _create_ultrafast_realtime_engine(self):
+        from RealtimeSTT.transcription_engines import (
+            TranscriptionEngineConfig,
+            create_transcription_engine,
+        )
+
+        return create_transcription_engine(
+            self.settings.ultrafast_realtime_transcription_engine
+            or self.settings.realtime_transcription_engine
+            or self.settings.transcription_engine,
+            TranscriptionEngineConfig(
+                model=self.settings.ultrafast_realtime_model_type,
+                download_root=self.settings.download_root,
+                compute_type=self.settings.compute_type,
+                gpu_device_index=self.settings.gpu_device_index,
+                device=effective_device(self.settings.device),
+                beam_size=self.settings.beam_size_realtime,
+                initial_prompt=self.settings.initial_prompt_realtime,
+                batch_size=self.settings.realtime_batch_size,
+                vad_filter=self.settings.vad_filter,
+                normalize_audio=self.settings.normalize_audio,
+                engine_options=(
+                    self.settings.ultrafast_realtime_transcription_engine_options
+                    if self.settings.ultrafast_realtime_transcription_engine_options is not None
+                    else (
+                        self.settings.realtime_transcription_engine_options
+                        if self.settings.realtime_transcription_engine_options is not None
+                        else self.settings.transcription_engine_options
+                    )
+                ),
+            ),
+        )
 
 class SchedulerTranscriptionExecutor:
     def __init__(self, service, session_id, kind):
         self.service = service
         self.session_id = session_id
         self.kind = kind
+        self._streaming_sessions = weakref.WeakSet()
+
+    @property
+    def supports_streaming(self):
+        """Expose realtime streaming capability to the recorder worker."""
+
+        if self.kind != "realtime":
+            return False
+        try:
+            worker = self.service.scheduler.streaming_worker("realtime")
+        except Exception:
+            return False
+        # Admission can happen while model workers are still loading.  Let the
+        # recorder take the streaming path and let create_streaming_session()
+        # wait for readiness rather than silently switching to growing-buffer
+        # fallback during startup.  Once ready, report the engine's real
+        # capability.
+        if not worker.ready.is_set():
+            return True
+        return bool(
+            worker.engine is not None
+            and not worker.load_error
+            and getattr(worker.engine, "supports_streaming", False)
+        )
 
     def transcribe(self, audio, language=None, use_prompt=True):
         return self.service.transcribe_for_recorder(
@@ -1196,6 +1834,30 @@ class SchedulerTranscriptionExecutor:
             language,
             use_prompt,
         )
+
+    def create_streaming_session(self, language=None, use_prompt=True):
+        """Create a shared realtime stream; final work remains queue-backed."""
+
+        if self.kind != "realtime":
+            raise RuntimeError(
+                "Streaming sessions are supported only for the realtime executor"
+            )
+        worker = self.service.scheduler.streaming_worker("realtime")
+        session = worker.create_streaming_session(
+            language=language,
+            use_prompt=use_prompt,
+        )
+        self._streaming_sessions.add(session)
+        return session
+
+    def set_streaming_language(self, language):
+        """Reset active streams when a session's turn language changes."""
+
+        if self.kind != "realtime":
+            return
+        for session in list(self._streaming_sessions):
+            if not session.closed:
+                session.set_language(language)
 
 
 class VoiceActivityDetector:
@@ -1823,17 +2485,47 @@ class RecorderBackedRealtimeSession:
         self.publish_status(self.status)
 
     def stop_streaming(self):
+        final_submitted_before = self.final_submitted
+        flushed = False
         with self.lock:
             self.streaming = False
             self.status = "idle"
         try:
-            self.recorder.flush_buffered_audio()
+            flush_input = getattr(self.recorder, "flush_audio_input", None)
+            if callable(flush_input):
+                flush_input()
+            drain_input = getattr(self.recorder, "drain_audio_input", None)
+            if callable(drain_input):
+                drain_timeout = getattr(
+                    self.settings,
+                    "finalize_timeout_seconds",
+                    30.0,
+                )
+                if not drain_input(timeout=drain_timeout):
+                    raise RuntimeError(
+                        "Audio input drain timed out before finalization"
+                    )
+            flushed = bool(self.recorder.flush_buffered_audio())
             self._trim_recorded_audio_queue()
         except Exception:
             LOGGER.debug("Could not flush buffered audio for %s", self.session_id, exc_info=True)
+            raise
         finally:
             self.service.deactivate_speaker(self.session_id)
         self.publish_status("idle")
+        try:
+            pending_recordings = bool(self.recorder.has_pending_recordings())
+        except Exception:
+            pending_recordings = False
+        # ``flush_buffered_audio`` queues the final recording for the
+        # recorder's text worker.  Returning this explicit state lets the
+        # production protocol distinguish a no-speech turn from a turn whose
+        # final outcome still has to be published.
+        return bool(
+            flushed
+            or pending_recordings
+            or self.final_submitted > final_submitted_before
+        )
 
     def close(self):
         with self.lock:
@@ -2026,15 +2718,7 @@ class RecorderBackedRealtimeSession:
                 if getattr(self.recorder, "is_shut_down", False):
                     break
                 LOGGER.exception("Session recorder text loop failed")
-                self.service.manager.publish_session(
-                    self.session_id,
-                    {
-                        "type": "error",
-                        "sessionId": self.session_id,
-                        "message": str(exc),
-                        "where": "recorder",
-                    },
-                )
+                self._publish_final_failure(str(exc), text_generation)
                 time.sleep(0.1)
                 continue
 
@@ -2042,8 +2726,27 @@ class RecorderBackedRealtimeSession:
                 break
             text = (text or "").strip()
             if not text:
+                self._publish_final_failure(
+                    "Final transcription returned no text.",
+                    text_generation,
+                    code="empty_final",
+                )
                 continue
             self._publish_final_text(text, text_generation)
+
+    def _publish_final_failure(self, message, text_generation, code="final_transcription_failed"):
+        with self.lock:
+            if text_generation != self.generation:
+                return False
+        payload = {
+            "type": "error",
+            "sessionId": self.session_id,
+            "code": code,
+            "message": message,
+            "where": "final",
+        }
+        self.service.manager.publish_session(self.session_id, payload)
+        return True
 
     def _publish_final_text(self, text, text_generation):
         with self.lock:
@@ -2974,7 +3677,13 @@ class RealtimeSTTService:
             raise RuntimeError(result.error)
 
         current_session.record_executor_result(result)
-        return TranscriptionResult(text=result.text)
+        result_kwargs = {
+            "text": result.text,
+            "metadata": dict(result.metadata or {}),
+        }
+        if result.info is not None:
+            result_kwargs["info"] = result.info
+        return TranscriptionResult(**result_kwargs)
 
     def complete_pending_recorder_transcription(self, result: InferenceResult):
         with self._pending_recorder_lock:
@@ -3206,29 +3915,29 @@ def create_app(settings: Optional[ServerSettings] = None, scheduler_factory=None
             await websocket.close(code=1013)
             return
 
-        await manager.connect(session_id, websocket)
-        await websocket.send_text(json.dumps({
-            "type": "hello",
-            "clientId": session_id,
-            "sessionId": session_id,
-            "settings": settings.public_dict(),
-            "limits": service.limits_dict(),
-            "supportedEngines": get_supported_transcription_engines(),
-            "runtimeSettings": service.runtime_settings_contract(),
-        }))
-        if service.ready.is_set():
+        try:
+            await manager.connect(session_id, websocket)
             await websocket.send_text(json.dumps({
-                "type": "ready",
+                "type": "hello",
+                "clientId": session_id,
                 "sessionId": session_id,
                 "settings": settings.public_dict(),
                 "limits": service.limits_dict(),
+                "supportedEngines": get_supported_transcription_engines(),
                 "runtimeSettings": service.runtime_settings_contract(),
-                "ok": service.scheduler.healthy(),
             }))
-            for error in service.startup_errors:
-                await websocket.send_text(json.dumps(error))
+            if service.ready.is_set():
+                await websocket.send_text(json.dumps({
+                    "type": "ready",
+                    "sessionId": session_id,
+                    "settings": settings.public_dict(),
+                    "limits": service.limits_dict(),
+                    "runtimeSettings": service.runtime_settings_contract(),
+                    "ok": service.scheduler.healthy(),
+                }))
+                for error in service.startup_errors:
+                    await websocket.send_text(json.dumps(error))
 
-        try:
             while True:
                 message = await websocket.receive()
                 if "bytes" in message and message["bytes"] is not None:
@@ -3312,8 +4021,10 @@ def create_app(settings: Optional[ServerSettings] = None, scheduler_factory=None
             if "disconnect" not in str(exc).lower():
                 raise
         finally:
-            service.remove_session(session_id)
-            await manager.disconnect(session_id)
+            try:
+                service.remove_session(session_id)
+            finally:
+                await manager.disconnect(session_id)
 
     app.state.realtimestt_service = service
     return app
@@ -3333,15 +4044,45 @@ def parse_args(argv=None):
     )
     parser.add_argument("--model", default="small.en")
     parser.add_argument("--realtime-model", default="tiny.en")
+    parser.add_argument(
+        "--ultrafast-realtime-model",
+        "--ultrafast-realtime-model-type",
+        dest="ultrafast_realtime_model_type",
+    )
+    parser.add_argument("--ultrafast-realtime-max-tail-words", type=int, default=5)
     parser.add_argument("--language", default="en")
     parser.add_argument("--engine", "--transcription-engine", dest="transcription_engine", default="faster_whisper")
     parser.add_argument("--realtime-engine", "--realtime-transcription-engine", dest="realtime_transcription_engine")
+    parser.add_argument(
+        "--ultrafast-realtime-engine",
+        "--ultrafast-realtime-transcription-engine",
+        dest="ultrafast_realtime_transcription_engine",
+    )
     parser.add_argument("--engine-options", dest="transcription_engine_options")
     parser.add_argument("--realtime-engine-options", dest="realtime_transcription_engine_options")
+    parser.add_argument(
+        "--ultrafast-realtime-engine-options",
+        dest="ultrafast_realtime_transcription_engine_options",
+    )
     parser.add_argument("--download-root")
     parser.add_argument("--compute-type", default="default")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--gpu-device-index", type=int, default=0)
+    parser.add_argument(
+        "--main-cpu-affinity",
+        type=_cpu_affinity_arg,
+        help="Optional Linux CPU list/ranges for the main Preview/Final worker, e.g. 0-3,8",
+    )
+    parser.add_argument(
+        "--realtime-cpu-affinity",
+        type=_cpu_affinity_arg,
+        help="Optional Linux CPU list/ranges for the accurate realtime worker, e.g. 10",
+    )
+    parser.add_argument(
+        "--ultrafast-realtime-cpu-affinity",
+        type=_cpu_affinity_arg,
+        help="Optional Linux CPU list/ranges for the ultrafast realtime worker, e.g. 12-14",
+    )
     parser.add_argument("--beam-size", type=int)
     parser.add_argument("--beam-size-realtime", type=int)
     parser.add_argument("--batch-size", type=int)
@@ -3423,18 +4164,30 @@ def settings_from_args(args):
         tuning_description=TUNING_PROFILES[tuning_profile]["description"],
         model=args.model,
         realtime_model=args.realtime_model,
+        ultrafast_realtime_model_type=args.ultrafast_realtime_model_type,
+        ultrafast_realtime_max_tail_words=args.ultrafast_realtime_max_tail_words,
         language=args.language,
         transcription_engine=normalize_engine_name(args.transcription_engine),
         realtime_transcription_engine=normalize_engine_name(args.realtime_transcription_engine),
+        ultrafast_realtime_transcription_engine=normalize_engine_name(
+            args.ultrafast_realtime_transcription_engine
+        ),
         transcription_engine_options=parse_json_object(args.transcription_engine_options, "--engine-options"),
         realtime_transcription_engine_options=parse_json_object(
             args.realtime_transcription_engine_options,
             "--realtime-engine-options",
         ),
+        ultrafast_realtime_transcription_engine_options=parse_json_object(
+            args.ultrafast_realtime_transcription_engine_options,
+            "--ultrafast-realtime-engine-options",
+        ),
         download_root=args.download_root,
         compute_type=args.compute_type,
         device=args.device,
         gpu_device_index=args.gpu_device_index,
+        main_cpu_affinity=args.main_cpu_affinity,
+        realtime_cpu_affinity=args.realtime_cpu_affinity,
+        ultrafast_realtime_cpu_affinity=args.ultrafast_realtime_cpu_affinity,
         beam_size=_value_or_default(args, defaults, "beam_size"),
         beam_size_realtime=_value_or_default(args, defaults, "beam_size_realtime"),
         batch_size=_value_or_default(args, defaults, "batch_size"),

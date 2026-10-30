@@ -158,6 +158,7 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             ("use_extended_logging", False, bool),
             ("faster_whisper_vad_filter", True, bool),
             ("normalize_audio", False, bool),
+            ("final_transcription_word_timestamps", False, bool),
             ("start_callback_in_new_thread", False, bool),
             ("realtime_transcription_use_syllable_boundaries", False, bool),
             ("realtime_boundary_detector_sensitivity", 0.6, float),
@@ -169,6 +170,11 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             ("transcription_executor", None, Optional[Callable]),
             ("realtime_transcription_executor", None, Optional[Callable]),
             ("on_realtime_text_stabilization_update", None, empty),
+            (
+                "realtime_punctuation_split_marks",
+                "off",
+                Optional[Union[str, Iterable[str]]],
+            ),
             ("silero_backend", "auto", str),
             ("silero_onnx_model_path", None, Optional[str]),
             ("silero_onnx_threads", 2, int),
@@ -177,6 +183,37 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
                 audio_recorder.DEACTIVITY_SILENCE_CONFIRMATION_DURATION,
                 float,
             ),
+            ("enable_preview_transcription", False, bool),
+            ("preview_model_type", None, Optional[str]),
+            ("preview_transcription_engine", None, Optional[str]),
+            ("preview_transcription_engine_options", None, Optional[dict]),
+            ("preview_transcription_tail_seconds", 3.0, float),
+            ("on_preview_transcription_finished", None, empty),
+            ("preview_transcription_executor", None, Optional[Callable]),
+            (
+                "preview_transcription_min_live_words_for_fuzzy_repair",
+                3,
+                int,
+            ),
+            ("ultrafast_realtime_model_type", None, Optional[str]),
+            (
+                "ultrafast_realtime_transcription_engine",
+                None,
+                Optional[str],
+            ),
+            (
+                "ultrafast_realtime_transcription_engine_options",
+                None,
+                Optional[dict],
+            ),
+            ("on_ultrafast_transcription_update", None, empty),
+            ("on_merged_realtime_transcription_update", None, empty),
+            ("on_realtime_transcription_merge_update", None, empty),
+            ("ultrafast_realtime_max_tail_words", 5, int),
+            ("spinner_listening_text", "speak now", str),
+            ("spinner_wakeword_text", "say {wake_words}", str),
+            ("spinner_transcribing_text", "transcribing", str),
+            ("spinner_recording_text", "recording", str),
         ]
 
         self.assertEqual(list(signature.parameters), [item[0] for item in expected])
@@ -235,6 +272,14 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
         self.assertIs(RealtimeSpeechBoundaryDetector, core_detector)
         self.assertIs(SpeechBoundaryEvent, core_event)
         self.assertIs(SpeechBoundaryResult, core_result)
+
+    def test_package_level_realtime_merge_result_is_exported(self):
+        from RealtimeSTT import RealtimeTranscriptionMergeResult
+        from RealtimeSTT.core.realtime_merge import (
+            RealtimeTranscriptionMergeResult as core_result,
+        )
+
+        self.assertIs(RealtimeTranscriptionMergeResult, core_result)
 
     def test_redundant_private_facade_wrappers_are_not_reintroduced(self):
         audio_recorder = import_audio_recorder(self)

@@ -373,7 +373,7 @@ For documentation-only edits:
 
 ```powershell
 Get-Content docs\api-compatibility.md
-git -c safe.directory=D:/Projekte/STT/RealtimeSTT/RealtimeSTT status --short docs/api-compatibility.md
+git status --short docs/api-compatibility.md
 ```
 
 For code refactors touching the recorder API, start with the smallest relevant

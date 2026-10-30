@@ -515,7 +515,7 @@ class AudioToTextRecorderClient:
         if self.debug_mode:
             args.append('--debug')  # flag, no need for True/False
             
-        if self.language:
+        if self.language is not None:
             args += ['--language', self.language]
         if self.silero_sensitivity is not None:
             args += ['--silero_sensitivity', str(self.silero_sensitivity)]
@@ -536,8 +536,9 @@ class AudioToTextRecorderClient:
                 '--deactivity_silence_confirmation_duration',
                 str(self.deactivity_silence_confirmation_duration),
             ]
-        if self.silero_deactivity_detection:
-            args.append('--silero_deactivity_detection')  # flag, no need for True/False
+        # stt-server defaults this to True, so False has to be sent explicitly too
+        args.append('--silero_deactivity_detection' if self.silero_deactivity_detection
+                     else '--no-silero_deactivity_detection')
         if self.beam_size is not None:
             args += ['--beam_size', str(self.beam_size)]
         if self.beam_size_realtime is not None:

@@ -28,6 +28,7 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
 
         transcription_options = {"temperature": 0.0}
         realtime_options = {"vad": False}
+        ultrafast_options = {"latency_ms": 80}
         pre_recording_trim_config = {"enabled": True}
         gpu_devices = [0, 1]
         initial_prompt = [1, 2, 3]
@@ -138,10 +139,20 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
                 transcription_executor=transcription_executor,
                 realtime_transcription_executor=realtime_transcription_executor,
                 on_realtime_text_stabilization_update=callback,
+                realtime_punctuation_split_marks="sentence,comma",
                 silero_backend="raw_onnx",
                 silero_onnx_model_path="silero.onnx",
                 silero_onnx_threads=1,
                 deactivity_silence_confirmation_duration=0.12,
+                ultrafast_realtime_model_type="nemotron-80ms",
+                ultrafast_realtime_transcription_engine="fake_ultrafast",
+                ultrafast_realtime_transcription_engine_options=(
+                    ultrafast_options
+                ),
+                on_ultrafast_transcription_update=callback,
+                on_merged_realtime_transcription_update=callback,
+                on_realtime_transcription_merge_update=callback,
+                ultrafast_realtime_max_tail_words=9,
             )
 
         init_args = captured["init_args"]
@@ -167,8 +178,51 @@ class AudioRecorderBoundaryTests(unittest.TestCase):
             init_args["realtime_transcription_executor"],
             realtime_transcription_executor,
         )
+        self.assertEqual(
+            init_args["ultrafast_realtime_model_type"],
+            "nemotron-80ms",
+        )
+        self.assertEqual(
+            init_args["ultrafast_realtime_transcription_engine"],
+            "fake_ultrafast",
+        )
+        self.assertIs(
+            init_args["ultrafast_realtime_transcription_engine_options"],
+            ultrafast_options,
+        )
+        self.assertIs(
+            init_args["on_ultrafast_transcription_update"],
+            callback,
+        )
+        self.assertIs(
+            init_args["on_merged_realtime_transcription_update"],
+            callback,
+        )
+        self.assertIs(
+            init_args["on_realtime_transcription_merge_update"],
+            callback,
+        )
+        self.assertEqual(
+            init_args["ultrafast_realtime_max_tail_words"],
+            9,
+        )
+        self.assertEqual(init_args["realtime_punctuation_split_marks"], "sentence,comma")
         self.assertIs(init_args["on_recording_start"], callback)
         self.assertTrue(init_args["use_extended_logging"])
+
+    def test_constructor_rejects_invalid_realtime_punctuation_marks_early(self):
+        from RealtimeSTT.audio_recorder import AudioToTextRecorder
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Unsupported punctuation split mark",
+        ):
+            AudioToTextRecorder(
+                use_microphone=False,
+                spinner=False,
+                no_log_file=True,
+                realtime_punctuation_split_marks="sentence,semicolon",
+            )
 
     def test_audio_reader_starts_core_worker(self):
         from RealtimeSTT.core import initialization

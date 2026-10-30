@@ -24,7 +24,7 @@ def start_recorder_worker(target=None, args=()):
     """
     if (platform.system() == 'Linux'):
         thread = threading.Thread(target=target, args=args)
-        thread.deamon = True
+        thread.daemon = True
         thread.start()
         return thread
     else:

@@ -3,6 +3,9 @@ Realtime transcription worker loop for :class:`AudioToTextRecorder`.
 """
 
 import logging
+import inspect
+import re
+import threading
 import time
 
 import numpy as np
@@ -12,9 +15,16 @@ from .realtime_text_stabilizer import (
     RealtimeTextObservation,
     RealtimeTextStabilizer,
 )
+from .realtime_merge import StickyRealtimeTranscriptionMerger
 from .realtime_callbacks import (
     publish_realtime_transcription_stabilized,
     publish_realtime_transcription_update,
+)
+from .recording_buffers import (
+    get_frames_lock,
+    queue_recorded_audio,
+    set_active_speech_tail_from_frames,
+    snapshot_frames,
 )
 from .state import run_callback
 from .text_formatting import preprocess_output
@@ -25,6 +35,253 @@ logger = logging.getLogger("realtimestt")
 
 TIME_SLEEP = 0.02
 INT16_MAX_ABS_VALUE = 32768.0
+_PUNCTUATION_SPLIT_REQUIRED_OBSERVATIONS = 3
+_PUNCTUATION_SPLIT_MARK_PRESETS = {
+    "off": (),
+    "none": (),
+    "false": (),
+    "sentence": (".", "?", "!"),
+    "terminal": (".", "?", "!"),
+    "comma": (",",),
+    "ellipsis": ("...",),
+    "dash": ("\u2014", "\u2013", "-"),
+    "all": (".", "?", "!", ",", "...", "\u2014", "\u2013", "-"),
+}
+_SUPPORTED_PUNCTUATION_SPLIT_MARKS = {
+    ",",
+    ".",
+    "?",
+    "!",
+    "...",
+    "\u2014",
+    "\u2013",
+    "-",
+}
+_ABBREVIATIONS_BEFORE_PERIOD = {
+    "dr",
+    "mr",
+    "mrs",
+    "ms",
+    "prof",
+    "sr",
+    "jr",
+    "st",
+    "vs",
+}
+
+
+def _normalize_realtime_punctuation_split_marks(marks="sentence,comma"):
+    if marks is None:
+        return ()
+    if isinstance(marks, str):
+        value = marks.strip().casefold()
+        if not value:
+            return ()
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+    else:
+        try:
+            parts = list(marks)
+        except TypeError as exc:
+            raise TypeError(
+                "realtime_punctuation_split_marks must be a string or iterable"
+            ) from exc
+
+    normalized = []
+    for part in parts:
+        if not isinstance(part, str):
+            raise TypeError("punctuation split marks must be strings")
+        part = part.strip()
+        if not part:
+            continue
+        preset = _PUNCTUATION_SPLIT_MARK_PRESETS.get(part.casefold())
+        values = preset if preset is not None else (part,)
+        for value in values:
+            if value not in _SUPPORTED_PUNCTUATION_SPLIT_MARKS:
+                raise ValueError(f"Unsupported punctuation split mark: {value!r}")
+            if value not in normalized:
+                normalized.append(value)
+
+    order = {value: index for index, value in enumerate(normalized)}
+    return tuple(sorted(normalized, key=lambda value: (-len(value), order[value])))
+
+
+def _normalized_words(text):
+    return re.findall(r"[a-z0-9]+", (text or "").casefold())
+
+
+def _last_strong_punctuation_index(text, before_index):
+    return max(text.rfind(".", 0, before_index), text.rfind("?", 0, before_index), text.rfind("!", 0, before_index))
+
+
+def _is_digit_punctuation(text, index):
+    left = index - 1
+    right = index + 1
+    while left >= 0 and text[left].isspace():
+        left -= 1
+    while right < len(text) and text[right].isspace():
+        right += 1
+    return left >= 0 and right < len(text) and text[left].isdigit() and text[right].isdigit()
+
+
+def _is_compound_hyphen(text, index):
+    return (
+        index > 0
+        and index + 1 < len(text)
+        and text[index - 1].isalnum()
+        and text[index + 1].isalnum()
+    )
+
+
+def _has_abbreviation_period(text):
+    folded = (text or "").casefold()
+    return any(
+        re.search(rf"\b{re.escape(abbreviation)}\.\s", folded)
+        for abbreviation in _ABBREVIATIONS_BEFORE_PERIOD
+    )
+
+
+def _iter_punctuation_split_candidates(text, marks):
+    text = text or ""
+    stripped_length = len(text.rstrip())
+    for index in range(len(text)):
+        for punctuation in marks:
+            if not text.startswith(punctuation, index):
+                continue
+            end_index = index + len(punctuation)
+            if end_index >= stripped_length:
+                continue
+            yield index, punctuation, end_index
+            break
+
+
+def _punctuation_split_hint(text, marks="sentence,comma"):
+    marks = _normalize_realtime_punctuation_split_marks(marks)
+    if not marks:
+        return None
+
+    candidates = []
+    for index, punctuation, end_index in _iter_punctuation_split_candidates(text, marks):
+        if punctuation in {".", ",", "-"} and _is_digit_punctuation(text, index):
+            continue
+        if punctuation == "-" and _is_compound_hyphen(text, index):
+            continue
+
+        before_words = _normalized_words(text[:index])
+        after_words = _normalized_words(text[end_index:])
+        if not before_words or len(after_words) < 2:
+            continue
+
+        boundary = _last_strong_punctuation_index(text, index) + 1
+        segment_before = text[boundary:index]
+        segment_words = _normalized_words(segment_before)
+        if punctuation == "." and before_words[-1] in _ABBREVIATIONS_BEFORE_PERIOD:
+            continue
+        if punctuation in ".?!" and len(segment_words) < 3:
+            continue
+        if punctuation == "..." and len(segment_words) < 2:
+            continue
+        if punctuation in {"-", "\u2014", "\u2013"} and len(segment_words) < 3:
+            continue
+        if punctuation == ",":
+            if len(segment_words) < 4 or "," in segment_before:
+                continue
+            if _has_abbreviation_period(text[:index]):
+                continue
+            if (
+                after_words[0] in {"and", "or"}
+                and after_words[1] not in {"a", "an", "the", "this", "that", "these", "those", "it", "there", "we", "i"}
+            ):
+                continue
+
+        candidates.append((punctuation, tuple(before_words[-3:])))
+
+    return candidates[-1] if candidates else None
+
+
+def _select_realtime_punctuation_split_hint(event, marks="sentence,comma"):
+    for name in ("stable_text", "consensus_display_text", "display_text", "raw_observation_text"):
+        text = getattr(event, name, "") or ""
+        if _punctuation_split_hint(text, marks):
+            return text
+    return ""
+
+
+def _find_word_end_for_suffix(words, suffix):
+    normalized = [_normalized_words(str(word.get("word", ""))) for word in words]
+    flat = [items[-1] if items else "" for items in normalized]
+    suffix = tuple(word for word in suffix if word)
+    if not suffix:
+        return None
+
+    for size in range(min(3, len(suffix)), 0, -1):
+        needle = suffix[-size:]
+        for index in range(len(flat) - size, -1, -1):
+            if tuple(flat[index:index + size]) == needle:
+                end_time = words[index + size - 1].get("end")
+                if end_time is None:
+                    return None
+                end_time = float(end_time)
+                if index + size < len(words):
+                    next_start = words[index + size].get("start")
+                    if next_start is not None and float(next_start) > end_time:
+                        return (end_time + float(next_start)) / 2
+                return end_time
+    return None
+
+
+def _find_punctuation_split(
+    transcription_result,
+    hint_text=None,
+    marks="sentence,comma",
+):
+    metadata = getattr(transcription_result, "metadata", None) or {}
+    words = metadata.get("words") or []
+    if not words:
+        return None
+
+    hint = _punctuation_split_hint(hint_text, marks)
+    if hint:
+        punctuation, suffix = hint
+        end_time = _find_word_end_for_suffix(words, suffix)
+        if end_time is not None:
+            return punctuation, end_time
+
+    text = "".join(str(word.get("word", "")) for word in words)
+    hint = _punctuation_split_hint(text, marks)
+    if not hint:
+        return None
+
+    punctuation, suffix = hint
+    end_time = _find_word_end_for_suffix(words, suffix)
+    if end_time is None:
+        return None
+    return punctuation, end_time
+
+
+def _get_realtime_punctuation_split_lock(recorder):
+    lock = getattr(recorder, "_realtime_punctuation_split_lock", None)
+    if lock is None:
+        lock = threading.RLock()
+        recorder._realtime_punctuation_split_lock = lock
+    return lock
+
+
+def _clear_realtime_punctuation_split_candidate(recorder):
+    with _get_realtime_punctuation_split_lock(recorder):
+        recorder._realtime_punctuation_split_candidate = None
+
+
+def _confirm_realtime_punctuation_split_candidate(recorder, split_marks, hint):
+    key = (split_marks, hint)
+    with _get_realtime_punctuation_split_lock(recorder):
+        candidate = getattr(recorder, "_realtime_punctuation_split_candidate", None)
+        if candidate and candidate[0] == key:
+            count = candidate[1] + 1
+        else:
+            count = 1
+
+        recorder._realtime_punctuation_split_candidate = (key, count)
+        return count >= _PUNCTUATION_SPLIT_REQUIRED_OBSERVATIONS
 
 
 def run_realtime_worker(recorder):
@@ -97,25 +354,9 @@ def run_realtime_worker(recorder):
         Copies buffered realtime frames under the recorder lock.
         """
 
-        frames = getattr(self, "frames", None)
-
-        if not frames:
-            return None
-
-        # Use a frame lock if the class provides one.
-        # Different RealtimeSTT versions may name this differently,
-        # so keep this optional.
-        frame_lock = (
-            getattr(self, "frames_lock", None)
-            or getattr(self, "frame_lock", None)
-            or getattr(self, "audio_lock", None)
-        )
-
         try:
-            if frame_lock:
-                with frame_lock:
-                    return tuple(self.frames)
-            return tuple(self.frames)
+            frames = snapshot_frames(self)
+            return frames if frames else None
 
         except Exception as e:
             logger.debug(f"Could not snapshot realtime frames: {e}", exc_info=True)
@@ -236,6 +477,53 @@ def run_realtime_worker(recorder):
 
         return text, language, language_probability
 
+    def _callable_accepts_word_timestamps(callback):
+        """
+        Returns whether an external executor accepts word timestamp requests.
+        """
+
+        try:
+            signature = inspect.signature(callback)
+        except (TypeError, ValueError):
+            return False
+
+        for parameter in signature.parameters.values():
+            if parameter.kind == parameter.VAR_KEYWORD:
+                return True
+            if parameter.name == "word_timestamps":
+                return True
+        return False
+
+    def _main_transcription_supports_word_timestamps():
+        """
+        Returns whether the main transcription path can return word timings.
+        """
+
+        if self._uses_external_transcription_executor:
+            executor = getattr(self, "transcription_executor", None)
+            callback = getattr(executor, "transcribe", executor)
+            return _callable_accepts_word_timestamps(callback)
+
+        engine_name = (
+            getattr(self, "transcription_engine", None)
+            or "faster_whisper"
+        )
+        engine_name = str(engine_name).strip().lower().replace("-", "_")
+        return engine_name == "faster_whisper"
+
+    def _log_word_timestamp_skip_once():
+        """
+        Logs one debug message when punctuation splitting lacks word timings.
+        """
+
+        if getattr(self, "_realtime_word_timestamp_skip_logged", False):
+            return
+        self._realtime_word_timestamp_skip_logged = True
+        logger.debug(
+            "Skipping realtime punctuation split because the main "
+            "transcription engine does not expose word timestamps"
+        )
+
     def _transcribe_with_main_model(audio_array):
         """
         Runs realtime transcription through the main model.
@@ -276,6 +564,51 @@ def run_realtime_worker(recorder):
             logger.error(f"Error in realtime transcription with main model: {e}", exc_info=True)
             return None
 
+    def _transcribe_with_main_model_word_timestamps(audio_array):
+        """
+        Runs final-model transcription with word timestamps.
+        """
+
+        try:
+            if not _main_transcription_supports_word_timestamps():
+                _log_word_timestamp_skip_once()
+                return None
+
+            if self._uses_external_transcription_executor:
+                return call_transcription_executor(
+                    self.transcription_executor,
+                    audio_array,
+                    self.language,
+                    True,
+                    word_timestamps=True,
+                )
+
+            if not self.transcription_lock.acquire(blocking=False):
+                logger.debug("Skipping realtime punctuation split because final transcription is busy")
+                return None
+            try:
+                self.parent_transcription_pipe.send(
+                    (audio_array, self.language, True, {"word_timestamps": True})
+                )
+
+                if not self.parent_transcription_pipe.poll(timeout=10):
+                    logger.warning("Realtime punctuation split transcription timed out")
+                    return None
+
+                status, result = self.parent_transcription_pipe.recv()
+
+                if status != "success":
+                    logger.error(f"Realtime punctuation split transcription error: {result}")
+                    return None
+
+                return result
+            finally:
+                self.transcription_lock.release()
+
+        except Exception as e:
+            logger.error(f"Error in realtime punctuation split transcription: {e}", exc_info=True)
+            return None
+
     def _transcribe_with_realtime_model(audio_array):
         """
         Runs realtime transcription through the realtime model.
@@ -313,6 +646,9 @@ def run_realtime_worker(recorder):
     streaming_session = None
     streaming_session_recording_id = None
     streaming_session_frame_count = 0
+    ultrafast_streaming_session = None
+    ultrafast_streaming_session_recording_id = None
+    ultrafast_streaming_session_frame_count = 0
 
     def _streaming_realtime_target():
         """
@@ -393,7 +729,7 @@ def run_realtime_worker(recorder):
         ):
             if streaming_session is not None:
                 try:
-                    previous_frames = tuple(getattr(self, "last_frames", None) or ())
+                    previous_frames = snapshot_frames(self, "last_frames")
                 except Exception:
                     previous_frames = None
                 _finish_streaming_session(previous_frames)
@@ -496,6 +832,170 @@ def run_realtime_worker(recorder):
             _close_streaming_session()
             return None
 
+    def _ultrafast_streaming_target():
+        """Returns the optional second realtime streaming model."""
+
+        target = getattr(
+            self,
+            "ultrafast_realtime_transcription_model",
+            None,
+        )
+        if target is None or not getattr(target, "supports_streaming", False):
+            return None
+        if not hasattr(target, "create_streaming_session"):
+            return None
+        return target
+
+    def _close_ultrafast_streaming_session():
+        """Closes the active ultrafast streaming session."""
+
+        nonlocal ultrafast_streaming_session
+        nonlocal ultrafast_streaming_session_recording_id
+        nonlocal ultrafast_streaming_session_frame_count
+
+        if ultrafast_streaming_session is not None and hasattr(
+            ultrafast_streaming_session,
+            "close",
+        ):
+            try:
+                ultrafast_streaming_session.close()
+            except Exception as error:
+                logger.debug(
+                    "Could not close ultrafast streaming session: %s",
+                    error,
+                    exc_info=True,
+                )
+
+        ultrafast_streaming_session = None
+        ultrafast_streaming_session_recording_id = None
+        ultrafast_streaming_session_frame_count = 0
+
+    def _finish_ultrafast_streaming_session(frames_snapshot=None):
+        """Finishes and closes the active ultrafast streaming session."""
+
+        nonlocal ultrafast_streaming_session_frame_count
+
+        if ultrafast_streaming_session is None:
+            return None
+
+        try:
+            if frames_snapshot:
+                frame_count = len(frames_snapshot)
+                if frame_count >= ultrafast_streaming_session_frame_count:
+                    remaining_frames = frames_snapshot[
+                        ultrafast_streaming_session_frame_count:frame_count
+                    ]
+                    audio_array = _frames_to_audio_array(
+                        remaining_frames,
+                        enforce_min_samples=False,
+                    )
+                    if audio_array is not None:
+                        ultrafast_streaming_session.accept_audio(
+                            audio_array,
+                            sample_rate=_safe_get_sample_rate(),
+                        )
+                        ultrafast_streaming_session_frame_count = frame_count
+
+            return ultrafast_streaming_session.finish()
+        except Exception as error:
+            logger.debug(
+                "Could not finish ultrafast streaming session: %s",
+                error,
+                exc_info=True,
+            )
+            return None
+        finally:
+            _close_ultrafast_streaming_session()
+
+    def _ensure_ultrafast_streaming_session(recording_id):
+        """Ensures the ultrafast lane has a session for this recording."""
+
+        nonlocal ultrafast_streaming_session
+        nonlocal ultrafast_streaming_session_recording_id
+        nonlocal ultrafast_streaming_session_frame_count
+
+        target = _ultrafast_streaming_target()
+        if target is None:
+            _close_ultrafast_streaming_session()
+            return None
+
+        if (
+            ultrafast_streaming_session is None
+            or ultrafast_streaming_session_recording_id != recording_id
+        ):
+            if ultrafast_streaming_session is not None:
+                try:
+                    previous_frames = snapshot_frames(self, "last_frames")
+                except Exception:
+                    previous_frames = None
+                _finish_ultrafast_streaming_session(previous_frames)
+            else:
+                _close_ultrafast_streaming_session()
+
+            try:
+                ultrafast_streaming_session = _create_streaming_session(target)
+            except Exception as error:
+                logger.warning(
+                    "Ultrafast streaming session creation failed: %s",
+                    error,
+                    exc_info=True,
+                )
+                ultrafast_streaming_session = None
+                return None
+
+            ultrafast_streaming_session_recording_id = recording_id
+            ultrafast_streaming_session_frame_count = 0
+
+        return ultrafast_streaming_session
+
+    def _transcribe_with_ultrafast_streaming_model(
+        frames_snapshot,
+        sample_rate,
+        recording_id,
+    ):
+        """Decodes only frames not yet consumed by the ultrafast lane."""
+
+        nonlocal ultrafast_streaming_session_frame_count
+
+        session = _ensure_ultrafast_streaming_session(recording_id)
+        if session is None:
+            return None
+
+        frame_count = len(frames_snapshot or ())
+        if frame_count < ultrafast_streaming_session_frame_count:
+            _close_ultrafast_streaming_session()
+            session = _ensure_ultrafast_streaming_session(recording_id)
+            if session is None:
+                return None
+
+        new_frames = frames_snapshot[
+            ultrafast_streaming_session_frame_count:frame_count
+        ]
+        audio_array = _frames_to_audio_array(
+            new_frames,
+            enforce_min_samples=False,
+        )
+        if audio_array is None:
+            logger.debug(
+                "Skipping ultrafast streaming decode because no new audio "
+                "is available"
+            )
+            return None
+
+        try:
+            session.accept_audio(audio_array, sample_rate=sample_rate)
+            session.decode()
+            ultrafast_streaming_session_frame_count = frame_count
+            return session.get_result()
+        except Exception as error:
+            logger.warning(
+                "Ultrafast streaming transcription skipped: %s",
+                error,
+                exc_info=True,
+            )
+            _close_ultrafast_streaming_session()
+            return None
+
     def _safe_realtime_callback(callback, *args):
         """
         Invokes a realtime callback without breaking the worker.
@@ -505,6 +1005,345 @@ def run_realtime_worker(recorder):
             run_callback(self, callback, *args)
         except Exception as e:
             logger.error(f"Realtime callback failed: {e}", exc_info=True)
+
+    def _get_realtime_transcription_merger(recording_id):
+        """Returns the recorder merger, creating it for legacy stubs."""
+
+        merger = getattr(self, "realtime_transcription_merger", None)
+        if merger is None:
+            merger = StickyRealtimeTranscriptionMerger()
+            merger.reset(recording_id)
+            self.realtime_transcription_merger = merger
+        return merger
+
+    def _dual_realtime_publish_allowed(completed_at_wall_time):
+        recording_start_time = getattr(self, "recording_start_time", None)
+        return bool(
+            self.is_recording
+            and recording_start_time is not None
+            and completed_at_wall_time - recording_start_time
+            > self.init_realtime_after_seconds
+        )
+
+    def _segment_preview_text(text):
+        raw_text = "" if text is None else str(text).strip()
+        if getattr(self, "_force_current_recording_lowercase_start", False):
+            raw_text = _lowercase_first_text(raw_text)
+        return raw_text
+
+    def _preprocess_dual_realtime_text(text):
+        force_lowercase_start = getattr(
+            self,
+            "_force_current_recording_lowercase_start",
+            False,
+        )
+        return preprocess_output(
+            text,
+            preview=True,
+            ensure_sentence_starting_uppercase=(
+                self.ensure_sentence_starting_uppercase
+                and not force_lowercase_start
+            ),
+            ensure_sentence_ends_with_period=(
+                self.ensure_sentence_ends_with_period
+            ),
+        )
+
+    def _record_realtime_merge_result(result, publish_allowed):
+        """Stores every merge transition and emits its structured event."""
+
+        self.last_realtime_transcription_merge_result = result
+        self.merged_realtime_transcription_text = result.text
+        callback = getattr(
+            self,
+            "on_realtime_transcription_merge_update",
+            None,
+        )
+        if callback and publish_allowed:
+            _safe_realtime_callback(callback, result)
+
+    def _publish_merged_realtime_text_if_changed(publish_allowed):
+        """Publishes at most one final merged text for the current pass."""
+
+        merger = getattr(self, "realtime_transcription_merger", None)
+        if merger is None:
+            return
+        result = merger.snapshot()
+        self.merged_realtime_transcription_text = result.text
+        if not publish_allowed or not result.text:
+            return
+        if result.text == getattr(
+            self,
+            "last_merged_realtime_transcription",
+            "",
+        ):
+            return
+
+        self.last_merged_realtime_transcription = result.text
+        callback = getattr(
+            self,
+            "on_merged_realtime_transcription_update",
+            None,
+        )
+        if callback:
+            _safe_realtime_callback(
+                callback,
+                _preprocess_dual_realtime_text(result.text),
+            )
+
+    def _observe_ultrafast_transcription(
+        transcription_result,
+        recording_id,
+        sample_count,
+        completed_at_wall_time,
+    ):
+        """Publishes raw ultrafast text and updates the sticky merger."""
+
+        ultrafast_text, language, language_probability = (
+            _extract_text_and_language(transcription_result)
+        )
+        ultrafast_text = "" if ultrafast_text is None else str(
+            ultrafast_text
+        ).strip()
+        sequence = getattr(
+            self,
+            "ultrafast_realtime_observation_sequence",
+            0,
+        ) + 1
+        result = _get_realtime_transcription_merger(
+            recording_id
+        ).observe_ultrafast(
+            ultrafast_text,
+            recording_id=recording_id,
+            sequence=sequence,
+            audio_end_sample_exclusive=sample_count,
+        )
+        if result.status == "stale_ignored":
+            return result
+
+        self.ultrafast_realtime_observation_sequence = sequence
+        publish_allowed = _dual_realtime_publish_allowed(
+            completed_at_wall_time
+        )
+
+        self.detected_ultrafast_realtime_language = language
+        self.detected_ultrafast_realtime_language_probability = (
+            language_probability
+        )
+        if ultrafast_text:
+            self.ultrafast_realtime_transcription_text = ultrafast_text
+            self.last_ultrafast_transcription = ultrafast_text
+            callback = getattr(
+                self,
+                "on_ultrafast_transcription_update",
+                None,
+            )
+            if callback and publish_allowed:
+                _safe_realtime_callback(callback, ultrafast_text)
+
+        _record_realtime_merge_result(result, publish_allowed)
+        return result
+
+    def _observe_slow_transcription_for_merge(
+        slow_text,
+        recording_id,
+        sequence,
+        sample_count,
+        completed_at_wall_time,
+    ):
+        """Updates the authoritative backbone without touching Final ASR."""
+
+        slow_text = _segment_preview_text(slow_text)
+        if not slow_text:
+            return None
+        publish_allowed = _dual_realtime_publish_allowed(
+            completed_at_wall_time
+        )
+        result = _get_realtime_transcription_merger(
+            recording_id
+        ).observe_slow(
+            slow_text,
+            recording_id=recording_id,
+            sequence=sequence,
+            audio_end_sample_exclusive=sample_count,
+        )
+        if result.status == "stale_ignored":
+            return result
+        _record_realtime_merge_result(result, publish_allowed)
+        return result
+
+    def _lowercase_first_text(text):
+        """
+        Lowercases the first recognized character.
+        """
+
+        return text[:1].lower() + text[1:] if text else text
+
+    def _split_frames_at_sample(frames, split_sample):
+        """
+        Splits 16-bit PCM frame bytes at a sample offset.
+        """
+
+        left, right = [], []
+        remaining = int(split_sample)
+        for frame in frames:
+            samples = len(frame) // 2
+            if remaining >= samples:
+                left.append(frame)
+                remaining -= samples
+            elif remaining <= 0:
+                right.append(frame)
+            else:
+                byte_index = max(0, min(len(frame), remaining * 2))
+                left.append(frame[:byte_index])
+                right.append(frame[byte_index:])
+                remaining = 0
+        return left, right
+
+    def _reset_after_punctuation_split(right_frames, punctuation, sample_rate):
+        """
+        Starts a new realtime segment after the frame swap is committed.
+
+        The caller owns both the punctuation-split lock and the atomic frame
+        replacement.  Keeping streaming/session resets here ensures they run
+        on the same serialized boundary as ordinary realtime processing.
+        """
+
+        remaining_seconds = _count_frame_samples(right_frames) / float(sample_rate)
+        self.text_storage = []
+        self.realtime_transcription_text = ""
+        self.realtime_stabilized_text = ""
+        self.realtime_stabilized_safetext = ""
+        self.realtime_observation_sequence = 0
+        self.ultrafast_realtime_observation_sequence = 0
+        self.realtime_recording_id = getattr(self, "realtime_recording_id", 0) + 1
+        self.ultrafast_realtime_transcription_text = ""
+        self.merged_realtime_transcription_text = ""
+        self.last_ultrafast_transcription = ""
+        self.last_merged_realtime_transcription = ""
+        self.last_realtime_transcription_merge_result = None
+        self.recording_start_monotonic = time.monotonic() - remaining_seconds
+        self.recording_start_time = time.time() - remaining_seconds
+        self._force_current_recording_lowercase_start = punctuation == ","
+        self._last_realtime_punctuation_split_attempt_text = ""
+        _clear_realtime_punctuation_split_candidate(self)
+        self.realtime_text_stabilizer.reset(
+            self.realtime_recording_id,
+            started_at_monotonic=self.recording_start_monotonic,
+            started_at_wall_time=self.recording_start_time,
+        )
+        merger = getattr(self, "realtime_transcription_merger", None)
+        if merger is not None:
+            merger.reset(self.realtime_recording_id)
+        _close_streaming_session()
+        _close_ultrafast_streaming_session()
+
+    def _maybe_split_on_stable_punctuation(event, frames_snapshot, sample_rate):
+        """
+        Splits the active recording when stable punctuation has a timestamp.
+        """
+
+        split_marks = _normalize_realtime_punctuation_split_marks(
+            getattr(self, "realtime_punctuation_split_marks", "off")
+        )
+        if not split_marks:
+            _clear_realtime_punctuation_split_candidate(self)
+            return False
+        hint_text = _select_realtime_punctuation_split_hint(event, split_marks)
+        if not hint_text:
+            _clear_realtime_punctuation_split_candidate(self)
+            return False
+        hint = _punctuation_split_hint(hint_text, split_marks)
+        if not hint:
+            _clear_realtime_punctuation_split_candidate(self)
+            return False
+        sample_count = _count_frame_samples(frames_snapshot)
+        if sample_count < sample_rate * 2:
+            return False
+        expected_recording_id = getattr(self, "realtime_recording_id", 0)
+        attempt_key = (split_marks, hint, sample_count // sample_rate)
+        with _get_realtime_punctuation_split_lock(self):
+            if getattr(self, "_realtime_punctuation_split_busy", False):
+                return False
+            if not _confirm_realtime_punctuation_split_candidate(
+                self,
+                split_marks,
+                hint,
+            ):
+                return False
+            if attempt_key == getattr(
+                self,
+                "_last_realtime_punctuation_split_attempt_text",
+                "",
+            ):
+                return False
+            self._last_realtime_punctuation_split_attempt_text = attempt_key
+            self._realtime_punctuation_split_busy = True
+
+        def split_in_background():
+            try:
+                audio_array = _frames_to_audio_array(frames_snapshot)
+                if audio_array is None:
+                    return
+                result = _transcribe_with_main_model_word_timestamps(audio_array)
+                split = _find_punctuation_split(result, hint_text, split_marks)
+                if split is None:
+                    return
+
+                punctuation, split_time = split
+                split_sample = int(split_time * sample_rate)
+                if split_sample <= 0:
+                    return
+
+                # Commit the split under the same lock used by realtime model
+                # and streaming-session state.  The frame snapshot and swap
+                # share the recorder lock, so capture cannot append between
+                # them and have that audio overwritten by an older snapshot.
+                with _get_realtime_punctuation_split_lock(self):
+                    if (
+                        not getattr(self, "is_recording", False)
+                        or getattr(self, "realtime_recording_id", 0)
+                        != expected_recording_id
+                    ):
+                        return
+                    with get_frames_lock(self):
+                        current_frames = list(getattr(self, "frames", None) or ())
+                        current_sample_count = _count_frame_samples(current_frames)
+                        if split_sample >= current_sample_count:
+                            return
+                        left_frames, right_frames = _split_frames_at_sample(
+                            current_frames,
+                            split_sample,
+                        )
+                        if not left_frames or not right_frames:
+                            return
+                        queue_recorded_audio(
+                            self,
+                            left_frames,
+                            force_lowercase_start=getattr(
+                                self,
+                                "_force_current_recording_lowercase_start",
+                                False,
+                            ),
+                        )
+                        self.frames = list(right_frames)
+                        self.last_frames = []
+                        set_active_speech_tail_from_frames(self, right_frames)
+                    _reset_after_punctuation_split(
+                        right_frames,
+                        punctuation,
+                        sample_rate,
+                    )
+            finally:
+                with _get_realtime_punctuation_split_lock(self):
+                    self._realtime_punctuation_split_busy = False
+
+        threading.Thread(
+            target=split_in_background,
+            daemon=True,
+            name="RealtimeSTTPunctuationSplit",
+        ).start()
+        return True
 
     def _publish_realtime_text(
         realtime_text,
@@ -521,12 +1360,20 @@ def run_realtime_worker(recorder):
         completed_at_wall_time,
         detected_language,
         detected_language_probability,
+        frames_snapshot,
     ):
         """
         Publishes realtime text with timing and language metadata.
         """
 
         raw_text = "" if realtime_text is None else str(realtime_text)
+        force_lowercase_start = getattr(
+            self,
+            "_force_current_recording_lowercase_start",
+            False,
+        )
+        if force_lowercase_start:
+            raw_text = _lowercase_first_text(raw_text)
 
         if recording_start_time is None:
             return
@@ -602,6 +1449,13 @@ def run_realtime_worker(recorder):
         self.realtime_stabilized_text = event.stable_text
         self.realtime_stabilized_safetext = event.stable_text
 
+        if event.accepted and _maybe_split_on_stable_punctuation(
+            event,
+            frames_snapshot,
+            sample_rate,
+        ):
+            return
+
         if not raw_text.strip() or not publish_allowed:
             return
 
@@ -622,6 +1476,7 @@ def run_realtime_worker(recorder):
                 preview=True,
                 ensure_sentence_starting_uppercase=(
                     self.ensure_sentence_starting_uppercase
+                    and not force_lowercase_start
                 ),
                 ensure_sentence_ends_with_period=(
                     self.ensure_sentence_ends_with_period
@@ -637,6 +1492,7 @@ def run_realtime_worker(recorder):
                 preview=True,
                 ensure_sentence_starting_uppercase=(
                     self.ensure_sentence_starting_uppercase
+                    and not force_lowercase_start
                 ),
                 ensure_sentence_ends_with_period=(
                     self.ensure_sentence_ends_with_period
@@ -646,7 +1502,7 @@ def run_realtime_worker(recorder):
 
     last_transcription_time = time.time()
 
-    def _run_realtime_transcription(trigger_reason):
+    def _run_realtime_transcription_locked(trigger_reason):
         """
         Runs one realtime transcription pass for buffered audio.
         """
@@ -659,7 +1515,24 @@ def run_realtime_worker(recorder):
         sample_rate = _safe_get_sample_rate()
         recording_id = getattr(self, "realtime_recording_id", 0)
         streaming_target = _streaming_realtime_target()
+        ultrafast_streaming_target = _ultrafast_streaming_target()
         created_at_monotonic = time.monotonic()
+
+        frame_count = len(frames_snapshot or ())
+        sample_count = _count_frame_samples(frames_snapshot)
+        if ultrafast_streaming_target is not None and frames_snapshot:
+            ultrafast_result = _transcribe_with_ultrafast_streaming_model(
+                frames_snapshot,
+                sample_rate,
+                recording_id,
+            )
+            if ultrafast_result is not None:
+                _observe_ultrafast_transcription(
+                    ultrafast_result,
+                    recording_id,
+                    sample_count,
+                    time.time(),
+                )
 
         if streaming_target is not None:
             if not frames_snapshot:
@@ -674,12 +1547,18 @@ def run_realtime_worker(recorder):
                 recording_id,
             )
             if transcription_result is None:
+                _publish_merged_realtime_text_if_changed(
+                    _dual_realtime_publish_allowed(time.time())
+                )
                 return False
         else:
             audio_array = _frames_to_audio_array(frames_snapshot)
 
             if audio_array is None:
                 logger.debug("Skipping realtime transcription because audio buffer is empty")
+                _publish_merged_realtime_text_if_changed(
+                    _dual_realtime_publish_allowed(time.time())
+                )
                 return False
 
             sample_count = int(audio_array.size)
@@ -735,7 +1614,12 @@ def run_realtime_worker(recorder):
                 completed_at_wall_time,
                 detected_language,
                 detected_language_probability,
+                frames_snapshot,
             )
+            if ultrafast_streaming_target is not None:
+                _publish_merged_realtime_text_if_changed(
+                    _dual_realtime_publish_allowed(completed_at_wall_time)
+                )
             return False
 
         self.realtime_transcription_success_count += 1
@@ -756,8 +1640,26 @@ def run_realtime_worker(recorder):
             completed_at_wall_time,
             detected_language,
             detected_language_probability,
+            frames_snapshot,
         )
+        if ultrafast_streaming_target is not None:
+            _observe_slow_transcription_for_merge(
+                realtime_text,
+                recording_id,
+                observation_sequence,
+                sample_count,
+                completed_at_wall_time,
+            )
+            _publish_merged_realtime_text_if_changed(
+                _dual_realtime_publish_allowed(completed_at_wall_time)
+            )
         return True
+
+    def _run_realtime_transcription(trigger_reason):
+        """Serialize realtime state with a background punctuation split."""
+
+        with _get_realtime_punctuation_split_lock(self):
+            return _run_realtime_transcription_locked(trigger_reason)
 
     use_syllable_boundaries = bool(
         getattr(self, "realtime_transcription_use_syllable_boundaries", False)
@@ -914,14 +1816,20 @@ def run_realtime_worker(recorder):
     while self.is_running:
         try:
             if not self.is_recording:
-                if streaming_session is not None:
+                if (
+                    streaming_session is not None
+                    or ultrafast_streaming_session is not None
+                ):
                     try:
-                        finished_frames = tuple(getattr(self, "last_frames", None) or ())
+                        finished_frames = snapshot_frames(self, "last_frames")
                     except Exception:
                         finished_frames = None
                     if not finished_frames:
                         finished_frames = _snapshot_frames()
-                    _finish_streaming_session(finished_frames)
+                    if streaming_session is not None:
+                        _finish_streaming_session(finished_frames)
+                    if ultrafast_streaming_session is not None:
+                        _finish_ultrafast_streaming_session(finished_frames)
 
                 # Important:
                 # Reset timer while idle so the worker does not instantly
@@ -970,5 +1878,7 @@ def run_realtime_worker(recorder):
 
     if streaming_session is not None:
         _finish_streaming_session(_snapshot_frames())
+    if ultrafast_streaming_session is not None:
+        _finish_ultrafast_streaming_session(_snapshot_frames())
 
     logger.debug("Realtime worker stopped")

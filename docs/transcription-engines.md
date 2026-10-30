@@ -12,11 +12,13 @@ The compatibility default is `faster_whisper`.
 | Use case | Start with | Why |
 | --- | --- | --- |
 | Default local GPU/CPU Whisper path | `faster_whisper` | Install with `RealtimeSTT[faster-whisper]`; mature, supports common Whisper model names and CTranslate2 models. |
+| Lowest-latency warm GPU final transcription | `transcribe_cpp` | Resident transcribe.cpp Parakeet Q4 CUDA path; explicit device selection, no CPU fallback, and tuned short-clip settings. |
 | CPU-only experiments with small Whisper models | `whisper_cpp` | Uses whisper.cpp through `pywhispercpp`; good for low-dependency CPU testing. |
 | Compatibility with OpenAI's local Whisper package | `openai_whisper` | Uses the original `openai-whisper` Python package. |
 | English CPU server with manually downloaded ONNX models | `sherpa_onnx_moonshine` | Offline CPU INT8 path with predictable local model files. |
 | CPU Parakeet without NeMo runtime | `sherpa_onnx_parakeet` | Offline CPU INT8 Parakeet through sherpa-onnx. |
 | Kroko/Banafo `.data` streaming models | `kroko_onnx` | Optional Kroko-ONNX runtime with Community or licensed Pro models and realtime streaming previews. |
+| Experimental multilingual SenseVoice/FunASR transcription | `funasr` | Uses FunASR `AutoModel`; promising throughput on CUDA with SenseVoice-style models. |
 | NVIDIA Parakeet on Linux/WSL2 | `parakeet` | Uses NVIDIA NeMo ASR for the Parakeet checkpoint. |
 | Meta Omnilingual ASR on Linux/WSL2 Python 3.11.x | `omnilingual_asr` | Uses Meta's Omnilingual ASR package; native Windows and Python 3.12.x are not practical install targets for the current upstream dependency stack. |
 | Hugging Face speech-language models | `granite_speech`, `qwen3_asr`, `moonshine`, `cohere_transcribe` | Thin adapters around model-family packages and Transformers. |
@@ -30,13 +32,16 @@ CLI-style names work where listed.
 | --- | --- | --- |
 | `faster_whisper` | Default production backend | [engines/faster-whisper.md](engines/faster-whisper.md) |
 | `whisper_cpp` | Optional production backend | [engines/whisper-cpp.md](engines/whisper-cpp.md) |
+| `transcribe_cpp`, `parakeet_transcribe_cpp` | Optional low-latency offline Parakeet CUDA/CPU backend | [engines/transcribe-cpp.md](engines/transcribe-cpp.md) |
 | `openai_whisper` | Optional production backend | [engines/openai-whisper.md](engines/openai-whisper.md) |
 | `moonshine`, `moonshine_streaming` | Experimental Transformers backend; English-only adapter | [engines/moonshine.md](engines/moonshine.md) |
 | `sherpa_onnx_moonshine`, `sherpa_moonshine`, `moonshine_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
+| `sherpa_onnx_nemotron`, `sherpa_nemotron`, `nemotron_sherpa_onnx`, `nemotron` | CPU INT8 multilingual Nemotron streaming backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
 | `kroko_onnx`, `kroko`, `banafo_kroko` | Optional Kroko-ONNX backend | [engines/kroko-onnx.md](engines/kroko-onnx.md) |
 | `parakeet`, `nvidia_parakeet` | Experimental NVIDIA NeMo backend | [engines/parakeet-nemo.md](engines/parakeet-nemo.md) |
 | `sherpa_onnx_parakeet`, `sherpa_parakeet`, `parakeet_sherpa_onnx` | CPU INT8 sherpa-onnx backend | [engines/sherpa-onnx.md](engines/sherpa-onnx.md) |
 | `omnilingual_asr`, `omnilingual`, `meta_omnilingual_asr`, `omni_asr` | Experimental Meta Omnilingual ASR backend for Linux/WSL2 Python 3.11.x | [engines/omnilingual-asr.md](engines/omnilingual-asr.md) |
+| `funasr`, `fun_asr` | Experimental optional backend | [engines/funasr.md](engines/funasr.md) |
 | `granite_speech`, `granite` | Experimental Transformers backend | [engines/hf-transformers.md](engines/hf-transformers.md) |
 | `qwen3_asr`, `qwen_asr` | Experimental Qwen ASR backend | [engines/hf-transformers.md](engines/hf-transformers.md) |
 | `cohere_transcribe`, `cohere` | Experimental Transformers backend, requires language | [engines/cohere.md](engines/cohere.md) |
@@ -105,11 +110,13 @@ meaningful for one engine may be ignored or invalid for another.
 | --- | --- | --- |
 | `faster_whisper` | Yes, for known Hugging Face/CTranslate2 model ids. | Local CTranslate2 model directories may be passed as `model`. |
 | `whisper_cpp` | Usually yes for model names supported by `pywhispercpp`. | Local ggml model paths or `download_root`/`models_dir` may be used. |
+| `transcribe_cpp` | No. | Download a compatible GGUF into a persistent directory and pass its local path; an optional SHA-256 can be verified at startup. |
 | `openai_whisper` | Yes, through `openai-whisper`. | Local model names/paths supported by that package. |
 | `moonshine`, `granite_speech`, `qwen3_asr`, `cohere_transcribe` | Yes, through Hugging Face or the engine package, subject to access. | `download_root` maps to cache options where supported. |
+| `funasr` | Yes, through ModelScope by default or Hugging Face with `hub="hf"`. | `download_root` sets `MODELSCOPE_CACHE` and `HF_HOME` defaults; local model directories may be passed as `model`. |
 | `parakeet` NeMo | Yes, through NeMo model loading. | NeMo cache/model options may be passed in `transcription_engine_options`. |
 | `omnilingual_asr` | Yes, through Omnilingual/fairseq2/Hugging Face cache paths in Linux or WSL2 with Python 3.11.x. | Pass an Omnilingual model card such as `omniASR_CTC_1B_v2`; RealtimeSTT does not move or delete downloaded assets. Unknown v2 cards are a dependency mismatch, not a signal to fall back to older non-v2 cards. |
-| `sherpa_onnx_*` | No. | Download and extract the sherpa-onnx model bundle, then pass the extracted directory. |
+| `sherpa_onnx_*` | No. | Download and extract the pinned sherpa-onnx model bundle, verify its manifest, then pass the persistent extracted directory. |
 | `kroko_onnx` | Yes, for known public Community `.data` files when enabled. | Pro/private models need an existing `.data` path, direct URL, or explicit repo/token options. |
 
 Every optional engine page documents its install command, model behavior,
@@ -117,10 +124,17 @@ important options, and troubleshooting notes.
 
 ## Extending Engines
 
-New engines should implement `BaseTranscriptionEngine`, return
-`TranscriptionResult`, and be added to `RealtimeSTT/transcription_engines/factory.py`.
-Keep imports lazy so optional dependencies are only imported when the engine is
-selected.
+Custom engines should implement `BaseEngine` from `RealtimeSTT.engines` and
+return `TranscriptionResult`. Pass user-owned engines with
+`transcription_executor` and, when needed, `realtime_transcription_executor`.
+See [custom-transcription-engines.md](custom-transcription-engines.md) for the
+public base class, executor integration, streaming sessions, packaging notes,
+and contribution checklist.
+
+Engines contributed to RealtimeSTT itself should live under
+`RealtimeSTT.transcription_engines` and be added to
+`RealtimeSTT/transcription_engines/factory.py`. Keep imports lazy so optional
+dependencies are only imported when the engine is selected.
 
 Contract tests should cover missing dependency messages, parameter mapping,
 audio normalization, result conversion, and factory selection. Real-model tests

@@ -7,6 +7,7 @@ from RealtimeSTT.core.realtime_text_stabilizer import (
     RealtimeTextStabilizationConfig,
     RealtimeTextStabilizer,
 )
+from RealtimeSTT.core.realtime_merge import StickyRealtimeTranscriptionMerger
 
 try:
     from RealtimeSTT.audio_recorder import AudioToTextRecorder
@@ -520,13 +521,38 @@ class AudioRecorderRealtimeStabilizerIntegrationTests(unittest.TestCase):
         recorder.start_recording_event = threading.Event()
         recorder.stop_recording_event = threading.Event()
         recorder.realtime_text_stabilizer = RealtimeTextStabilizer()
+        recorder.realtime_transcription_merger = (
+            StickyRealtimeTranscriptionMerger()
+        )
+        recorder.realtime_transcription_merger.reset(0)
+        recorder.realtime_transcription_merger.observe_slow(
+            "the old central hypothesis",
+            recording_id=0,
+            sequence=1,
+        )
+        recorder.realtime_transcription_merger.observe_ultrafast(
+            "the old central hypothesis tail",
+            recording_id=0,
+            sequence=1,
+        )
         recorder.realtime_recording_id = 0
         recorder.realtime_observation_sequence = 7
+        recorder.ultrafast_realtime_observation_sequence = 9
+        recorder.ultrafast_realtime_transcription_text = "old fast"
+        recorder.merged_realtime_transcription_text = "old merged"
+        recorder.last_ultrafast_transcription = "old fast"
+        recorder.last_merged_realtime_transcription = "old merged"
+        recorder.last_realtime_transcription_merge_result = object()
 
         recorder.start(frames=[b"\x00\x00" * 1024])
 
         self.assertEqual(recorder.realtime_recording_id, 1)
         self.assertEqual(recorder.realtime_observation_sequence, 0)
+        self.assertEqual(recorder.ultrafast_realtime_observation_sequence, 0)
+        self.assertEqual(recorder.ultrafast_realtime_transcription_text, "")
+        self.assertEqual(recorder.merged_realtime_transcription_text, "")
+        self.assertEqual(recorder.last_merged_realtime_transcription, "")
+        self.assertIsNone(recorder.last_realtime_transcription_merge_result)
         self.assertGreater(recorder.recording_start_monotonic, 0.0)
         self.assertEqual(
             recorder.realtime_text_stabilizer.snapshot().recording_id,
@@ -536,6 +562,9 @@ class AudioRecorderRealtimeStabilizerIntegrationTests(unittest.TestCase):
             recorder.realtime_text_stabilizer.snapshot().stable_text,
             "",
         )
+        merge_snapshot = recorder.realtime_transcription_merger.snapshot()
+        self.assertEqual(merge_snapshot.recording_id, 1)
+        self.assertEqual(merge_snapshot.text, "")
 
 
 if __name__ == "__main__":

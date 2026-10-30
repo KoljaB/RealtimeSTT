@@ -2,6 +2,7 @@ import json
 import queue
 import threading
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -25,6 +26,8 @@ from example_fastapi_server.server import (
     RealtimeSTTService,
     SegmentState,
     ServerSettings,
+    SharedEngineWorker,
+    set_current_thread_cpu_affinity,
     parse_args,
     settings_from_args,
 )
@@ -177,6 +180,192 @@ class FastAPIServerProtocolTests(unittest.TestCase):
         self.assertTrue(settings.use_main_model_for_realtime)
         self.assertFalse(settings.model_warmup)
 
+    def test_optional_cpu_affinity_masks_parse_and_normalize(self):
+        args = parse_args([
+            "--main-cpu-affinity",
+            "0-2,2,6",
+            "--realtime-cpu-affinity",
+            "10",
+            "--ultrafast-realtime-cpu-affinity",
+            "12,14",
+        ])
+
+        settings = settings_from_args(args)
+
+        self.assertEqual(settings.main_cpu_affinity, (0, 1, 2, 6))
+        self.assertEqual(settings.realtime_cpu_affinity, (10,))
+        self.assertEqual(settings.ultrafast_realtime_cpu_affinity, (12, 14))
+
+    def test_worker_applies_affinity_before_native_engine_creation(self):
+        events = []
+
+        def make_engine():
+            events.append(("factory", set_affinity.call_count))
+            return object()
+
+        settings = ServerSettings(
+            model_warmup=False,
+            realtime_cpu_affinity=(4, 6),
+        )
+        realtime_queue = FairInferenceQueue("realtime", settings)
+        realtime_queue.close()
+        worker = SharedEngineWorker(
+            "realtime",
+            settings,
+            realtime_queue,
+            make_engine,
+            lambda result: None,
+        )
+
+        with (
+            mock.patch(
+                "example_fastapi_server.server.os.sched_setaffinity",
+                create=True,
+            ) as set_affinity,
+            mock.patch(
+                "example_fastapi_server.server.threading.get_native_id",
+                return_value=321,
+            ),
+        ):
+            worker._worker()
+
+        set_affinity.assert_called_once_with(321, {4, 6})
+        self.assertEqual(events, [("factory", 1)])
+
+    def test_worker_cancels_active_job_and_reuses_engine(self):
+        class CancelableEngine:
+            def __init__(self):
+                self.entered = threading.Event()
+                self.cancelled = threading.Event()
+                self.calls = 0
+
+            def transcribe(self, audio, language=None, use_prompt=True):
+                del audio, language, use_prompt
+                self.calls += 1
+                self.cancelled.clear()
+                self.entered.set()
+                if self.calls == 1:
+                    if not self.cancelled.wait(1.0):
+                        raise AssertionError("active inference was not cancelled")
+                    raise RuntimeError("native inference aborted")
+                return TranscriptionResult(text="fresh result")
+
+            def cancel_active(self):
+                self.cancelled.set()
+                return True
+
+        settings = ServerSettings(model_warmup=False)
+        inference_queue = FairInferenceQueue("main", settings)
+        engine = CancelableEngine()
+        results = []
+        result_ready = threading.Event()
+
+        def receive(result):
+            results.append(result)
+            result_ready.set()
+
+        worker = SharedEngineWorker(
+            "main",
+            settings,
+            inference_queue,
+            lambda: engine,
+            receive,
+        )
+        worker.start()
+        try:
+            self.assertTrue(worker.ready.wait(0.5))
+            old = self._job("same", "final", segment_id=1)
+            self.assertTrue(inference_queue.submit(old).accepted)
+            self.assertTrue(engine.entered.wait(0.5))
+
+            self.assertTrue(worker.cancel_request(old.request_id))
+            self.assertTrue(result_ready.wait(0.5))
+            self.assertEqual(results[0].request_id, old.request_id)
+            self.assertEqual(results[0].error, "cancelled")
+            self.assertEqual(results[0].metadata, {"cancelled": True})
+            self.assertEqual(worker.cancelled_jobs, 1)
+            self.assertEqual(worker.failed_jobs, 0)
+
+            result_ready.clear()
+            engine.entered.clear()
+            fresh = self._job("same", "final", segment_id=2)
+            self.assertTrue(inference_queue.submit(fresh).accepted)
+            self.assertTrue(result_ready.wait(0.5))
+            self.assertEqual(results[1].request_id, fresh.request_id)
+            self.assertEqual(results[1].text, "fresh result")
+            self.assertIsNone(results[1].error)
+            self.assertEqual(worker.completed_jobs, 1)
+            self.assertEqual(engine.calls, 2)
+        finally:
+            worker.stop()
+
+    def test_worker_cancel_before_native_start_skips_inference(self):
+        class ObservedEngine:
+            def __init__(self):
+                self.transcribe_calls = 0
+                self.cancel_calls = 0
+
+            def transcribe(self, audio, language=None, use_prompt=True):
+                del audio, language, use_prompt
+                self.transcribe_calls += 1
+                return TranscriptionResult(text="must not run")
+
+            def cancel_active(self):
+                self.cancel_calls += 1
+                return True
+
+        settings = ServerSettings(model_warmup=False)
+        inference_queue = FairInferenceQueue("main", settings)
+        engine = ObservedEngine()
+        results = []
+        result_ready = threading.Event()
+
+        def receive(result):
+            results.append(result)
+            result_ready.set()
+
+        worker = SharedEngineWorker(
+            "main",
+            settings,
+            inference_queue,
+            lambda: engine,
+            receive,
+        )
+        worker.start()
+        self.assertTrue(worker.ready.wait(0.5))
+        worker.engine_lock.acquire()
+        try:
+            job = self._job("same", "final", segment_id=3)
+            self.assertTrue(inference_queue.submit(job).accepted)
+            deadline = time_now_plus(0.5)
+            while time_now_plus(0) < deadline:
+                with worker._active_job_lock:
+                    if worker._active_request_id == job.request_id:
+                        break
+                threading.Event().wait(0.001)
+            else:
+                self.fail("worker did not claim the queued job")
+
+            self.assertTrue(worker.cancel_request(job.request_id))
+        finally:
+            worker.engine_lock.release()
+
+        try:
+            self.assertTrue(result_ready.wait(0.5))
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].request_id, job.request_id)
+            self.assertEqual(results[0].error, "cancelled")
+            self.assertEqual(engine.transcribe_calls, 0)
+            self.assertEqual(engine.cancel_calls, 0)
+            self.assertEqual(worker.cancelled_jobs, 1)
+        finally:
+            worker.stop()
+
+    def test_cpu_affinity_helper_is_noop_without_a_configured_mask(self):
+        with mock.patch("example_fastapi_server.server.os.sched_setaffinity", create=True) as set_affinity:
+            set_current_thread_cpu_affinity("main", None)
+        set_affinity.assert_not_called()
+
     def test_wake_word_settings_parse_from_cli(self):
         args = parse_args([
             "--wakeword-backend",
@@ -306,6 +495,72 @@ class FastAPIServerProtocolTests(unittest.TestCase):
 
         self.assertEqual(queue.get().session_id, "b")
         self.assertEqual([(job.session_id, reason) for job, reason in dropped], [("a", "stale")])
+
+    def test_fair_queue_drops_stale_final_jobs(self):
+        dropped = []
+        inference_queue = FairInferenceQueue(
+            "test",
+            ServerSettings(),
+            lambda job, reason, lane: dropped.append((job, reason, lane)),
+        )
+        stale = self._job("a", "final", deadline_at=0.001)
+        fresh = self._job("b", "final", deadline_at=time_now_plus(5))
+
+        self.assertTrue(inference_queue.submit(stale).accepted)
+        self.assertTrue(inference_queue.submit(fresh).accepted)
+
+        self.assertEqual(inference_queue.get().session_id, "b")
+        self.assertEqual(
+            [(job.session_id, reason, lane) for job, reason, lane in dropped],
+            [("a", "stale", "test")],
+        )
+        self.assertEqual(inference_queue.snapshot()["staleFinalDropped"], 1)
+
+    def test_cancel_request_preserves_newer_same_session_final(self):
+        dropped = []
+        inference_queue = FairInferenceQueue(
+            "test",
+            ServerSettings(),
+            lambda job, reason, lane: dropped.append((job, reason, lane)),
+        )
+        old = self._job("same", "final", segment_id=1)
+        new = self._job("same", "final", segment_id=2)
+        self.assertTrue(inference_queue.submit(old).accepted)
+        self.assertTrue(inference_queue.submit(new).accepted)
+
+        self.assertTrue(inference_queue.cancel_request(old.request_id))
+
+        self.assertEqual(inference_queue.get().request_id, new.request_id)
+        self.assertEqual(
+            [(job.request_id, reason, lane) for job, reason, lane in dropped],
+            [(old.request_id, "cancelled", "test")],
+        )
+
+    def test_fair_queue_close_drops_and_releases_all_pending_jobs(self):
+        dropped = []
+        inference_queue = FairInferenceQueue(
+            "test",
+            ServerSettings(),
+            lambda job, reason, lane: dropped.append((job, reason, lane)),
+        )
+        final = self._job("a", "final")
+        realtime = self._job("b", "realtime")
+        self.assertTrue(inference_queue.submit(final).accepted)
+        self.assertTrue(inference_queue.submit(realtime).accepted)
+
+        inference_queue.close()
+
+        self.assertEqual(inference_queue.snapshot()["queued"], 0)
+        self.assertEqual(inference_queue.snapshot()["sessions"], 0)
+        self.assertEqual(
+            {(job.request_id, reason, lane) for job, reason, lane in dropped},
+            {
+                (final.request_id, "shutdown", "test"),
+                (realtime.request_id, "shutdown", "test"),
+            },
+        )
+        self.assertIsNone(inference_queue.get())
+        self.assertFalse(inference_queue.submit(self._job("c", "final")).accepted)
 
     def test_recorder_external_executor_preserves_final_transcription_path(self):
         class Executor:

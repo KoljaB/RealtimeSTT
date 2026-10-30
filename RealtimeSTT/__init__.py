@@ -6,9 +6,19 @@ __all__ = [
     "AudioToTextRecorder",
     "AudioToTextRecorderClient",
     "AudioInput",
+    "BaseEngine",
+    "BaseTranscriptionEngine",
     "RealtimeSpeechBoundaryDetector",
     "SpeechBoundaryEvent",
     "SpeechBoundaryResult",
+    "StreamingTranscriptionSession",
+    "TranscriptionEngineConfig",
+    "TranscriptionEngineError",
+    "TranscriptionInfo",
+    "TranscriptionResult",
+    "PreviewTranscriptionResult",
+    "RealtimeTranscriptionMergeResult",
+    "UnsupportedTranscriptionEngineError",
 ]
 
 
@@ -29,6 +39,46 @@ def __getattr__(name):
         from .audio_input import AudioInput
 
         return AudioInput
+    if name == "BaseEngine":
+        from .engines import BaseEngine
+
+        return BaseEngine
+    if name == "BaseTranscriptionEngine":
+        from .engines import BaseTranscriptionEngine
+
+        return BaseTranscriptionEngine
+    if name == "StreamingTranscriptionSession":
+        from .engines import StreamingTranscriptionSession
+
+        return StreamingTranscriptionSession
+    if name == "TranscriptionEngineConfig":
+        from .engines import TranscriptionEngineConfig
+
+        return TranscriptionEngineConfig
+    if name == "TranscriptionEngineError":
+        from .engines import TranscriptionEngineError
+
+        return TranscriptionEngineError
+    if name == "TranscriptionInfo":
+        from .engines import TranscriptionInfo
+
+        return TranscriptionInfo
+    if name == "TranscriptionResult":
+        from .engines import TranscriptionResult
+
+        return TranscriptionResult
+    if name == "PreviewTranscriptionResult":
+        from .core.preview_transcription import PreviewTranscriptionResult
+
+        return PreviewTranscriptionResult
+    if name == "RealtimeTranscriptionMergeResult":
+        from .core.realtime_merge import RealtimeTranscriptionMergeResult
+
+        return RealtimeTranscriptionMergeResult
+    if name == "UnsupportedTranscriptionEngineError":
+        from .engines import UnsupportedTranscriptionEngineError
+
+        return UnsupportedTranscriptionEngineError
     if name == "RealtimeSpeechBoundaryDetector":
         from .core.realtime_boundary_detector import RealtimeSpeechBoundaryDetector
 

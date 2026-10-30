@@ -3,6 +3,7 @@ faster-whisper==1.2.1
 pvporcupine==1.9.5
 webrtcvad-wheels==2.0.14
 halo==0.0.31
+colorama==0.4.6
 torch
 torchaudio
 scipy==1.17.1

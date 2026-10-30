@@ -1,5 +1,238 @@
 # Release Notes
 
+## 1.1.2 - 2026-08-30
+
+This patch release reduces advisory early-RMS Preview latency while preserving
+the authoritative transcription retry and full-turn accuracy contract. See
+[the release-readiness checklist](docs/release-1.1.2-readiness.md) for the
+required build, deployment, attestation, and publication evidence.
+
+### Added
+
+- Production capabilities now advertise the exact `preview.earlyRms` contract:
+  request mode, 25 ms first-attempt decoder flush, one-attempt limit, and no
+  advisory empty-result retry.
+
+### Changed
+
+- Signed source/wheel/sdist parity now canonicalizes CRLF/LF line endings for
+  shipped HTML and command files; the release privacy scan inspects those text
+  assets too.
+- The exact advisory `previewMode = "early_rms"` appends 25 ms of zero PCM to
+  its first and only decode and publishes an empty result immediately.
+- Authoritative, missing, unknown, and malformed Preview modes retain the
+  existing conditional 500 ms empty-result retry unchanged.
+
+### Release boundaries
+
+- Miep decides when an early browser RMS pause is advisory; RealtimeSTT does
+  not change endpoint detection, transcript authority, or response text.
+- LLM admission-proxy cancellation is a separate deployment component and is
+  not part of this Python distribution.
+
+## 1.1.1 - 2026-08-28
+
+This patch release fixes stale Preview ASR work delaying newer full-turn
+snapshots. See [the release-readiness checklist](docs/release-1.1.1-readiness.md)
+for the required evidence gates and supported platform boundaries.
+
+### Fixed
+
+- Superseded `transcribe.cpp` Preview inference can now be cancelled while the
+  native decode is active without closing or reloading the resident model.
+- Request cancellation now reaches an active shared-engine job and covers the
+  dequeue, model-lock, and native-start races without cancelling a later job.
+- Production Preview admission now retires an accepted scheduler request as
+  soon as its snapshot is superseded, and stale completion loses the race.
+
+### Changed
+
+- Shared-engine metrics report cancelled jobs separately from failed jobs.
+- Engines may expose request-scoped cancellable transcription while existing
+  transcription engines retain their previous behavior.
+
+### Release boundaries
+
+- The Miep-side 64 ms continuation hysteresis is maintained in Miep and is not
+  part of the RealtimeSTT distribution.
+- The documented Nemotron-live/Parakeet-final profile remains a Linux x86-64
+  production target.
+
+## 1.1.0 - 2026-08-27
+
+This stable release promotes the externally validated `1.1.0rc1` candidate.
+See [the release-readiness checklist](docs/release-1.1.0-readiness.md) for the
+required evidence gates and supported platform boundaries.
+
+### Added
+
+- Added correlated Preview `resume` handling for the versioned production
+  WebSocket API, including an ordered acknowledgement barrier and explicit
+  candidate/audio provenance fields.
+- Added an opt-in authenticated late full-turn correction operation for
+  Preview-only deployments, bounded by a configurable maximum audio duration.
+- Added recorder Preview/tail transcription support with package-level result
+  types and the documented dual-realtime merge contracts.
+
+### Changed
+
+- Preview-only production turns retain the complete logical-turn audio for model
+  input; live text remains diagnostic and is never substituted for Preview or
+  Final output.
+- Empty Preview results use one bounded silence-padding retry, while Final
+  remains authoritative whenever Final ASR is enabled.
+- Preview admission is now bounded and coalesced: one native dispatch lane
+  retains only the latest pending snapshot while an older inference is active.
+- Unexpected live-lane exits now produce structured, observable degraded events
+  while preserving the authoritative-final fallback path.
+- Raw-PCM responses propagate provider-reported language and finite language
+  probability metadata when the selected provider supplies it.
+- Realtime punctuation splitting commits the frame boundary atomically, and the
+  local Preview worker rejects new speculative requests once its bounded queue
+  is full.
+- Release packaging checks now validate the requested version, inspect archive
+  names/content for private material, and install both wheel and sdist from
+  outside the source checkout.
+
+### Release boundaries
+
+- The documented Nemotron-live/Parakeet-final profile targets Linux x86-64 with
+  the pinned sherpa-onnx runtime. Native Windows remains a development target
+  for this pair; use another authoritative final engine there unless the
+  cumulative-recovery behavior is independently validated.
+- Model weights remain external artifacts. Users must review and accept the
+  exact model/runtime licenses before downloading or redistributing them.
+- The final source tree must pass supported CI, Linux real-model acceptance,
+  and isolated wheel and sdist installation before stable publication.
+- `1.1.0` supersedes the `1.1.0rc1` prerelease; stable installations should pin
+  `RealtimeSTT==1.1.0` when an exact version is required.
+
+## 1.0.4 - 2026-08-21
+
+### Fixed
+
+- Replaced the production WebSocket recorder/VAD-derived final path with a
+  turn-owned state machine and authoritative canonical PCM buffer. Every
+  finalized turn now produces exactly one Parakeet final result followed by
+  exactly one completion.
+- Made accepted 16 kHz PCM invariant to 10/20/40/64/100 ms packet boundaries;
+  the WebSocket final uses the same final scheduler lane, audio normalization,
+  language, and prompt policy as raw-PCM HTTP transcription.
+- Fenced late live/final/transport callbacks across cancel, reset, disconnect,
+  and reconnect, including reconnects that reuse a session or turn id.
+- Fixed live Nemotron input scaling, removed growing full-buffer snapshots,
+  fed only new frames to one stream per logical turn, and deduplicated and
+  rate-limited changed partials.
+- Closed long-session lifecycle leaks by retiring completed final threads,
+  draining cancelled live queues, cancelling timed-out live streams, pruning
+  connection epochs, and resolving queued scheduler jobs during shutdown.
+- Moved native live-stream creation and cancellation off the ASGI event loop,
+  fenced streams returned after a turn was retired, and bounded concurrent
+  native cancellation work process-wide.
+- Made final/completion admission atomic across reset and cancel, scoped final
+  timeout cancellation to the exact scheduler request, and bounded live
+  backpressure by queued audio duration instead of client packet count.
+- Bounded terminal-event reserve for slow WebSocket readers and close the
+  connection with code 1013 instead of allowing finalized turns to grow an
+  unbounded outbound queue.
+- Removed bearer-token command-line flags; production tokens now come only
+  from `REALTIMESTT_SERVER_BEARER_TOKEN` so they cannot appear in process
+  listings or shell history.
+
+### Changed
+
+- Production WebSocket audio is explicitly canonical mono 16 kHz
+  `pcm_s16le`. HTTP final transcription retains its documented supported input
+  sample rates and performs one whole-request resample.
+- Streaming benchmark pacing now uses the absolute audio clock and validates
+  exact terminal counts, terminal/completion ordering, quiet completion tails,
+  long-run repetitions, and bounded parallel concurrency.
+- HTTP A/B and WebSocket benchmark reports redact endpoints, corpus paths,
+  clip identifiers, references, partials, and finals by default. Sensitive
+  per-record output requires an explicit protected-local opt-in.
+- The production CPU profile keeps Nemotron live hypotheses display-only;
+  Parakeet remains the sole authoritative turn final.
+
+### Notes
+
+- This release supersedes the old TestPyPI `1.0.3` artifact. PyPI
+  files are immutable, so the corrected production release uses version `1.0.4`.
+- The supported Nemotron/Parakeet production profile remains Linux x86-64.
+  Keep the server on loopback behind an authenticated TLS/WSS endpoint and
+  retain a local-live/final-server rollback path during client rollout.
+- No production-PyPI publication is implied by this release candidate.
+
+## 1.0.3 - 2026-08-20
+
+### Added
+
+- Added the experimental optional FunASR/SenseVoice transcription backend and
+  install extra.
+- Added `AudioToTextRecorder.feed_audio_file()` for feeding audio files through
+  the manual audio input path.
+- Added `TranscriptionResult.metadata` support and word timestamp plumbing for
+  backends that can return word-level timing.
+- Added public custom transcription engine interfaces through
+  `RealtimeSTT.engines`, including `BaseEngine`, `TranscriptionEngineConfig`,
+  `TranscriptionResult`, and `StreamingTranscriptionSession`.
+- Added custom engine documentation showing `transcription_executor`,
+  `realtime_transcription_executor`, and streaming-session integration.
+- Added opt-in realtime punctuation splitting through
+  `realtime_punctuation_split_marks`. The default remains `"off"`; `"sentence"`
+  is the supported production mode for `.`, `?`, and `!`.
+- Added the multilingual sherpa-onnx Nemotron 3.5 0.6B INT8 engine as a true
+  streaming engine with per-stream language selection, incremental frame
+  ingestion, final draining, reset, cancellation, and deterministic release.
+- Added pinned manifests for the exact Nemotron streaming and Parakeet v3 final
+  model archives, including source, license, archive integrity, and extracted
+  file integrity metadata.
+- Added `stt-install-sherpa-models` for resumable, verified, atomic installation
+  and offline reuse of those pinned model archives in persistent storage.
+- Added a packaged production FastAPI server with versioned liveness,
+  readiness, capabilities, raw PCM16 final transcription, and ordered remote
+  streaming WebSocket APIs. Non-loopback binds require bearer authentication
+  and TLS. The server includes bounded queues and sessions, backpressure,
+  limits, structured errors, warmup, and graceful resource cleanup.
+- Added a reproducible same-host A/B benchmark harness for the raw PCM16 client
+  contract and release CI for unit, distribution, and isolated wheel
+  installation checks.
+
+### Changed
+
+- Hardened realtime punctuation splitting with repeated-observation checks,
+  timestamp validation, guarded dash handling, and synchronized split-state
+  bookkeeping.
+- Expanded install-extra validation to include the FunASR extra and the `all`
+  extra.
+- Exposed the same engine authoring interfaces through lazy top-level package
+  imports while keeping existing `BaseTranscriptionEngine` imports compatible.
+- Pinned the sherpa-onnx optional dependency to the release-tested version and
+  hardened empty-output/language handling for Parakeet final transcription.
+- Made the production `server` extra install a local Silero ONNX VAD runtime,
+  avoiding interactive Torch Hub model retrieval when WebSocket sessions start.
+- Promoted the remote production server to the `stt-server-production` packaged
+  entry point while preserving the legacy `stt-server` command.
+
+### Notes
+
+- Comma, dash, ellipsis, and `all` punctuation split modes remain available for
+  experiments but are not promoted as production-supported in this release.
+- Realtime punctuation splitting requires word timestamps. Built-in support is
+  currently wired through `faster_whisper`; other built-in engines skip the
+  split path.
+- The production CPU pair uses Nemotron only for replaceable live hypotheses;
+  Parakeet transcribes the authoritative final audio once and replaces the live
+  hypothesis at turn completion.
+- The exact model weights remain external artifacts governed by their own
+  licenses. The package ships manifests and installation tooling, not weights.
+- The pinned two-model production profile targets Linux x86-64. Native Windows
+  remains suitable for development, but Parakeet can return empty output for
+  some voiced cumulative-turn audio; use the Linux server or another final
+  engine until that runtime combination is proven reliable.
+- On the same Linux CPU host and final model, the 1.0.3 server matched the
+  reference WER/CER/exact result, was at single-client latency parity, and at
+  four concurrent clients improved throughput by 7.5% and p95 latency by 33.2%.
+
 ## 1.0.2 - 2026-05-31
 
 ### Changed

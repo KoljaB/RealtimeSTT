@@ -21,11 +21,20 @@ from .core.lifecycle import (
     wait_for_recorded_audio,
     wakeup_recorder,
 )
-from .core.manual_audio_input import feed_audio as feed_manual_audio
+from .core.manual_audio_input import (
+    feed_audio as feed_manual_audio,
+    feed_audio_file as feed_manual_audio_file,
+    flush_audio_input as flush_manual_audio_input,
+)
+from .core.recording import drain_audio_input
 from .core.recording_buffers import (
     clear_audio_queue as clear_recorder_audio_queue,
     flush_buffered_audio as flush_recorder_buffered_audio,
     has_pending_recordings as recorder_has_pending_recordings,
+)
+from .core.tail_transcription import (
+    MIN_LIVE_WORDS_FOR_FUZZY_REPAIR,
+    PREVIEW_TRANSCRIPTION_TAIL_SECONDS,
 )
 from .core.shutdown import shutdown_recorder
 from .core.text_formatting import format_number
@@ -181,6 +190,7 @@ class AudioToTextRecorder:
                  use_extended_logging: bool = False,
                  faster_whisper_vad_filter: bool = True,
                  normalize_audio: bool = False,
+                 final_transcription_word_timestamps: bool = False,
                  start_callback_in_new_thread: bool = False,
                  realtime_transcription_use_syllable_boundaries: bool = False,
                  realtime_boundary_detector_sensitivity: float = 0.6,
@@ -191,12 +201,38 @@ class AudioToTextRecorder:
                  transcription_executor: Optional[Callable] = None,
                  realtime_transcription_executor: Optional[Callable] = None,
                  on_realtime_text_stabilization_update=None,
+                 realtime_punctuation_split_marks: Optional[
+                     Union[str, Iterable[str]]
+                 ] = "off",
                  silero_backend: str = "auto",
                  silero_onnx_model_path: Optional[str] = None,
                  silero_onnx_threads: int = 2,
                  deactivity_silence_confirmation_duration: float = (
                      DEACTIVITY_SILENCE_CONFIRMATION_DURATION
                  ),
+                 # Speculative Preview transcription parameters
+                 enable_preview_transcription: bool = False,
+                 preview_model_type: Optional[str] = None,
+                 preview_transcription_engine: Optional[str] = None,
+                 preview_transcription_engine_options: Optional[dict] = None,
+                 preview_transcription_tail_seconds: float = (
+                     PREVIEW_TRANSCRIPTION_TAIL_SECONDS
+                 ),
+                 on_preview_transcription_finished=None,
+                 preview_transcription_executor: Optional[Callable] = None,
+                 preview_transcription_min_live_words_for_fuzzy_repair: int = (
+                     MIN_LIVE_WORDS_FOR_FUZZY_REPAIR
+                 ),
+                 # Optional second, lower-latency realtime transcription lane
+                 ultrafast_realtime_model_type: Optional[str] = None,
+                 ultrafast_realtime_transcription_engine: Optional[str] = None,
+                 ultrafast_realtime_transcription_engine_options: Optional[
+                     dict
+                 ] = None,
+                 on_ultrafast_transcription_update=None,
+                 on_merged_realtime_transcription_update=None,
+                 on_realtime_transcription_merge_update=None,
+                 ultrafast_realtime_max_tail_words: int = 5,
                  spinner_listening_text: str = "speak now",
                  spinner_wakeword_text: str = "say {wake_words}",
                  spinner_transcribing_text: str = "transcribing",
@@ -316,8 +352,59 @@ class AudioToTextRecorder:
             slight delay compared to the regular real-time updates.
         - on_realtime_text_stabilization_update = A callback function that is
             triggered with a structured realtime stabilization event.
+        - realtime_punctuation_split_marks (str or iterable, default="off"):
+            Opt-in punctuation marks for splitting long active realtime
+            recordings. Use "sentence" for the supported `. ? !` mode.
         - realtime_batch_size (int, default=16): Batch size for the real-time
             transcription model.
+        - ultrafast_realtime_model_type (str, default=None): Optional second
+            streaming realtime model. Its text may only append a bounded,
+            safely anchored suffix to the authoritative realtime model text.
+        - ultrafast_realtime_transcription_engine (str, default=None): Backend
+            for the ultrafast lane. If omitted, the realtime backend is used.
+            The backend must support streaming sessions.
+        - ultrafast_realtime_transcription_engine_options (dict,
+            default=None): Backend-specific ultrafast options. If omitted,
+            realtime engine options are reused.
+        - on_ultrafast_transcription_update (callable, default=None): Receives
+            the raw ultrafast text independently of the central callbacks.
+        - on_merged_realtime_transcription_update (callable, default=None):
+            Receives the complete sticky merged text only when it changes.
+        - on_realtime_transcription_merge_update (callable, default=None):
+            Receives every structured RealtimeTranscriptionMergeResult,
+            including held/no-anchor transitions.
+        - ultrafast_realtime_max_tail_words (int, default=5): Maximum number
+            of words the ultrafast model may append after a safe anchor. Lower
+            this value to reduce the speculative error radius.
+
+        Speculative Preview transcription:
+        - enable_preview_transcription (bool, default=False): Runs an
+            independent low-latency Preview transcription at confirmed VAD
+            silence. Preview is intended for speculative consumers such as an
+            early LLM response and is not authoritative Final ASR.
+        - preview_model_type (str, default=None): Model used for Preview. If
+            omitted while Preview is enabled, the loaded main model is reused
+            when the Preview engine and options also match; otherwise an
+            independent Preview model is initialized.
+        - preview_transcription_engine (str, default=None): Backend used for
+            Preview. If omitted, the main transcription backend is used.
+        - preview_transcription_engine_options (dict, default=None): Optional
+            backend-specific Preview options. If omitted, main-engine options
+            are reused and allow the loaded main model to be shared.
+        - preview_transcription_tail_seconds (float, default=3.0): Amount of
+            recent active speech sent to Preview ASR.
+        - preview_transcription_min_live_words_for_fuzzy_repair (int,
+            default=3): Minimum Live words required before constrained fuzzy
+            repair is allowed. Exact anchors remain available for shorter
+            Live text; values below the 3-word anchor length cannot lower the
+            matcher further.
+        - on_preview_transcription_finished (callable, default=None): Callback
+            receiving a PreviewTranscriptionResult. The result includes the
+            speculative text, Live boundary snapshot, tail text, alignment
+            status, and recording id.
+        - preview_transcription_executor (callable, default=None): Optional
+            external Preview ASR executor. It is called only with the bounded
+            Preview tail; it never receives or triggers the full Final audio.
 
         Voice activity and turn detection:
         - silero_sensitivity (float, default=SILERO_SENSITIVITY): Sensitivity
@@ -497,6 +584,10 @@ class AudioToTextRecorder:
         - normalize_audio (bool, default=False): If set to True, the system will
             normalize the audio to a specific range before processing. This can
             help improve the quality of the transcription.
+        - final_transcription_word_timestamps (bool, default=False): If set to
+            True, final transcription requests ask compatible engines to return
+            word-level timestamps in last_transcription_metadata["words"]. This
+            is currently supported by the faster_whisper transcription engine.
         - start_callback_in_new_thread (bool, default=False): If set to True,
             the callback functions will be executed in a
             new thread. This can help improve performance by allowing the
@@ -599,6 +690,9 @@ class AudioToTextRecorder:
             use_extended_logging=use_extended_logging,
             faster_whisper_vad_filter=faster_whisper_vad_filter,
             normalize_audio=normalize_audio,
+            final_transcription_word_timestamps=(
+                final_transcription_word_timestamps
+            ),
             start_callback_in_new_thread=start_callback_in_new_thread,
             realtime_transcription_use_syllable_boundaries=(
                 realtime_transcription_use_syllable_boundaries
@@ -612,11 +706,43 @@ class AudioToTextRecorder:
             on_realtime_text_stabilization_update=(
                 on_realtime_text_stabilization_update
             ),
+            realtime_punctuation_split_marks=realtime_punctuation_split_marks,
             silero_backend=silero_backend,
             silero_onnx_model_path=silero_onnx_model_path,
             silero_onnx_threads=silero_onnx_threads,
             deactivity_silence_confirmation_duration=(
                 deactivity_silence_confirmation_duration
+            ),
+            enable_preview_transcription=enable_preview_transcription,
+            preview_model_type=preview_model_type,
+            preview_transcription_engine=preview_transcription_engine,
+            preview_transcription_engine_options=(
+                preview_transcription_engine_options
+            ),
+            preview_transcription_tail_seconds=preview_transcription_tail_seconds,
+            preview_transcription_min_live_words_for_fuzzy_repair=(
+                preview_transcription_min_live_words_for_fuzzy_repair
+            ),
+            on_preview_transcription_finished=on_preview_transcription_finished,
+            preview_transcription_executor=preview_transcription_executor,
+            ultrafast_realtime_model_type=ultrafast_realtime_model_type,
+            ultrafast_realtime_transcription_engine=(
+                ultrafast_realtime_transcription_engine
+            ),
+            ultrafast_realtime_transcription_engine_options=(
+                ultrafast_realtime_transcription_engine_options
+            ),
+            on_ultrafast_transcription_update=(
+                on_ultrafast_transcription_update
+            ),
+            on_merged_realtime_transcription_update=(
+                on_merged_realtime_transcription_update
+            ),
+            on_realtime_transcription_merge_update=(
+                on_realtime_transcription_merge_update
+            ),
+            ultrafast_realtime_max_tail_words=(
+                ultrafast_realtime_max_tail_words
             ),
         )
         init_args.update(
@@ -685,6 +811,7 @@ class AudioToTextRecorder:
 
     def text(self,
              on_transcription_finished=None,
+             word_timestamps=None,
              ):
         """
         Records if needed and returns or publishes final transcription text.
@@ -692,16 +819,18 @@ class AudioToTextRecorder:
         Args:
         - on_transcription_finished: Optional callback that receives the
             transcription result instead of returning it synchronously.
+        - word_timestamps: Optional per-call override for word-level timestamp
+            metadata. If None, final_transcription_word_timestamps is used.
         """
-        return transcribe_text(self, on_transcription_finished)
+        return transcribe_text(self, on_transcription_finished, word_timestamps)
 
-    def transcribe(self):
+    def transcribe(self, word_timestamps=None):
         """
         Transcribes the recorder's currently loaded audio.
         """
-        return transcribe_recorded_audio(self)
+        return transcribe_recorded_audio(self, word_timestamps)
 
-    def perform_final_transcription(self, audio_bytes=None, use_prompt=True):
+    def perform_final_transcription(self, audio_bytes=None, use_prompt=True, word_timestamps=None):
         """
         Runs final transcription on recorded audio or provided audio samples.
 
@@ -709,8 +838,10 @@ class AudioToTextRecorder:
         - audio_bytes: Optional audio samples to transcribe instead of the
             recorder's current audio buffer.
         - use_prompt: Whether to use the configured initial prompt.
+        - word_timestamps: Optional per-call override for word-level timestamp
+            metadata. If None, final_transcription_word_timestamps is used.
         """
-        return perform_final_transcription_api(self, audio_bytes, use_prompt)
+        return perform_final_transcription_api(self, audio_bytes, use_prompt, word_timestamps)
 
     # Public manual input API.
 
@@ -719,10 +850,41 @@ class AudioToTextRecorder:
         Feeds an audio chunk into the manual audio input pipeline.
 
         Args:
-        - chunk: Audio bytes or a NumPy audio array.
+        - chunk: Audio bytes, a NumPy audio array, or an audio file path.
         - original_sample_rate: Sample rate of the provided audio chunk.
         """
         return feed_manual_audio(self, chunk, original_sample_rate)
+
+    def flush_audio_input(self):
+        """Queue a partial manual-input chunk before an explicit drain."""
+
+        return flush_manual_audio_input(self)
+
+    def drain_audio_input(self, timeout=None):
+        """Wait until the recording worker has consumed queued manual audio."""
+
+        return drain_audio_input(self, timeout=timeout)
+
+    def feed_audio_file(
+            self,
+            filenames,
+            normalize=True,
+            target_peak=0.95,
+    ):
+        """
+        Feeds one or more audio files into the manual audio input pipeline.
+
+        Args:
+        - filenames: Audio file path or iterable of audio file paths.
+        - normalize: Whether to peak-normalize decoded audio before feeding.
+        - target_peak: Target absolute peak when normalization is enabled.
+        """
+        return feed_manual_audio_file(
+            self,
+            filenames,
+            normalize=normalize,
+            target_peak=target_peak,
+        )
 
     # Public lifecycle/control API.
 

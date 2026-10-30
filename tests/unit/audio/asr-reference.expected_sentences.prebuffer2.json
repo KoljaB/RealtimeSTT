@@ -1,6 +1,6 @@
 {
   "created_at": "2026-05-06T23:50:38",
-  "audio_file": "D:\\Projekte\\STT\\RealtimeSTT\\RealtimeSTT\\tests\\unit\\audio\\asr-reference.wav",
+  "audio_file": "tests/unit/audio/asr-reference.wav",
   "audio_duration_seconds": 51.9253125,
   "sample_rate": 16000,
   "settings": {
