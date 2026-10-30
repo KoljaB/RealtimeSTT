@@ -210,6 +210,10 @@ class AudioRecorderPublicApiTests(unittest.TestCase):
             ("on_merged_realtime_transcription_update", None, empty),
             ("on_realtime_transcription_merge_update", None, empty),
             ("ultrafast_realtime_max_tail_words", 5, int),
+            ("spinner_listening_text", "speak now", str),
+            ("spinner_wakeword_text", "say {wake_words}", str),
+            ("spinner_transcribing_text", "transcribing", str),
+            ("spinner_recording_text", "recording", str),
         ]
 
         self.assertEqual(list(signature.parameters), [item[0] for item in expected])

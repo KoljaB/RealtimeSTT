@@ -233,6 +233,10 @@ class AudioToTextRecorder:
                  on_merged_realtime_transcription_update=None,
                  on_realtime_transcription_merge_update=None,
                  ultrafast_realtime_max_tail_words: int = 5,
+                 spinner_listening_text: str = "speak now",
+                 spinner_wakeword_text: str = "say {wake_words}",
+                 spinner_transcribing_text: str = "transcribing",
+                 spinner_recording_text: str = "recording",
                  ):
         """
         Initializes an audio recorder and  transcription
@@ -292,6 +296,17 @@ class AudioToTextRecorder:
             feed_audio() method.
         - spinner (bool, default=True): Show spinner animation with current
             state.
+        - spinner_listening_text (str, default="speak now"): Spinner text
+            shown while listening for voice activity. Set to "" to show no
+            message.
+        - spinner_wakeword_text (str, default="say {wake_words}"): Spinner
+            text shown while waiting for wake words. ``{wake_words}`` is
+            replaced with the configured wake words. Set to "" to show no
+            message.
+        - spinner_transcribing_text (str, default="transcribing"): Spinner
+            text shown while transcribing. Set to "" to show no message.
+        - spinner_recording_text (str, default="recording"): Spinner text
+            shown while recording. Set to "" to show no message.
         - level (int, default=logging.WARNING): Logging level.
         - batch_size (int, default=16): Batch size for the main transcription
 
@@ -729,6 +744,14 @@ class AudioToTextRecorder:
             ultrafast_realtime_max_tail_words=(
                 ultrafast_realtime_max_tail_words
             ),
+        )
+        init_args.update(
+            {
+                "spinner_listening_text": spinner_listening_text,
+                "spinner_wakeword_text": spinner_wakeword_text,
+                "spinner_transcribing_text": spinner_transcribing_text,
+                "spinner_recording_text": spinner_recording_text,
+            }
         )
 
         initialize_recorder(
