@@ -2,6 +2,7 @@ include requirements.txt
 include README.md
 include RELEASE_NOTES.md
 include LICENSE
+include NOTICE
 prune docs/development
 prune dev-log
 prune dev-logs

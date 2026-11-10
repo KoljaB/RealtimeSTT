@@ -1,0 +1,41 @@
+RealtimeSTT
+Copyright 2023-2026 Kolja Beigel and the RealtimeSTT contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components
+----------------------
+The Apache-2.0 license covers the RealtimeSTT source code only. Optional
+transcription engines, voice activity detectors, wake-word engines, model
+weights and hosted services used through RealtimeSTT are not part of this
+license grant. They remain under their own licenses and terms, which you must
+review and comply with yourself. See docs/licenses.md for an overview.
+
+Earlier MIT-licensed versions
+-----------------------------
+RealtimeSTT releases up to and including 1.1.2 were published under the MIT
+License, and those releases remain available under it. Portions of this
+software originate from those releases and from contributions made under the
+MIT License; for those portions the following notice is retained:
+
+MIT License
+
+Copyright (c) 2023 Kolja Beigel
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
