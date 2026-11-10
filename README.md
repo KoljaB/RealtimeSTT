@@ -1,5 +1,9 @@
 # RealtimeSTT
 
+> **License:** RealtimeSTT's own code is Apache-2.0. Engines, models, VADs and
+> wake-word backends keep their own licenses, which you must check yourself:
+> [license notes](docs/licenses.md).
+
 RealtimeSTT is a Python speech-to-text library for applications that need
 voice activity detection, fast transcription, optional realtime text updates,
 wake words, and direct access to audio streams. It is designed for assistants,
@@ -256,7 +260,17 @@ unit tests separate from opt-in real-model tests; see [docs/testing.md](docs/tes
 
 ## License
 
-MIT
+RealtimeSTT's own source code is licensed under the
+[Apache License 2.0](LICENSE); see also [NOTICE](NOTICE). Releases up to and
+including 1.1.2 were published under the MIT License.
+
+This license covers the RealtimeSTT code only. It does not relicense, and does
+not release you from checking and complying with, the licenses and terms of
+the transcription engines, VAD and wake-word engines, model weights or hosted
+services you use through this library. Some of them require attribution,
+share-alike, a commercial license or a provider agreement. Start with the
+[license notes](docs/licenses.md) and verify the upstream terms for the exact
+package, model and revision you ship.
 
 ## Author
 

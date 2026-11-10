@@ -2,10 +2,17 @@
 
 Last researched: 2026-05-21.
 
-RealtimeSTT itself is released under the MIT license. Optional transcription,
-VAD, and wake-word engines pull in their own packages, model weights, service
-terms, and model cards. Those upstream terms can change independently from this
-repository.
+RealtimeSTT's own source code is released under the
+[Apache License 2.0](../LICENSE) (releases up to and including 1.1.2 were
+published under the MIT License; see [NOTICE](../NOTICE)). Optional
+transcription, VAD, and wake-word engines pull in their own packages, model
+weights, service terms, and model cards. Those upstream terms can change
+independently from this repository.
+
+**The Apache-2.0 license applies to RealtimeSTT's code only.** Using an engine,
+model, VAD, or wake-word backend through RealtimeSTT does not place it under
+Apache-2.0 and does not release you from reviewing and complying with that
+component's own license and terms.
 
 This page is a practical summary, not legal advice. Before shipping a product,
 redistributing model files, bundling wheels, or offering hosted transcription,
