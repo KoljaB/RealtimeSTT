@@ -12,6 +12,8 @@ prune test-results
 prune docs_private
 prune docs/handoffs
 prune tests_private
+# Host-specific deployment recipes stay in the repository, not the sdist.
+prune deploy
 global-exclude *Kopie*.py
 global-exclude *.bak
 global-exclude *.tmp
