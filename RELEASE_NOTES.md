@@ -1,5 +1,56 @@
 # Release Notes
 
+## 1.2.0 - 2026-11-11
+
+This minor release relicenses RealtimeSTT under Apache-2.0, adds faster
+Preview paths to the production server, adds the optional Orukeet final model
+and a `nemotron_ort` streaming engine, and includes community fixes merged
+since 1.1.2.
+
+### License
+
+- RealtimeSTT is now licensed under the Apache License 2.0 (#344). Releases up
+  to and including 1.1.2 were published under the MIT License.
+
+### Added
+
+- Production server: opt-in tail-anchored Preview decoding with
+  `--preview-input-mode tail` and `--preview-tail-overlap-seconds`. The
+  Preview decodes only the recent speech tail and splices it onto the live
+  text; when the splice cannot be proven it decodes the full turn.
+  Capabilities report the mode as `preview.decodeMode`.
+- Production server: `--preview-live-flush`. A Preview request with
+  `pauseTextSource = "live_flush"` is answered from a snapshot flush of the
+  live streaming lane; the full-model decode follows as a `previewRecord`
+  event, and an optional second flush stage publishes `previewRefined`.
+  Capabilities report `preview.liveFlush`.
+- `nemotron_ort` streaming engine (ONNX Runtime Nemotron with snapshot flush)
+  and the `nemotron-ort` extra. It pins `onnxruntime==1.23.2`; do not install
+  it in the same environment as the `parakeet-onnx` extra.
+- Optional verified Orukeet final transcription model
+  (`stt-install-sherpa-models --model orukeet`) (#328).
+- Spinner status messages are configurable on `AudioToTextRecorder` (#317,
+  hardened in #342).
+
+### Fixed
+
+- Tail merge keeps Devanagari and other Brahmic vowel marks and accepts
+  mark-only corrections backed by exact neighbouring words (#338).
+- Words re-decoded in a Preview tail keep the anchor's casing.
+- The final period is added when a transcript ends in a combining vowel sign
+  (#329).
+- `feed_audio` no longer crashes on a chunk too short to resample (#330).
+- The server starts with the client's language when the client sends an empty
+  language (#332).
+- The client can turn off `silero_deactivity_detection` (#335).
+- GPU installs require a compatible OpenWakeWord (`>=0.6.0`) (#327, #336).
+
+### Documentation and tests
+
+- Requiring a wake word for each recording is documented (#339).
+- OpenWakeWord backend aliases are covered by tests (#337).
+- Server priority and cancellation fences run in unit CI.
+
 ## 1.1.2 - 2026-08-30
 
 This patch release reduces advisory early-RMS Preview latency while preserving

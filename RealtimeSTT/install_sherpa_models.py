@@ -271,7 +271,7 @@ def _open_download(
     opener: Optional[_Urlopen],
 ):
     offset = partial.stat().st_size if partial.exists() else 0
-    headers = {"User-Agent": "RealtimeSTT/%s sherpa-model-installer" % "1.1.2"}
+    headers = {"User-Agent": "RealtimeSTT/%s sherpa-model-installer" % "1.2.0"}
     if offset:
         headers["Range"] = "bytes=%d-" % offset
     request = Request(manifest.archive_url, headers=headers)

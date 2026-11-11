@@ -148,6 +148,36 @@ configure a different authoritative final engine such as `faster_whisper`, or
 run the pinned Nemotron/Parakeet pair on Linux. Do not treat an empty Windows
 Parakeet response as a successful speech transcription.
 
+### Tail-anchored Preview (`--preview-input-mode tail`)
+
+A full-turn Preview decodes the whole retained turn at every pause, so its
+cost grows with the turn. With `--preview-input-mode tail` the server decodes
+only the audio after an anchor (the previous Preview of the same turn, or the
+accurate live hypothesis) plus an overlap (`--preview-tail-overlap-seconds`,
+default 1.5 s, extended back so it holds at least four recognized words), then
+splices anchor text and tail text at a word match inside the overlap. When the
+splice cannot be proven, or the tail would skip less than 0.5 s, the server
+decodes the full turn instead. The default stays `full`; capabilities report
+the active mode as `preview.decodeMode`.
+
+### Live-flush Preview (`--preview-live-flush`)
+
+With `--preview-live-flush` and a live engine that supports snapshot flushes
+(`nemotron_ort`, extra `nemotron-ort`), a client can send
+`"pauseTextSource": "live_flush"` on a `preview` request. The live streaming
+lane then flushes a snapshot of its current state and publishes that text as
+the `preview` event (`status = "flush"`), usually well before a full-model
+decode would finish. The full-model Preview decode still runs after the flush
+and is published as a separate `previewRecord` event; it does not consume the
+Preview token or change completion state. With `"pauseTextRefine": true` the
+flush continues over a second padded chunk and publishes a `previewRefined`
+event when the longer text is available.
+
+If the flush is empty, fails, or does not finish within 0.5 s, the full-model
+decode answers the request as an ordinary `preview` instead. Without the flag,
+or with a live engine that cannot flush, `pauseTextSource` is ignored.
+Capabilities report `preview.liveFlush`.
+
 ## HTTP API
 
 Versioned operational endpoints are available at both `/api/v1/...` and the

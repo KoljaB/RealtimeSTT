@@ -144,7 +144,7 @@ class InstallSherpaModelsTests(unittest.TestCase):
         self.assertTrue((destination / "tokens.txt").is_file())
         self.assertEqual(2, len(calls))
         self.assertEqual(
-            {"RealtimeSTT/1.1.2 sherpa-model-installer"},
+            {"RealtimeSTT/1.2.0 sherpa-model-installer"},
             {call[1] for call in calls},
         )
         self.assertEqual("bytes=%d-" % split, calls[1][0])

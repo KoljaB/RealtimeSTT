@@ -44,7 +44,7 @@ jobs:
     name: build and clean distribution smoke
     runs-on: ubuntu-latest
     env:
-      PACKAGE_VERSION: "1.1.2"
+      PACKAGE_VERSION: "1.2.0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
