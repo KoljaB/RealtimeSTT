@@ -75,6 +75,9 @@ PCM_FORMAT = "pcm_s16le"
 PREVIEW_TAIL_SECONDS = 5.0
 PREVIEW_EMPTY_RETRY_SILENCE_SECONDS = 0.5
 PREVIEW_EARLY_RMS_FLUSH_SILENCE_SECONDS = 0.025
+# A record decode waits at most this long for the live-lane flush of the same
+# Preview request before it publishes itself as the Preview result.
+PREVIEW_LIVE_FLUSH_WAIT_SECONDS = 0.5
 LATE_FINAL_OPERATION = "late_full_turn_correction"
 RESUME_ACK_TYPE = "resume_ack"
 _LIVE_CANCEL = object()
@@ -97,6 +100,43 @@ class _PreviewAdmissionCancelled(RuntimeError):
     """Internal sentinel for Preview work invalidated before ASR admission."""
 
 
+@dataclass
+class _LiveFlushRequest:
+    """Ordered live-queue marker: flush a snapshot of the live stream.
+
+    It travels behind exactly the audio that preceded the Preview request, so
+    the flush covers the same audio as the record decode.
+    """
+
+    request_id: str
+    preview_mode: str
+    preview_epoch: int
+    cancelled: threading.Event
+    requested_at: float
+    audio_revision: int
+    audio_frames: int
+    audio_packets: int
+    input_scope: str
+    input_sample_start: int
+    input_sample_end: int
+    candidate_start_sample: int
+    candidate_start_byte: int
+    candidate_id: Optional[str]
+    candidate_base_text: str
+    resume_request_id: Optional[str]
+    resume_epoch: int
+    # Continue the same fork over a second padded chunk and publish the
+    # longer text as a previewRefined event after the Preview.
+    refine: bool = False
+    done: threading.Event = field(default_factory=threading.Event)
+    published: bool = False
+
+
+def _supports_live_flush(stream: Any) -> bool:
+    inner = getattr(stream, "session", stream)
+    return callable(getattr(inner, "flush_snapshot", None))
+
+
 class _SampleBoundedQueue:
     """FIFO whose audio capacity is measured in samples, not packet count."""
 
@@ -109,7 +149,7 @@ class _SampleBoundedQueue:
 
     @staticmethod
     def _weight(item: Any) -> int:
-        if item is None or item is _LIVE_CANCEL:
+        if item is None or item is _LIVE_CANCEL or isinstance(item, _LiveFlushRequest):
             return 0
         return max(0, int(getattr(item, "size", len(item))))
 
@@ -287,6 +327,10 @@ class ProductionServerSettings(_ReferenceServerSettings):
     # the splice cannot be proven.
     preview_input_mode: str = "full"
     preview_tail_overlap_seconds: float = PREVIEW_TAIL_OVERLAP_SECONDS
+    # Clients may ask (pauseTextSource=live_flush) for the Preview result to
+    # come from a snapshot flush of the live streaming lane; the full-model
+    # decode is then published afterwards as a previewRecord event.
+    preview_live_flush: bool = False
     allowed_sample_rates: Tuple[int, ...] = (8000, 16000, 24000, 32000, 44100, 48000)
     supported_languages: Tuple[str, ...] = REMOTE_LANGUAGE_CHOICES
     max_http_audio_bytes: int = 8 * 1024 * 1024
@@ -544,6 +588,7 @@ def capabilities_for(settings: ProductionServerSettings) -> Dict[str, Any]:
         "preview": {
             "inputCoverage": "full_turn",
             "decodeMode": getattr(settings, "preview_input_mode", "full"),
+            "liveFlush": bool(getattr(settings, "preview_live_flush", False)),
             "earlyRms": {
                 "supported": True,
                 "requestMode": "early_rms",
@@ -1891,7 +1936,18 @@ class ProductionSessionProtocol:
                 samples = live_queue.get()
                 try:
                     if samples is _LIVE_CANCEL or live_cancelled.is_set():
+                        if isinstance(samples, _LiveFlushRequest):
+                            samples.done.set()
                         return
+                    if isinstance(samples, _LiveFlushRequest):
+                        self._run_live_flush(
+                            turn_id,
+                            generation,
+                            stream,
+                            samples,
+                            audio_end_sample_exclusive,
+                        )
+                        continue
                     if samples is None:
                         stream.input_finished()
                         result = stream.finish()
@@ -2967,6 +3023,7 @@ class ProductionSessionProtocol:
         preview_mode: str,
         preview_epoch: int,
         cancelled: threading.Event,
+        live_flush: Optional[_LiveFlushRequest] = None,
     ) -> None:
         work = (
             turn_id,
@@ -2991,6 +3048,7 @@ class ProductionSessionProtocol:
             preview_mode,
             preview_epoch,
             cancelled,
+            live_flush,
         )
         thread_to_start = None
         with self._lock:
@@ -3080,9 +3138,16 @@ class ProductionSessionProtocol:
         preview_mode: str,
         preview_epoch: int,
         cancelled: threading.Event,
+        live_flush: Optional[_LiveFlushRequest] = None,
         _release_thread: bool = True,
     ) -> None:
         worker_started_at = time.monotonic()
+        record_only = False
+        if live_flush is not None:
+            # The flush answers the Preview; this decode must not compete with
+            # it for CPU and becomes the record text afterwards.
+            live_flush.done.wait(PREVIEW_LIVE_FLUSH_WAIT_SECONDS)
+            record_only = live_flush.published
         try:
             status = "empty"
             preview_text = ""
@@ -3716,17 +3781,26 @@ class ProductionSessionProtocol:
                             end_sample=int(input_sample_end),
                             source="preview",
                         )
-            self._publish_preview_result(
-                turn_id,
-                generation,
-                request_id,
-                audio_revision,
-                payload,
-                status,
-                failure,
-                preview_epoch=preview_epoch,
-                cancelled=cancelled,
-            )
+            if record_only:
+                self._publish_preview_record(
+                    turn_id,
+                    generation,
+                    payload,
+                    preview_epoch=preview_epoch,
+                    cancelled=cancelled,
+                )
+            else:
+                self._publish_preview_result(
+                    turn_id,
+                    generation,
+                    request_id,
+                    audio_revision,
+                    payload,
+                    status,
+                    failure,
+                    preview_epoch=preview_epoch,
+                    cancelled=cancelled,
+                )
         finally:
             if _release_thread:
                 with self._lock:
@@ -3834,6 +3908,199 @@ class ProductionSessionProtocol:
             if should_complete:
                 self._complete_preview_only_turn(turn_id, generation)
 
+    def _publish_preview_record(
+        self,
+        turn_id: str,
+        generation: int,
+        payload: Dict[str, Any],
+        *,
+        preview_epoch: int,
+        cancelled: threading.Event,
+        event_type: str = "previewRecord",
+    ) -> None:
+        """Publish a side event of a flush-answered Preview.
+
+        ``previewRecord`` carries the full-model text, ``previewRefined`` the
+        longer flush.  Neither consumes the Preview token or changes
+        completion state; the flush already answered the request.
+        """
+
+        with self._lock:
+            turn = self.turn
+            if (
+                turn is None
+                or turn.turn_id != turn_id
+                or turn.generation != generation
+                or turn.cancelled.is_set()
+                or cancelled.is_set()
+                or turn.preview_epoch != preview_epoch
+            ):
+                return
+            event = dict(payload)
+            event["type"] = event_type
+            if turn.connection_epoch is not None:
+                event["_connectionEpoch"] = turn.connection_epoch
+            publish = getattr(self.manager, "publish_session")
+            try:
+                publish(self.session_id, event, authoritative=True)
+            except TypeError:
+                publish(self.session_id, event)
+
+    def _run_live_flush(
+        self,
+        turn_id: str,
+        generation: int,
+        stream: Any,
+        request: _LiveFlushRequest,
+        live_audio_end: int,
+    ) -> None:
+        """Answer one Preview from a snapshot flush of the live stream."""
+
+        try:
+            if request.cancelled.is_set():
+                return
+            if request.refine:
+                result = stream.flush_snapshot(
+                    refine_chunks=2,
+                    on_first=lambda first: self._publish_live_flush(
+                        turn_id, generation, request, first, live_audio_end, refine_pending=True
+                    ),
+                )
+                refined = " ".join(str(result.get("refined_text") or "").split())
+                if request.published and refined:
+                    self._publish_preview_record(
+                        turn_id,
+                        generation,
+                        {
+                            "type": "previewRefined",
+                            "turnId": turn_id,
+                            "previewRequestId": request.request_id,
+                            "pauseTextSource": "live_flush",
+                            "text": refined,
+                            "firstText": " ".join(str(result.get("text") or "").split()),
+                            "changed": refined != " ".join(str(result.get("text") or "").split()),
+                            "candidateId": request.candidate_id,
+                            "resumeId": request.resume_request_id,
+                            "previewTiming": {
+                                "refinedMs": round(float(result.get("refined_ms") or 0.0), 3),
+                                "refineSteps": int(result.get("refine_steps") or 0),
+                                "requestToPublishMs": round(
+                                    max(0.0, time.monotonic() - request.requested_at) * 1000.0,
+                                    3,
+                                ),
+                            },
+                        },
+                        preview_epoch=request.preview_epoch,
+                        cancelled=request.cancelled,
+                        event_type="previewRefined",
+                    )
+            else:
+                self._publish_live_flush(
+                    turn_id, generation, request, stream.flush_snapshot(), live_audio_end, refine_pending=False
+                )
+        except Exception:
+            LOGGER.exception("Live-lane Preview flush failed; the record decode answers")
+        finally:
+            request.done.set()
+
+    def _publish_live_flush(
+        self,
+        turn_id: str,
+        generation: int,
+        request: _LiveFlushRequest,
+        result: Dict[str, Any],
+        live_audio_end: int,
+        *,
+        refine_pending: bool,
+    ) -> None:
+        """Publish one flush result as the Preview of ``request``."""
+
+        text = " ".join(str(result.get("text") or "").split())
+        if not text:
+            # An empty flush (e.g. a cold stream that dropped the onset)
+            # must not claim the Preview; the record decode answers it.
+            return
+        publish_ready_at = time.monotonic()
+        candidate_active = request.candidate_id is not None
+        payload = {
+            "type": "preview",
+            "turnId": turn_id,
+            "previewRequestId": request.request_id,
+            "previewMode": request.preview_mode,
+            "pauseTextSource": "live_flush",
+            "text": text,
+            "cumulativeText": text,
+            "liveText": " ".join(str(result.get("live_text") or "").split()),
+            "tailText": text,
+            "previewModelText": text,
+            "previewText": text,
+            "status": "flush",
+            "refinePending": bool(refine_pending),
+            "matched": False,
+            "usedFuzzyMatch": False,
+            "anchorLength": 0,
+            "distance": 0,
+            "audioRevision": request.audio_revision,
+            "audioPackets": request.audio_packets,
+            "audioFrames": request.audio_frames,
+            "inputScope": request.input_scope,
+            "previewInputCoverage": "full_turn",
+            "inputSeconds": (request.input_sample_end - request.input_sample_start)
+            / float(SERVER_SAMPLE_RATE),
+            "inputSampleRange": {
+                "start": int(request.input_sample_start),
+                "end": int(request.input_sample_end),
+            },
+            "inputByteRange": {
+                "start": int(request.input_sample_start * 2),
+                "end": int(request.input_sample_end * 2),
+            },
+            "candidateId": request.candidate_id,
+            "candidateBaseText": request.candidate_base_text if candidate_active else None,
+            "candidateCumulativeText": text if candidate_active else None,
+            "resumeId": request.resume_request_id,
+            "resumeRequestId": request.resume_request_id,
+            "resumeEpoch": request.resume_epoch if candidate_active else None,
+            "candidateInputScope": "full_turn" if candidate_active else None,
+            "candidateStartSample": int(request.candidate_start_sample),
+            "candidateStartByte": int(request.candidate_start_byte),
+            "candidateSampleRange": (
+                {"start": int(request.candidate_start_sample), "end": int(request.audio_frames)}
+                if candidate_active
+                else None
+            ),
+            "candidateByteRange": (
+                {"start": int(request.candidate_start_byte), "end": int(request.audio_frames * 2)}
+                if candidate_active
+                else None
+            ),
+            "previewTiming": {
+                "pauseTextSource": "live_flush",
+                "flushMs": round(float(result.get("flush_ms") or 0.0), 3),
+                "flushSteps": int(result.get("steps") or 0),
+                "liveAudioEndSample": int(live_audio_end),
+                "requestToPublishMs": round(
+                    max(0.0, publish_ready_at - request.requested_at) * 1000.0,
+                    3,
+                ),
+            },
+        }
+        if candidate_active:
+            payload["candidateText"] = ""
+            payload["candidateOnlyText"] = ""
+        self._publish_preview_result(
+            turn_id,
+            generation,
+            request.request_id,
+            request.audio_revision,
+            payload,
+            "flush",
+            None,
+            preview_epoch=request.preview_epoch,
+            cancelled=request.cancelled,
+        )
+        request.published = True
+
     async def preview(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Run one independent Preview snapshot without finalizing the turn."""
 
@@ -3935,6 +4202,37 @@ class ProductionSessionProtocol:
             requested_at = turn.last_activity
             packet_count = turn.packet_count
             audio_seconds = turn.audio_seconds
+            live_flush = None
+            if (
+                payload.get("pauseTextSource") == "live_flush"
+                and getattr(self.settings, "preview_live_flush", False)
+                and turn.live_queue is not None
+                and _supports_live_flush(turn.live_stream)
+            ):
+                live_flush = _LiveFlushRequest(
+                    request_id=request_id,
+                    preview_mode=preview_mode,
+                    preview_epoch=preview_epoch,
+                    cancelled=cancelled,
+                    requested_at=requested_at,
+                    audio_revision=audio_revision,
+                    audio_frames=audio_frames,
+                    audio_packets=packet_count,
+                    input_scope=input_scope,
+                    input_sample_start=input_sample_start,
+                    input_sample_end=input_sample_end,
+                    candidate_start_sample=candidate_start_sample,
+                    candidate_start_byte=candidate_start_byte,
+                    candidate_id=candidate_id,
+                    candidate_base_text=candidate_base_text,
+                    resume_request_id=resume_request_id,
+                    resume_epoch=resume_epoch,
+                    refine=payload.get("pauseTextRefine") is True,
+                )
+                try:
+                    turn.live_queue.put_nowait(live_flush)
+                except queue.Full:
+                    live_flush = None
         try:
             self._start_preview_worker(
                 turn_id,
@@ -3959,6 +4257,8 @@ class ProductionSessionProtocol:
                 preview_mode,
                 preview_epoch,
                 cancelled,
+                # Without a flush the call keeps its long-standing shape.
+                **({"live_flush": live_flush} if live_flush is not None else {}),
             )
         except Exception as exc:
             return self._error("preview_failed", str(exc))
@@ -4670,6 +4970,14 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         ),
     )
     production.add_argument(
+        "--preview-live-flush",
+        action="store_true",
+        help=(
+            "Allow Preview requests with pauseTextSource=live_flush to be answered "
+            "by a snapshot flush of the live streaming lane"
+        ),
+    )
+    production.add_argument(
         "--preview-tail-overlap-seconds",
         type=float,
         default=PREVIEW_TAIL_OVERLAP_SECONDS,
@@ -4710,6 +5018,7 @@ def parse_args(argv: Optional[Sequence[str]] = None):
         preview_min_live_words_for_fuzzy_repair=known.preview_min_live_words_for_fuzzy_repair,
         preview_input_mode=known.preview_input_mode,
         preview_tail_overlap_seconds=known.preview_tail_overlap_seconds,
+        preview_live_flush=known.preview_live_flush,
         allowed_sample_rates=tuple(
             int(part.strip()) for part in known.allowed_sample_rates.split(",") if part.strip()
         ),
@@ -4742,6 +5051,7 @@ def settings_from_args(args: Any) -> ProductionServerSettings:
             "preview_min_live_words_for_fuzzy_repair": args.preview_min_live_words_for_fuzzy_repair,
             "preview_input_mode": args.preview_input_mode,
             "preview_tail_overlap_seconds": args.preview_tail_overlap_seconds,
+            "preview_live_flush": args.preview_live_flush,
             "allowed_sample_rates": args.allowed_sample_rates,
             "supported_languages": args.supported_languages,
             "max_http_audio_bytes": args.max_http_audio_bytes,
