@@ -2,6 +2,8 @@
 Defines common transcription engine result types and interfaces.
 """
 
+import inspect
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Union
@@ -106,6 +108,24 @@ class StreamingTranscriptionSession(ABC):
         """
         Releases resources owned by the session.
         """
+
+
+def _call_streaming_factory(creator, *, language=None, use_prompt=True):
+    """Choose the factory call before execution when its signature is available."""
+    options = {"language": language, "use_prompt": use_prompt}
+    try:
+        signature = inspect.signature(creator)
+    except (TypeError, ValueError):
+        # Preserve the legacy fallback for native callables without a signature.
+        try:
+            return creator(**options)
+        except TypeError:
+            return creator()
+    try:
+        signature.bind(**options)
+    except TypeError:
+        return creator()
+    return creator(**options)
 
 
 class BaseTranscriptionEngine(ABC):

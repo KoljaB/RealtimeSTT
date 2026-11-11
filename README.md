@@ -39,6 +39,20 @@ See the [production server guide](RealtimeSTT_server/PRODUCTION_SERVER.md) for
 the authenticated HTTP/WebSocket deployment recipe and exact pinned model
 directories.
 
+### Orukeet CPU performance: official runtime tuning
+
+**Official sherpa-ONNX 1.13.8 supports disabling CPU worker spinning through a
+provider configuration file.** On the tested Ubuntu 24.04 x86-64 / Python 3.12
+host, seven threads with spinning disabled beat our earlier custom build:
+**107.2 versus 113.3 ms** for five-second audio over 20 alternating-order rounds.
+The same Orukeet INT8 model and CPU affinity were used; transcripts matched.
+
+This configuration uses official PyPI wheels and requires no custom native build.
+Install and enable it explicitly; the standard extra and model installer do not
+automatically select a CPU performance profile. Seven threads is a measured
+setting for one host. See the
+[installation, configuration and benchmark details](docs/engines/sherpa-onnx.md#cpu-performance-and-installation).
+
 ### Support RealtimeSTT
 
 If RealtimeSTT saved you time, one GitHub star is a simple way to help make it more stable.

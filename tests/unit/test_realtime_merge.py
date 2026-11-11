@@ -26,6 +26,47 @@ class StickyRealtimeTranscriptionMergerTests(unittest.TestCase):
             **kwargs,
         )
 
+    def test_slow_brahmic_vowel_correction_discards_unmatched_fast_suffix(self):
+        for script, live_text, corrected_text in (
+            ("Devanagari", "आज शाम को मेरा घर है", "आज शाम को मेरा घर हो"),
+            ("Bengali", "আজ আমার ঘর আছে", "আজ আমার ঘর আছো"),
+            ("Gurmukhi", "ਇਹ ਮੇਰਾ ਘਰ ਹੈ", "ਇਹ ਮੇਰਾ ਘਰ ਹੋ"),
+        ):
+            with self.subTest(script=script):
+                self.merger.reset("recording-1")
+                initial = self.slow(live_text, 1)
+                accepted = self.fast(live_text + " extra", 1)
+                self.assertEqual(accepted.ultrafast_suffix, "extra")
+                held = self.fast("completely unrelated words from another result", 2)
+                self.assertEqual(held.ultrafast_suffix, "extra")
+
+                corrected = self.slow(corrected_text, 2)
+
+                self.assertEqual(corrected.text, corrected_text)
+                self.assertEqual(corrected.ultrafast_suffix, "")
+                self.assertEqual(
+                    corrected.slow_generation, initial.slow_generation + 1
+                )
+                self.assertTrue(corrected.should_publish)
+
+    def test_canonical_brahmic_slow_update_preserves_generation_and_fast_suffix(self):
+        for script, composed, decomposed in (
+            ("Bengali", "\u0995\u09cb", "\u0995\u09c7\u09be"),
+            ("Tamil", "\u0b95\u0bca", "\u0b95\u0bc6\u0bbe"),
+            ("Kannada", "\u0c95\u0ccb", "\u0c95\u0cc6\u0cc2\u0cd5"),
+        ):
+            with self.subTest(script=script):
+                self.merger.reset("recording-1")
+                initial = self.slow(f"one two {composed}", 1)
+                accepted = self.fast(f"one two {composed} extra", 1)
+                self.assertEqual(accepted.ultrafast_suffix, "extra")
+
+                updated = self.slow(f"one two {decomposed}", 2)
+
+                self.assertEqual(updated.text, f"one two {decomposed} extra")
+                self.assertEqual(updated.ultrafast_suffix, "extra")
+                self.assertEqual(updated.slow_generation, initial.slow_generation)
+
     def test_fast_before_slow_is_cached_but_not_published(self):
         result = self.fast("we should ship the feature today", 1)
 

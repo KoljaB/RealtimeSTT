@@ -204,6 +204,7 @@ production_server_requirements = [
 ]
 transformers_requirements = ["transformers"]
 parakeet_requirements = ["nemo_toolkit[asr]"]
+parakeet_onnx_requirements = ["onnx-asr==0.12.0", "onnxruntime==1.30.0"]
 omnilingual_asr_marker = (
     "python_version >= '3.10' and python_version < '3.12' "
     "and platform_system != 'Windows'"
@@ -230,6 +231,7 @@ all_optional_requirements = unique_requirements(
     + silero_onnx_requirements
     + transformers_requirements
     + parakeet_requirements
+    + parakeet_onnx_requirements
     + omnilingual_asr_requirements
     + qwen_requirements
     + funasr_requirements
@@ -239,6 +241,7 @@ all_optional_requirements = unique_requirements(
 )
 
 extras_require = {
+    "parakeet-onnx": parakeet_onnx_requirements,
     "minimal": [],
     "faster-whisper": faster_whisper_requirements,
     "whisper-cpp": whisper_cpp_requirements,

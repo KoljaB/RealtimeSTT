@@ -8,6 +8,7 @@ from .base import TranscriptionEngineConfig, UnsupportedTranscriptionEngineError
 
 
 ENGINE_CLASS_PATHS = {
+    "parakeet_onnx": (".parakeet_onnx_engine", "ParakeetOnnxEngine"),
     "faster_whisper": (".faster_whisper_engine", "FasterWhisperEngine"),
     "whisper_cpp": (".whisper_cpp_engine", "WhisperCppEngine"),
     "transcribe_cpp": (".transcribe_cpp_engine", "TranscribeCppEngine"),
@@ -44,6 +45,8 @@ ENGINE_CLASS_PATHS = {
     "kroko_onnx": (".kroko_onnx_engine", "KrokoOnnxEngine"),
     "kroko": (".kroko_onnx_engine", "KrokoOnnxEngine"),
     "banafo_kroko": (".kroko_onnx_engine", "KrokoOnnxEngine"),
+    "kroko_fp32": (".kroko_fp32_engine", "KrokoFp32Engine"),
+    "kroko_native": (".kroko_fp32_engine", "KrokoFp32Engine"),
     "funasr": (".funasr_engine", "FunASREngine"),
     "fun_asr": (".funasr_engine", "FunASREngine"),
 }

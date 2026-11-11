@@ -65,6 +65,32 @@ class TextFormattingTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(preprocess_output(text), text)
 
+    def test_preprocess_output_adds_period_after_multiple_combining_marks(self):
+        cases = {
+            "cafe\u0301\u0300": "Cafe\u0301\u0300.",
+            "\u0939\u094b\u0902": "\u0939\u094b\u0902.",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(preprocess_output(text), expected)
+
+    def test_preprocess_output_leaves_combining_mark_only_text_unchanged(self):
+        for text in ("\u0301", "\u0301\u0300", "\u094b\u0902"):
+            with self.subTest(text=text):
+                self.assertEqual(preprocess_output(text), text)
+
+    def test_preprocess_output_distinguishes_variation_selector_ranges(self):
+        cases = {
+            "\u6f22\ufe00": "\u6f22\ufe00",
+            "\u6f22\ufe0e": "\u6f22\ufe0e",
+            "\u6f22\ufe0f": "\u6f22\ufe0f",
+            "\u6f22\U000e0100": "\u6f22\U000e0100.",
+            "\u1820\u180b": "\u1820\u180b.",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(preprocess_output(text), expected)
+
     def test_find_tail_match_returns_legacy_match_end_position(self):
         self.assertEqual(
             find_tail_match_in_text("alpha world", "one world two", 5),

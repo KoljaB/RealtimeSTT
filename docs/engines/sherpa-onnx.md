@@ -177,7 +177,7 @@ directory names under that root.
 | --- | --- |
 | `model_dir` | Explicit extracted model directory. |
 | `files` | Dictionary overriding individual file names/paths. |
-| `num_threads` | CPU worker threads. |
+| `num_threads` | Threads per native model session; higher counts can increase contention. |
 | `provider` | ONNX Runtime provider, usually `"cpu"`. |
 | `decoding_method` | sherpa-onnx decoding method, default `greedy_search`. |
 | `debug` | Enables sherpa-onnx debug output. |
@@ -249,3 +249,123 @@ existing NeMo transducer loader. It is an offline recognizer; keep your
 existing live recognizer and VAD for partial transcripts. Language coverage is listed on the model card; this
 option does not change the default model or extend support to every Whisper
 language.
+
+### CPU performance and installation
+
+**Recommended tested configuration, 2026-09-18:** official sherpa-ONNX 1.13.8,
+seven threads and spinning disabled. Install RealtimeSTT and its selected extras
+first, then explicitly select the tested runtime in that environment:
+
+```bash
+python -m pip install "sherpa-onnx==1.13.8" "sherpa-onnx-core==1.13.8"
+```
+
+Save these two lines in a local provider configuration file:
+
+```ini
+SessionConfig.session.intra_op.allow_spinning=0
+SessionConfig.session.inter_op.allow_spinning=0
+```
+
+Pass `{"provider": "cpu:/absolute/path/cpu-sessions.conf", "num_threads": 7}`
+through `transcription_engine_options` or the production server's
+`--engine-options`, preserving any existing model-directory and verification
+options. Stock 1.13.8 uses a common thread count for the three NeMo sessions;
+the former custom `EncoderNumThreads` and `AllowSpinning` keys are not the
+official configuration syntax. This is opt-in; reinstalling the pinned extra
+can select an older runtime, so verify the installed version after dependency
+changes. Its bundled native ONNX Runtime is 1.28.2; the separately installed
+Python `onnxruntime` package does not identify sherpa's native runtime.
+
+On the same Ubuntu 24.04 x86-64 / CPython 3.12 host, 20 alternating-order rounds
+per duration compared identical audio and fixed affinity. Inactive benchmark
+processes were stopped to prevent competing native pools:
+
+| Native median | Tuned 1.13.4, 7/1/1 | Official 1.13.8, 7/7/7 |
+| --- | ---: | ---: |
+| 3-second audio | 74.72 ms | 70.82 ms |
+| 5-second audio | 113.32 ms | 107.20 ms |
+| 5-second audio, synthetic CPU contention | 124.32 ms | 116.61 ms |
+
+Both configurations disabled spinning. Transcripts matched across all 240 timed
+native calls, including the 2- and 4-thread candidate sweep. The authenticated
+API median fell from 118.89 to 114.23 ms in sequential before/after checks.
+Ten Miep Preview events, including continuation, passed with Live ASR output and
+zero errors; eight short Preview requests took 34.44-38.39 ms. These are bounded
+ASR measurements, not broad accuracy or audible-response measurements. Choose
+the thread count for the available cores and concurrent workload.
+
+#### Earlier custom build, 2026-09-17
+
+The original experimental wheel, patch, build sources, notices,
+and checksums remain available in the separate
+[sherpa-onnx-cpu-tuning release](https://github.com/KoljaB/sherpa-onnx-cpu-tuning/releases/tag/v1.13.4-cpu.1).
+This is an independently maintained build, not an official sherpa release or a
+standard RealtimeSTT dependency. No upstream PR has been submitted.
+
+CPU performance depends on thread-pool settings as well as the model. In the
+pinned stock `sherpa-onnx==1.13.4`, the NeMo encoder, decoder, and joiner share
+one thread-count setting, and their ONNX Runtime worker pools can spin while
+waiting for work. Those pools may compete for the same cores. See the upstream
+[session options](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.4/sherpa-onnx/csrc/session.cc)
+and [NeMo sessions](https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.4/sherpa-onnx/csrc/offline-transducer-nemo-model.cc).
+
+A controlled Linux x86-64 test on 2026-09-17 used the same Orukeet INT8 weights,
+bundled ONNX Runtime 1.27.0, and fixed affinity throughout. Each audio duration
+had two warmups and 12 alternating-order measured rounds. Inactive benchmark
+processes were stopped to prevent their thread pools influencing another model.
+
+| Native inference median | 3-second audio | 5-second audio |
+| --- | ---: | ---: |
+| Stock Orukeet, 2 threads per session | 154.47 ms | 245.28 ms |
+| Experimental patched Orukeet runtime, 7/1/1 threads, spinning disabled | 74.18 ms | 112.22 ms |
+| Tuned Parakeet, `parakeet_onnx` / onnx-asr | 100.20 ms | 152.17 ms |
+
+Orukeet transcripts matched across the two configurations. A separate control
+held all three pools at seven threads: disabling spinning reduced the
+five-second median from 662.35 to 107.17 ms. The 7/1/1 configuration was selected
+for the paired comparison and server deployment. The authenticated API median
+fell from 252.27 to 120.09 ms; ten Preview events, including continuation, passed.
+These measurements cover one host and bounded fixtures, not all hardware,
+languages, recognition accuracy, or audible assistant-response latency.
+
+#### Legacy build availability
+
+The experimental build is `sherpa-onnx==1.13.4+orukeet.cpu1`, distributed through
+GitHub Releases rather than PyPI. Follow the
+[versioned install command and CPU profile](https://github.com/KoljaB/sherpa-onnx-cpu-tuning/tree/v1.13.4-cpu.1#install).
+The wheel was tested on Ubuntu 24.04 x86-64 with CPython 3.12 and requires glibc
+2.38 or newer, GLIBCXX_3.4.32, and `libasound.so.2`. It is not a manylinux wheel;
+other platforms and Python versions are not supported by this binary release.
+
+The standard `RealtimeSTT[sherpa-onnx]` extra installs upstream 1.13.4, and
+`stt-install-sherpa-models --model orukeet` installs model files only. It does not
+build or replace the native runtime or configure the application.
+
+The [public build instructions](https://github.com/KoljaB/sherpa-onnx-cpu-tuning/blob/main/BUILDING.md),
+[original deployment notes](../../deploy/sherpa-onnx/README.md), and
+[source preparation script](../../deploy/sherpa-onnx/prepare_cpu_session_build.py)
+record how the native code was built. Installing the released wheel does not
+require compiling C++; enable its provider configuration explicitly after
+installation. Stock 1.13.4 does not implement the added provider keys and can
+silently ignore them. The wheel retains upstream dependencies with their own
+licenses, including eSpeak NG; the release includes their notices and build sources.
+
+Seven encoder threads is a measured setting for this host, not a portable
+default. Future CPU profiles need to account for available cores, process or
+container affinity, and concurrent Live ASR, TTS, or other workloads.
+
+#### Making this automatic
+
+Upstream now supplies the required session-config forwarding. Future upgrades
+should first compare a configured official release against the last working
+runtime, using separate environments, pinned wheel hashes and the same paired
+benchmark. A custom build is needed only if a remaining patch adds a measured
+benefit. Build/import checks can run in CI; latency acceptance belongs on a fixed
+machine, followed by an authenticated API and Preview/Live smoke before promotion.
+
+An installer could verify runtime support and expose an explicit no-spinning
+profile. Thread selection must respect available cores, process affinity and
+other workloads; a fixed seven-thread default would not ensure high performance.
+No automatic performance installer, scheduled upgrade workflow or autotuner is
+currently provided.

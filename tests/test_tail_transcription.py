@@ -1,6 +1,7 @@
 import queue
 import threading
 import time
+import unicodedata
 import unittest
 from unittest import mock
 
@@ -9,6 +10,7 @@ import numpy as np
 from RealtimeSTT.core.tail_transcription import (
     FINAL_TRANSCRIPTION_TAIL_SECONDS,
     MIN_LIVE_WORDS_FOR_FUZZY_REPAIR,
+    _fuzzy_window_distance,
     append_pcm16_tail,
     extract_audio_tail,
     find_tail_anchor,
@@ -106,6 +108,204 @@ def make_executor_recorder(executor, audio_seconds=20):
 
 
 class TailTranscriptionHelperTests(unittest.TestCase):
+    def test_devanagari_vowel_correction_uses_final_tail(self):
+        result = merge_live_and_tail_transcription(
+            "आज शाम को मेरा घर है",
+            "शोर को मेरा घर हो गया",
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.text, "आज शाम को मेरा घर हो गया")
+
+    def test_brahmic_vowel_corrections_use_final_tail(self):
+        for script, live_word, final_word in (
+            ("Devanagari", "है", "हो"),
+            ("Bengali", "আছে", "আছো"),
+            ("Gurmukhi", "ਹੈ", "ਹੋ"),
+            ("Gujarati", "છે", "છો"),
+            ("Odia", "କି", "କୁ"),
+            ("Tamil", "கி", "கு"),
+            ("Telugu", "కి", "కు"),
+            ("Kannada", "ಕಿ", "ಕು"),
+            ("Malayalam", "കി", "കു"),
+            ("Sinhala", "කි", "කු"),
+        ):
+            with self.subTest(script=script):
+                live_text = f"we heard one two three {live_word}"
+                tail_text = f"noise one two three {final_word} now"
+
+                self.assertIsNone(
+                    find_tail_anchor(live_text, tail_text, allow_fuzzy=False)
+                )
+                result = merge_live_and_tail_transcription(live_text, tail_text)
+                self.assertTrue(result.matched)
+                self.assertEqual(
+                    result.text, f"we heard one two three {final_word} now"
+                )
+
+    def test_exact_anchor_accepts_canonically_equivalent_brahmic_words(self):
+        for script, composed in (
+            ("Devanagari", "\u0958"),
+            ("Bengali", "\u0995\u09cb"),
+            ("Odia", "\u0b15\u0b4b"),
+            ("Tamil", "\u0b95\u0bca"),
+            ("Telugu", "\u0c15\u0c48"),
+            ("Kannada", "\u0c95\u0ccb"),
+            ("Malayalam", "\u0d15\u0d4b"),
+            ("Sinhala", "\u0d9a\u0dda"),
+        ):
+            decomposed = unicodedata.normalize("NFD", composed)
+            with self.subTest(script=script):
+                self.assertNotEqual(composed, decomposed)
+                alignment = find_tail_anchor(
+                    f"prefix one two {composed}",
+                    f"noise one two {decomposed}",
+                    allow_fuzzy=False,
+                )
+                self.assertIsNotNone(alignment)
+                self.assertFalse(alignment[3])
+
+    def test_brahmic_normalization_does_not_normalize_other_scripts(self):
+        # Decomposed Hangul retains its previous comparison form, including
+        # when it shares a whitespace-delimited token with Brahmic text.
+        for suffix in ("", "है"):
+            with self.subTest(suffix=suffix):
+                self.assertIsNone(
+                    find_tail_anchor(
+                        f"prefix one two \u1100\u1161{suffix}",
+                        f"noise one two \uac00{suffix}",
+                        allow_fuzzy=False,
+                    )
+                )
+
+    def test_exact_anchor_distinguishes_devanagari_marks(self):
+        for live_word, final_word in (
+            ("है", "हो"),
+            ("का", "कि"),
+            ("क", "क़"),
+            ("क", "क्"),
+        ):
+            with self.subTest(live_word=live_word, final_word=final_word):
+                self.assertIsNone(
+                    find_tail_anchor(
+                        f"prefix one two {live_word}",
+                        f"noise one two {final_word}",
+                        allow_fuzzy=False,
+                    )
+                )
+
+    def test_exact_anchor_keeps_identical_devanagari_words(self):
+        live_text = "आज शाम को मेरा घर है"
+        result = merge_live_and_tail_transcription(
+            live_text,
+            live_text + " गया",
+        )
+
+        self.assertTrue(result.matched)
+        self.assertFalse(result.used_fuzzy_match)
+        self.assertEqual(result.text, live_text + " गया")
+
+    def test_exact_anchor_preserves_other_normalization_rules(self):
+        for live_word, final_word in (
+            ("كَتَبَ", "كتب"),
+            ("cafe\u0301", "cafe"),
+            ("tea\ufe0f", "tea"),
+            ("HELLO_WORLD!", "helloworld"),
+            ("Straße", "STRASSE"),
+            ("कैसे।", "कैसे"),
+        ):
+            with self.subTest(live_word=live_word, final_word=final_word):
+                alignment = find_tail_anchor(
+                    f"prefix one two {live_word}",
+                    f"noise one two {final_word}",
+                    allow_fuzzy=False,
+                )
+                self.assertIsNotNone(alignment)
+                self.assertEqual(alignment[2], 3)
+                self.assertFalse(alignment[3])
+
+    def test_marks_and_symbols_alone_do_not_supply_anchor_words(self):
+        for token in (
+            "\u093e", "\u0948", "\u093c", "\u094d", "\u09be", "\u0a3e",
+            "\u0abe", "\u0b3e", "\u0bbe", "\u0c3e", "\u0cbe", "\u0d3e",
+            "\u0dcf", "।", "☕️",
+        ):
+            with self.subTest(token=token):
+                self.assertIsNone(
+                    find_tail_anchor(
+                        f"one two {token}",
+                        f"noise one two {token} suffix",
+                        allow_fuzzy=False,
+                    )
+                )
+
+    def test_devanagari_correction_requires_sufficient_overlap(self):
+        result = merge_live_and_tail_transcription("घर है", "घर हो गया")
+
+        self.assertFalse(result.matched)
+        self.assertEqual(result.text, "घर है")
+
+    def test_short_hindi_tail_corrects_vowel_without_duplicating_word(self):
+        result = merge_live_and_tail_transcription(
+            "आज घर है", "noise आज घर हो गया",
+        )
+
+        self.assertTrue(result.matched)
+        self.assertTrue(result.used_fuzzy_match)
+        self.assertEqual(result.text, "आज घर हो गया")
+
+    def test_short_brahmic_overlap_repairs_each_word_position(self):
+        for script, live_word, final_word in (
+            ("Devanagari", "है", "हो"),
+            ("Bengali", "আছে", "আছো"),
+            ("Gurmukhi", "ਹੈ", "ਹੋ"),
+            ("Gujarati", "છે", "છો"),
+            ("Odia", "କି", "କୁ"),
+            ("Tamil", "கி", "கு"),
+            ("Telugu", "కి", "కు"),
+            ("Kannada", "ಕಿ", "ಕು"),
+            ("Malayalam", "കി", "കു"),
+            ("Sinhala", "කි", "කු"),
+        ):
+            for position in range(3):
+                for prefix in ("", "prefix "):
+                    with self.subTest(script=script, position=position, prefix=prefix):
+                        live_words = ["one", "two"]
+                        final_words = ["one", "two"]
+                        live_words.insert(position, live_word)
+                        final_words.insert(position, final_word)
+                        result = merge_live_and_tail_transcription(
+                            prefix + " ".join(live_words),
+                            "noise " + " ".join(final_words) + " now",
+                        )
+                        self.assertTrue(result.matched)
+                        self.assertEqual(
+                            result.text, prefix + " ".join(final_words) + " now"
+                        )
+
+    def test_brahmic_mark_repair_respects_configured_minimum(self):
+        for live, final in (
+            ("आज घर है", "noise आज घर हो गया"),
+            ("है one two", "noise हो one two now"),
+        ):
+            with self.subTest(live=live):
+                result = merge_live_and_tail_transcription(
+                    live, final, min_live_words_for_fuzzy_repair=4,
+                )
+                self.assertFalse(result.matched)
+                self.assertEqual(result.text, live)
+
+    def test_mark_repair_requires_two_exact_words_and_one_changed_word(self):
+        for live_words, final_words in (
+            (["one", "है"], ["one", "हो"]),
+            (["है", "कि", "one"], ["हो", "कु", "one"]),
+            (["one", "two", "है"], ["one", "two", "था"]),
+            (["one", "two", "éहै"], ["one", "two", "eहै"]),
+            (["one", "two", "é"], ["one", "two", "e"]),
+        ):
+            with self.subTest(live=live_words, final=final_words):
+                self.assertIsNone(_fuzzy_window_distance(live_words, final_words))
+
     def test_exact_anchor_discards_tail_prefix_and_appends_only_suffix(self):
         result = merge_live_and_tail_transcription(
             "The quick brown fox jumps",
@@ -242,17 +442,6 @@ class TailTranscriptionHelperTests(unittest.TestCase):
 
         self.assertFalse(result.matched)
         self.assertEqual(result.text, "The original live transcript")
-
-    def test_devanagari_vowel_marks_prevent_false_exact_anchor(self):
-        result = merge_live_and_tail_transcription(
-            "आज शाम को मेरा घर है",
-            "शोर को मेरा घर हो गया",
-        )
-
-        self.assertTrue(result.matched)
-        self.assertFalse(result.used_fuzzy_match)
-        self.assertEqual(result.anchor_length, 3)
-        self.assertEqual(result.text, "आज शाम को मेरा घर हो गया")
 
     def test_short_live_transcript_does_not_use_weak_anchor(self):
         result = merge_live_and_tail_transcription(

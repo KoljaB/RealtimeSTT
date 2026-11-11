@@ -69,7 +69,7 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `faster-whisper` | `faster-whisper` | Default CTranslate2 Whisper backend. |
 | `whisper-cpp` / `whispercpp` | `pywhispercpp` | whisper.cpp backend for CPU-focused setups. |
 | `openai-whisper` | `openai-whisper` | Original OpenAI Whisper Python backend. |
-| `sherpa-onnx` / `sherpa` | Pinned `sherpa-onnx` | CPU INT8 sherpa-onnx Nemotron, Parakeet, or Moonshine engines. |
+| `sherpa-onnx` / `sherpa` | Pinned `sherpa-onnx` | CPU INT8 sherpa-onnx Nemotron, Parakeet, Orukeet, or Moonshine engines. |
 | `server` / `production-server` | FastAPI and Uvicorn | Packaged versioned HTTP/WebSocket production ASR server. Combine with an engine extra. |
 | `transformers` | `transformers` | Shared dependency for Transformers-based ASR engines. |
 | `moonshine`, `granite`, `cohere` | `transformers` | Aliases for the corresponding Transformers engines. |
@@ -83,6 +83,14 @@ python -m pip install "RealtimeSTT[whisper-cpp,openwakeword]"
 | `wakewords` / `wake-words` | `pvporcupine`, `openwakeword` | Both wake-word backends. |
 | `recommended` / `default` | `faster-whisper`, `silero-vad[onnx-cpu]` | Default local transcription plus the faster raw CPU ONNX Silero VAD path. |
 | `all` | All PyPI-installable optional backends | Broad development or experimentation environments. |
+
+**Orukeet CPU tuning:** official `sherpa-onnx==1.13.8` with
+`sherpa-onnx-core==1.13.8` and an explicit no-spinning provider configuration
+outperformed the earlier custom runtime on the tested Linux host. No custom
+wheel is required for that configuration. The standard sherpa extra remains
+pinned separately, and the model installer downloads weights only; follow the
+[explicit installation and configuration steps](engines/sherpa-onnx.md#cpu-performance-and-installation)
+after installing RealtimeSTT.
 
 `kroko-builder` does not install Kroko-ONNX by itself; it exposes
 `stt-install-kroko`, which builds and installs Kroko-ONNX from upstream:
