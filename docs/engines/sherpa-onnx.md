@@ -267,7 +267,7 @@ SessionConfig.session.intra_op.allow_spinning=0
 SessionConfig.session.inter_op.allow_spinning=0
 ```
 
-Pass `{"provider": "cpu:/absolute/path/cpu-sessions.conf", "num_threads": 7}`
+Pass `{"provider": "cpu:/absolute/path/cpu-session.conf", "num_threads": 7}`
 through `transcription_engine_options` or the production server's
 `--engine-options`, preserving any existing model-directory and verification
 options. Stock 1.13.8 uses a common thread count for the three NeMo sessions;

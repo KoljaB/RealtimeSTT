@@ -24,7 +24,7 @@ joiner thread, inter-op threads of one, and disables spinning. The ordinary
 `num_threads` option remains a fallback for stages without overrides. Plain
 `provider=cpu` retains the upstream execution settings.
 
-Use `provider=cpu:/absolute/path/cpu-sessions.conf` in the existing engine options.
+Use `provider=cpu:/absolute/path/cpu-session.conf` in the existing engine options.
 **Require distribution version `1.13.4+orukeet.cpu1` first.** Stock sherpa 1.13.4
 does not implement these additional config keys. A normal package upgrade must
 carry this patch or explicitly revalidate performance.
