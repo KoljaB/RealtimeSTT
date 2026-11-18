@@ -41,14 +41,18 @@ class FasterWhisperEngine(BaseTranscriptionEngine):
         Initializes the faster-whisper model.
         """
         super().__init__(config)
+        engine_options = dict(self.config.engine_options or {})
+        self.transcribe_options = dict(engine_options.get("transcribe", {}))
         faster_whisper, batched_inference_pipeline = _load_faster_whisper()
-        model = faster_whisper.WhisperModel(
-            model_size_or_path=self.config.model,
-            device=self.config.device,
-            compute_type=self.config.compute_type,
-            device_index=self.config.gpu_device_index,
-            download_root=self.config.download_root,
-        )
+        model_kwargs = {
+            "model_size_or_path": self.config.model,
+            "device": self.config.device,
+            "compute_type": self.config.compute_type,
+            "device_index": self.config.gpu_device_index,
+            "download_root": self.config.download_root,
+        }
+        model_kwargs.update(engine_options.get("model", {}))
+        model = faster_whisper.WhisperModel(**model_kwargs)
         if self.config.batch_size > 0:
             model = batched_inference_pipeline(model=model)
         self.model = model
@@ -89,6 +93,7 @@ class FasterWhisperEngine(BaseTranscriptionEngine):
             kwargs["batch_size"] = self.config.batch_size
             if not self.config.vad_filter:
                 kwargs["clip_timestamps"] = self._batched_clip_timestamps(audio)
+        kwargs.update(self.transcribe_options)
 
         segments, info = self.model.transcribe(audio, **kwargs)
         segments = list(segments)
