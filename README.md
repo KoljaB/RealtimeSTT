@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/koljab-realtimestt-badge.png)](https://mseep.ai/app/koljab-realtimestt)
+
 # RealtimeSTT
 
 > **License:** RealtimeSTT's own code is Apache-2.0. Engines, models, VADs and
