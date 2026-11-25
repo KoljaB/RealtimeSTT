@@ -26,7 +26,7 @@ stt-server [OPTIONS]
     - `-w, --wake_words`: Wake word(s) to trigger listening; default "".
     - `-D, --debug`: Enable debug logging.
     - `-W, --write`: Save audio to WAV file.
-    - `-s, --silence_timing`: Enable dynamic silence duration for sentence detection; default True. 
+    - `-s, --silence_timing`: Enable dynamic silence duration for sentence detection; default False.
     - `-b, --batch, --batch_size`: Batch size for inference; default 16.
     - `--root, --download_root`: Specifies the root path were the Whisper models are downloaded to.
     - `--silero_sensitivity`: Silero VAD sensitivity (0-1); default 0.05.
@@ -251,6 +251,7 @@ def text_detected(text, loop):
     global prev_text
 
     text = preprocess_text(text)
+    next_prev_text = text
 
     if silence_timing:
         def ends_with_ellipsis(text: str):
@@ -295,9 +296,10 @@ def text_detected(text, loop):
             if similarity > hard_break_even_on_background_noise_min_similarity and len(first_text) > hard_break_even_on_background_noise_min_chars:
                 recorder.stop()
                 recorder.clear_audio_queue()
-                prev_text = ""
+                text_time_deque.clear()
+                next_prev_text = ""
 
-    prev_text = text
+    prev_text = next_prev_text
 
     # Put the message in the audio queue to be sent to clients
     message = json.dumps({
@@ -399,7 +401,7 @@ def on_turn_detection_stop(loop):
 
 # Define the server's arguments
 def parse_arguments():
-    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks, dynamic_silence_timing
+    global debug_logging, extended_logging, loglevel, writechunks, log_incoming_chunks, silence_timing
 
     import argparse
     parser = argparse.ArgumentParser(description='Start the Speech-to-Text (STT) server with various configuration options.')
@@ -435,7 +437,7 @@ def parse_arguments():
 
     parser.add_argument('--root', '--download_root', type=str,default=None, help='Specifies the root path where the Whisper models are downloaded to. Default is None.')
 
-    parser.add_argument('-s', '--silence_timing', action='store_true', default=True,
+    parser.add_argument('-s', '--silence_timing', action='store_true', default=False,
                     help='Enable dynamic adjustment of silence duration for sentence detection. Adjusts post-speech silence duration based on detected sentence structure and punctuation. Default is False.')
 
     parser.add_argument('--init_realtime_after_seconds', type=float, default=0.2,
@@ -551,7 +553,7 @@ def parse_arguments():
     extended_logging = args.use_extended_logging
     writechunks = args.write
     log_incoming_chunks = args.logchunks
-    dynamic_silence_timing = args.silence_timing
+    silence_timing = args.silence_timing
 
 
     ws_logger = logging.getLogger('websockets')
