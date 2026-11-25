@@ -251,6 +251,7 @@ def text_detected(text, loop):
     global prev_text
 
     text = preprocess_text(text)
+    next_prev_text = text
 
     if silence_timing:
         def ends_with_ellipsis(text: str):
@@ -295,9 +296,10 @@ def text_detected(text, loop):
             if similarity > hard_break_even_on_background_noise_min_similarity and len(first_text) > hard_break_even_on_background_noise_min_chars:
                 recorder.stop()
                 recorder.clear_audio_queue()
-                prev_text = ""
+                text_time_deque.clear()
+                next_prev_text = ""
 
-    prev_text = text
+    prev_text = next_prev_text
 
     # Put the message in the audio queue to be sent to clients
     message = json.dumps({
