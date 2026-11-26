@@ -223,6 +223,10 @@ def main():
     # Process command-line parameters
     if args.set:
         for param, value in args.set:
+            if value.lower() in ("true", "false"):
+                # "False" would otherwise reach the server as a truthy string
+                client.set_parameter(param, value.lower() == "true")
+                continue
             try:
                 if '.' in value:
                     value = float(value)
